@@ -1,0 +1,75 @@
+---
+name: autonomy-bench
+description: "Plan, execute, record, compare, and finalize reproducible model-autonomy benchmarks from versioned prompt suites. Use for single-HTML coding benchmarks, A/B/C prompt ladders, model shootouts, repeated trials, receipt-driven run histories, and Prototype Lab export."
+---
+
+# Autonomy Bench
+
+Autonomy Bench is a **benchmark coordinator**, not a design treatment. It freezes prompts, creates isolated cells, records factual execution, and finalizes auditable runs.
+
+## Core contract
+
+- Never improve, clarify, or secretly expand a benchmark prompt before dispatch.
+- Never let one benchmark cell see sibling outputs, scores, critiques, or coordinator preferences.
+- A/B/C prompt levels are independent runs. Do not continue the same conversation from A to B to C.
+- Record only observable provenance. Unknown values stay `not captured`.
+- Do not request or store hidden chain-of-thought. Evaluation records conclusions, evidence, and concise rationales only.
+- One cell = one benchmark + one prompt level + one requested model + one attempt.
+- `n=1` is `exploratory-n1`; do not make stability claims from it.
+- Finalization requires one factual receipt or explicit blocked/unavailable record per planned cell.
+
+## Choose the run shape
+
+| Goal | Shape |
+| --- | --- |
+| Smoke-test one task | `single` |
+| See prompt sensitivity | `prompt-ladder` |
+| Compare models fairly | `model-shootout` |
+| Run selected combinations | `matrix` |
+| Run everything | `suite` |
+
+Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
+
+## Workflow
+
+1. Inspect the suite with `bench list` / `bench show`.
+2. Freeze a run with `bench plan`. Keep the generated `manifest.json` immutable.
+3. Dispatch every cell in a fresh context using only its `prompt.md` and permitted execution envelope.
+4. Save model-produced files under that cell's `output/` directory.
+5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, timing, isolation evidence, tool visibility, limitations, and output hashes.
+6. Evaluate only after raw outputs are frozen. Prefer blind evaluation when comparing models.
+7. Run `bench status`; resolve missing receipts or record blockers explicitly.
+8. Run `bench finalize`; this writes `completion-receipt.json` and a SHA-256 integrity manifest.
+
+## Prototype Lab route
+
+When richer browser verification/comparison is needed, export with:
+
+```text
+bench export-prototype-lab --run <run-id>
+```
+
+The exporter creates one Prototype Lab benchmark spec per benchmark + prompt level, keeping each model/attempt comparison on an invariant prompt. Execute those with Prototype Lab's `experiment --direct-build` flow. Preserve Prototype Lab receipts as canonical provenance and cross-link them from Autonomy Bench cells rather than fabricating equivalent fields.
+
+Read `references/prototype-lab-integration.md`.
+
+## Evaluation
+
+Score dimensions independently on a 0–5 scale:
+
+- `completion`: requested experience works end-to-end.
+- `autonomy`: useful decisions contributed without being specified.
+- `technicalQuality`: correctness, robustness, performance, maintainability appropriate to the task.
+- `uxVisualQuality`: usability, legibility, interaction feel, visual finish.
+- `ambition`: meaningful scope beyond the minimum, without rewarding feature spam.
+- `coherence`: decisions reinforce one another; complexity remains purposeful.
+
+A large feature count is not automatically ambition. Penalize incoherent additions under `coherence` and defects under the relevant dimension.
+
+Read `references/evaluation.md`.
+
+## Receipts
+
+Each cell receipt is factual. Evaluations live separately. The run completion receipt certifies bookkeeping/integrity, not model quality.
+
+Read `references/receipts.md` and `references/execution-modes.md`.
