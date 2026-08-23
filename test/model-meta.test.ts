@@ -69,7 +69,9 @@ describe('applyModelThinking', () => {
         receipt: { requestedModel: 'grok-4.6', effectiveModel: 'cursor-grok-4.6-low' },
       },
     ]);
-    expect(cells.map((cell) => [cell.thinking, cell.modelKey])).toEqual([
+    expect(
+      cells.map((cell: { thinking: string; modelKey: string }) => [cell.thinking, cell.modelKey]),
+    ).toEqual([
       ['high', 'grok-4.6-high'],
       ['low', 'grok-4.6-low'],
     ]);

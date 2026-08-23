@@ -36,7 +36,7 @@ describe('loaderIdentity', () => {
 describe('iframeLoadJobs', () => {
   it('selects iframes that still have a data-src', () => {
     const root = {
-      querySelectorAll(sel) {
+      querySelectorAll(sel: string) {
         expect(sel).toBe('iframe[data-src]');
         return [{ id: 'a' }, { id: 'b' }];
       },
@@ -49,9 +49,9 @@ describe('loadIframesStaggered', () => {
   it('loads one iframe at a time', async () => {
     let active = 0;
     let max = 0;
-    const order = [];
+    const order: number[] = [];
     await loadIframesStaggered([1, 2, 3], {
-      loadOne: async (id) => {
+      loadOne: async (id: number) => {
         active += 1;
         max = Math.max(max, active);
         order.push(id);
@@ -65,10 +65,10 @@ describe('loadIframesStaggered', () => {
   });
 
   it('waits the stagger gap between loads, not after the last', async () => {
-    const gaps = [];
+    const gaps: number[] = [];
     await loadIframesStaggered(['a', 'b', 'c'], {
       loadOne: async () => {},
-      waitGap: async (ms) => {
+      waitGap: async (ms: number) => {
         gaps.push(ms);
       },
       gapMs: 50,
@@ -77,10 +77,10 @@ describe('loadIframesStaggered', () => {
   });
 
   it('uses the default gap when none is passed', async () => {
-    const gaps = [];
+    const gaps: number[] = [];
     await loadIframesStaggered([1, 2], {
       loadOne: async () => {},
-      waitGap: async (ms) => {
+      waitGap: async (ms: number) => {
         gaps.push(ms);
       },
     });
@@ -88,11 +88,11 @@ describe('loadIframesStaggered', () => {
   });
 
   it('stops assigning src when the stage token is stale', async () => {
-    const loaded = [];
+    const loaded: number[] = [];
     let current = true;
     const result = await loadIframesStaggered([1, 2, 3], {
       isCurrent: () => current,
-      loadOne: async (id) => {
+      loadOne: async (id: number) => {
         loaded.push(id);
         if (id === 1) current = false;
       },
