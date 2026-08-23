@@ -213,6 +213,7 @@ function writeGalleryViewer() {
   let template = readFileSync(join(here, 'gallery-viewer.html'), 'utf8');
   template = injectSnippet(template, '/* __HIGHLIGHT_HTML__ */', join(here, 'highlight-html.mjs'));
   template = injectSnippet(template, '/* __SCRAMBLE_SPAN__ */', join(here, 'scramble-span.mjs'));
+  template = injectSnippet(template, '/* __STACK_PANELS__ */', join(here, 'stack-panels.mjs'));
   template = injectSnippet(template, '/* __IFRAME_QUEUE__ */', join(here, 'iframe-queue.mjs'));
   template = injectSnippet(template, '/* __RUN_MONTH__ */', join(here, 'run-month.mjs'));
   template = injectSnippet(template, '/* __VOTES__ */', join(here, 'votes.mjs'));
