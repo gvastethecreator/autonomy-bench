@@ -2,6 +2,8 @@
 
 This repository is a benchmark coordinator and a static gallery. It does not store user accounts.
 
+Gallery winner votes use one anonymous `ab_voter` cookie (UUID, HttpOnly, SameSite=Lax). The Worker stores `voter_id`, `prompt_id`, `model_id`, and timestamps in D1. It does not store IP, User-Agent, or session analytics. A second browser or a private window can vote again. That is accepted for this public crown.
+
 ## Report a vulnerability
 
 Do not open a public issue for a suspected secret or exploit.

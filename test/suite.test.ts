@@ -9,48 +9,28 @@ const suite = JSON.parse(
 );
 
 describe('browser-autonomy suite', () => {
-  it('has unique ids and A/B/C prompts', () => {
+  it('has unique ids and a frozen A prompt', () => {
     const ids = new Set<string>();
+    expect(suite.promptLevels.A.name).toBe('Raw');
+    expect(suite.promptLevels.B.name).toBe('Autonomous');
+    expect(suite.promptLevels.C.name).toBe('Showcase');
     for (const benchmark of suite.benchmarks) {
       expect(ids.has(benchmark.id)).toBe(false);
       ids.add(benchmark.id);
-      for (const level of ['A', 'B', 'C'] as const) {
-        expect(String(benchmark.prompts?.[level] || '').trim().length).toBeGreaterThan(0);
-      }
+      expect(String(benchmark.prompts?.A || '').trim().length).toBeGreaterThan(0);
+      expect(benchmark.prompts.B).toBeUndefined();
+      expect(benchmark.prompts.C).toBeUndefined();
     }
     expect(suite.benchmarks.length).toBeGreaterThan(0);
   });
 
-  it('gives every C prompt a specific self-running showcase direction', () => {
-    expect(suite.promptLevels.C.name).toBe('Showcase');
-    for (const benchmark of suite.benchmarks) {
-      expect(benchmark.prompts.C).toContain('visually striking animated showcase');
-      expect(benchmark.prompts.C).toMatch(/automatic|automatically/);
-      expect(benchmark.prompts.C).toMatch(/do not require/i);
-      expect(benchmark.prompts.C).not.toContain('polished interactive experience');
-    }
-    const cPrompts = suite.benchmarks.map(
-      (benchmark: { prompts: { C: string } }) => benchmark.prompts.C,
-    );
-    expect(new Set(cPrompts).size).toBe(suite.benchmarks.length);
-  });
-
-  it('replaces the infinite maze ladder with autonomous traversal prompts', () => {
+  it('keeps infinite maze as an autonomous traversal prompt', () => {
     const maze = suite.benchmarks.find(
       (benchmark: { id: string }) => benchmark.id === 'infinite-maze',
     );
 
     expect(maze.prompts.A).toBe(
       'Create a continuously self-navigating infinite first-person maze in a single HTML file using Three.js. When the page loads, start the journey automatically. Do not require keyboard, mouse, touch, or pointer-lock input.',
-    );
-    expect(maze.prompts.B).toContain(
-      'Generate new maze sections ahead of the camera and choose valid routes automatically.',
-    );
-    expect(maze.prompts.C).toContain(
-      'Generate new maze sections ahead of the camera and choose valid routes without stopping or getting trapped.',
-    );
-    expect(maze.prompts.C).toContain(
-      'Give successive areas distinct architecture, lighting, atmosphere, landmarks, and moments of discovery.',
     );
   });
 });

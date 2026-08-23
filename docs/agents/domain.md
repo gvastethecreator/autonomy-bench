@@ -25,7 +25,7 @@ This repo is single-context. Do not add `CONTEXT-MAP.md` unless a second bounded
 
 When output names a domain concept (issue title, refactor proposal, hypothesis, test name), use the `CONTEXT.md` term. Do not drift to synonyms the glossary avoids.
 
-Project terms already in public docs: suite, cell, prompt level (A/B/C), run, receipt, gallery take, harness, adapter, prompt revision.
+Project terms already in public docs: suite, cell, prompt (frozen v1), run, receipt, gallery take, harness, adapter, prompt revision.
 
 If the concept is missing from the glossary: inventing language the project does not use (reconsider), or a real gap (note it for `/grill-with-docs`).
 

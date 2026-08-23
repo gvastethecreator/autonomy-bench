@@ -19,14 +19,14 @@ VS Code tasks live in `.vscode/tasks.json`. Install the Vite Plus extension pack
 ```powershell
 vp run bench -- list
 vp run bench -- show rollercoaster --level A
-vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A,B,C --attempts 2 --adapter manual --harness cursor
+vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A --attempts 2 --adapter manual --harness cursor --contributor gvastethecreator
 vp run bench -- status --run <run-id>
 vp run bench -- gallery --run <run-id>
 vp run bench -- export-prototype-lab --run <run-id>
 vp run bench -- finalize --run <run-id>
 ```
 
-`plan` never calls a model. It freezes the matrix and writes one isolated work packet per cell.
+`plan` never calls a model. It freezes the matrix and writes one isolated work packet per cell. `--contributor` is a GitHub login stored on every cell receipt with that take's avatar URL.
 
 ## Run mode and adapter
 
@@ -34,11 +34,11 @@ A run mode describes **what is compared**. An adapter describes **how cells are 
 
 Run modes:
 
-- `single`: one benchmark × one prompt level × one model.
-- `prompt-ladder`: A/B/C for the same benchmark and model, always in fresh contexts.
+- `single`: one benchmark × one model.
+- `prompt-ladder`: A/B/C slots stay in the suite. A is frozen; B and C prompts are reserved until written.
 - `model-shootout`: several models against the same frozen prompt.
-- `matrix`: chosen benchmarks × levels × models × attempts.
-- `suite`: the complete 33 × 3 matrix.
+- `matrix`: chosen benchmarks × models × attempts.
+- `suite`: the complete 33-benchmark matrix.
 
 Adapters:
 
@@ -56,6 +56,14 @@ vp run deploy
 ```
 
 `gallery --run` copies each take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus `gallery/vendor/anime.esm.min.js`.
+
+Local votes need the D1 schema once:
+
+```powershell
+npx wrangler d1 migrations apply benchmark-votes --local
+```
+
+Production votes need the same command with `--remote` after the first deploy that binds `benchmark-votes`.
 
 `--viewer` rebuilds only the viewer and the Anime.js bundle.
 

@@ -2,11 +2,13 @@
 
 Autonomy Bench has five layers:
 
-1. **Suite** — versioned benchmark definitions and prompt levels.
-2. **Planner** — expands benchmark × level × model × attempt into immutable cells.
+1. **Suite** — versioned benchmark definitions and frozen v1 prompts.
+2. **Planner** — expands benchmark × model × attempt into immutable cells.
 3. **Adapter** — manual, isolated agent, or Prototype Lab execution.
-4. **Ledger** — per-cell factual receipts plus output hashes.
+4. **Ledger** — per-cell factual receipts plus output hashes and the GitHub contributor.
 5. **Evaluation** — optional blind scores/reviews stored separately from execution provenance.
+
+Gallery winner votes are not a sixth method layer. They are a public popularity mark on the stage viewer. They live in D1, not in receipts.
 
 This separation allows the benchmark method to stay stable while model providers and execution tools change.
 
@@ -33,6 +35,8 @@ receipts/YYYY/MM/DD/            workflow receipts
 SKILLS/autonomy-bench/          coordinator skill
 scripts/bench.mjs               plan / status / finalize
 scripts/gallery.mjs             publish takes into gallery/
+workers/gallery.ts              vote API in front of gallery assets
+migrations/                     D1 schema for gallery votes
 schemas/                        receipt and manifest schemas
 ```
 

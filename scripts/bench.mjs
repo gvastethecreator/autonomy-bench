@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveContributor } from './contributor.mjs';
 import { cellRelPath, slug } from './layout.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,6 +57,16 @@ function parse(argv) {
   }
   return { command, args };
 }
+function hasPrompt(benchmark, level) {
+  return Boolean(String(benchmark?.prompts?.[level] || '').trim());
+}
+function declaredLevels(s) {
+  const keys = Object.keys(s.promptLevels || { A: true });
+  return keys.length ? keys : ['A'];
+}
+function frozenLevels(s) {
+  return declaredLevels(s).filter((level) => s.benchmarks.every((b) => hasPrompt(b, level)));
+}
 function csv(value, fallback = []) {
   return value
     ? String(value)
@@ -93,7 +104,7 @@ function findRun(id) {
 }
 function help() {
   console.log(
-    `Autonomy Bench\n\nCommands:\n  list [--suite path]\n  show <benchmark-id> [--level A|B|C]\n  plan --models a,b [--benchmarks id,id|all] [--levels A,B,C] [--attempts 1] [--adapter manual|agent|prototype-lab] [--harness name] [--label name]\n  status --run <run-id>\n  gallery --run <run-id>\n  export-prototype-lab --run <run-id>\n  finalize --run <run-id>\n  doctor\n`,
+    `Autonomy Bench\n\nCommands:\n  list [--suite path]\n  show <benchmark-id> [--level A]\n  plan --models a,b [--benchmarks id,id|all] [--levels A] [--attempts 1] [--adapter manual|agent|prototype-lab] [--harness name] [--contributor github-login] [--label name]\n  status --run <run-id>\n  gallery --run <run-id>\n  export-prototype-lab --run <run-id>\n  finalize --run <run-id>\n  doctor\n`,
   );
 }
 
@@ -111,15 +122,23 @@ function cmdShow(args) {
   const b = getBenchmark(s, id);
   if (args.level) {
     const level = String(args.level).toUpperCase();
-    if (!b.prompts[level]) throw new Error(`Unknown level: ${level}`);
+    if (!declaredLevels(s).includes(level)) throw new Error(`Unknown level: ${level}`);
+    if (!hasPrompt(b, level)) throw new Error(`${b.id} has no ${level} prompt yet`);
     console.log(b.prompts[level]);
     return;
   }
   console.log(`${b.title} (${b.id})\n`);
-  for (const level of ['A', 'B', 'C'])
-    console.log(`${level} — ${s.promptLevels[level].name}\n${b.prompts[level]}\n`);
+  for (const level of declaredLevels(s)) {
+    const name = s.promptLevels?.[level]?.name || level;
+    const text = b.prompts?.[level];
+    if (!hasPrompt(b, level)) {
+      console.log(`${level} — ${name}\n(reserved — no prompt yet)\n`);
+      continue;
+    }
+    console.log(`${level} — ${name}\n${text}\n`);
+  }
 }
-function receiptTemplate({ runId, cell, adapter, harness, promptSha }) {
+function receiptTemplate({ runId, cell, adapter, harness, promptSha, contributor }) {
   return {
     schemaVersion: 1,
     runId,
@@ -128,6 +147,7 @@ function receiptTemplate({ runId, cell, adapter, harness, promptSha }) {
     promptLevel: cell.promptLevel,
     attempt: cell.attempt,
     requestedModel: cell.requestedModel,
+    contributor,
     effectiveModel: 'not captured',
     effectiveModelSource: 'not-captured',
     reasoning: 'not captured',
@@ -163,13 +183,15 @@ function cmdPlan(args) {
   const benches = requestedBench.includes('all')
     ? s.benchmarks
     : requestedBench.map((id) => getBenchmark(s, id));
-  const levels = csv(args.levels, ['A', 'B', 'C']).map((x) => x.toUpperCase());
-  for (const l of levels) if (!['A', 'B', 'C'].includes(l)) throw new Error(`Unknown level ${l}`);
+  const allowed = declaredLevels(s);
+  const levels = csv(args.levels, frozenLevels(s)).map((x) => x.toUpperCase());
+  for (const l of levels) if (!allowed.includes(l)) throw new Error(`Unknown level ${l}`);
   const attempts = Math.max(1, Number(args.attempts || 1));
   const adapter = args.adapter || 'manual';
   if (!['manual', 'agent', 'prototype-lab'].includes(adapter))
     throw new Error(`Unknown adapter ${adapter}`);
   const harness = String(args.harness || '').trim() || 'not captured';
+  const contributor = resolveContributor({ github: args.contributor });
   const lp = localParts();
   const date = `${lp.year}-${lp.month}-${lp.day}`;
   const seed = JSON.stringify({
@@ -195,6 +217,7 @@ function cmdPlan(args) {
           const cellDir = ensure(join(runDir, rel));
           ensure(join(cellDir, 'output'));
           const prompt = b.prompts[level];
+          if (!hasPrompt(b, level)) throw new Error(`${b.id} has no ${level} prompt yet`);
           writeFileSync(join(cellDir, 'prompt.md'), prompt + '\n');
           const promptSha = sha256(prompt + '\n');
           const cell = {
@@ -212,8 +235,11 @@ function cmdPlan(args) {
           cells.push(cell);
           writeFileSync(
             join(cellDir, 'receipt.template.json'),
-            JSON.stringify(receiptTemplate({ runId, cell, adapter, harness, promptSha }), null, 2) +
-              '\n',
+            JSON.stringify(
+              receiptTemplate({ runId, cell, adapter, harness, promptSha, contributor }),
+              null,
+              2,
+            ) + '\n',
           );
         }
   const manifest = {
@@ -394,14 +420,21 @@ function cmdDoctor() {
   for (const b of s.benchmarks) {
     if (ids.has(b.id)) errors.push(`duplicate id ${b.id}`);
     ids.add(b.id);
-    for (const l of ['A', 'B', 'C'])
-      if (!b.prompts?.[l]?.trim()) errors.push(`${b.id} missing ${l}`);
+    if (!hasPrompt(b, 'A')) errors.push(`${b.id} missing A`);
+    for (const l of frozenLevels(s))
+      if (!hasPrompt(b, l)) errors.push(`${b.id} missing ${l}`);
   }
   if (errors.length) {
     console.error(errors.join('\n'));
     process.exitCode = 1;
-  } else
-    console.log(`OK — ${s.id} ${s.version}: ${s.benchmarks.length} benchmarks × 3 prompt levels`);
+  } else {
+    const frozen = frozenLevels(s);
+    const reserved = declaredLevels(s).filter((l) => !frozen.includes(l));
+    const reservedNote = reserved.length ? ` (${reserved.join(', ')} reserved)` : '';
+    console.log(
+      `OK — ${s.id} ${s.version}: ${s.benchmarks.length} benchmarks × ${declaredLevels(s).length} prompt level${reservedNote}`,
+    );
+  }
 }
 
 const { command, args } = parse(process.argv.slice(2));

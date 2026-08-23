@@ -1,8 +1,26 @@
 # Changelog
 
+## 0.6.0 — 2026-08-23
+
+- Add anonymous gallery winner votes. One vote per visitor per prompt-V (`rollercoaster-A`). The vote targets a model, not a take date.
+- Identity is an `ab_voter` cookie. The store does not record IP or User-Agent.
+- A crown button sits next to the model name in place of the take status badge. Gold means your vote. A gold crown on the model list marks the unique leader. Ties show no public crown.
+- Keep the experiment emoji beside its label in the sidebar dropdown. Filter the model list to the current month or run and animate models that enter or leave.
+- Votes live in Cloudflare D1 (`benchmark-votes`) behind `GET`/`PUT`/`DELETE /api/votes`. They are not evaluation scores and do not belong in receipts.
+
+## 0.5.0 — 2026-08-23
+
+- Keep A/B/C as prompt-level slots. A is the frozen v1 prompt. B and C stay reserved until those prompts are written.
+- Remove published B/C gallery takes and run cells. The public stage still exposes A/B/C buttons; B and C show empty until takes land.
+- Default experiment order: Rollercoaster, then Endless Driving, Medieval City, Procedural Biped, Infinite Maze.
+- Move the prompt, Copy prompt, HTML, and Receipt onto a toolbar on each take. Multi-take views stack HTML and receipt panels per take.
+- Gallery sidebar lists only models that have a generated HTML take for the selected benchmark. Anime.js layout animates models that enter or leave the list.
+- Multi-take toolbars collapse actions and the status badge to icons with custom tooltips. HTML and receipt stacks scroll as equal-height cards. The experiment menu shows a desaturated emoji before the name.
+- Suite version `1.5.0`.
+
 ## 0.4.0 — 2026-08-23
 
-- Browser Autonomy Suite v1.3.0: every C prompt now defines a benchmark-specific, self-running animated showcase. Replace all Infinite Maze prompts with autonomous traversal and invalidate its previous A/B/C takes.
+- Cell receipts record the GitHub contributor (login + avatar). The gallery stamps missing contributors as `gvastethecreator`. Imported Qwen 3.8 27B and Ornith 1.5 35B rollercoaster A takes are `franky47`.
 - Published C and Infinite Maze takes keep a single prompt revision (v1). The current showcase C prompts and the current autonomous maze prompts are v1. Stub folders without `promptSha256` are not a second revision.
 - Add `SECURITY.md`, slim the README, and split CLI plus gallery viewer detail into `docs/`.
 - Browser Autonomy Suite v1.2.0: prompt C is a finished automatic showcase instead of a polished interactive experience. Published C takes and ledger C cells were removed and must be re-run.

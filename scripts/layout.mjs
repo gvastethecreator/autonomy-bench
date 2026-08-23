@@ -81,7 +81,7 @@ export function galleryRelPath({ model, benchmarkId, promptLevel, date, runId, a
 export function assignPromptRevisions(cells) {
   const next = cells.map((cell) => ({
     ...cell,
-    promptSha256: cell.promptSha256 || cell.receipt?.promptSha256 || '',
+    promptSha256: cell.promptSha256 || cell.promptSha256 || cell.receipt?.promptSha256 || cell.receipt?.promptSha256 || '',
   }));
   const groups = new Map();
   for (const cell of next) {
@@ -109,13 +109,14 @@ export function assignPromptRevisions(cells) {
       const revision = index + 1;
       shaToRev.set(sha, revision);
       const sample = group.find((cell) => cell.promptSha256 === sha);
+      const firstSeen = shaFirst.get(sha) || '';
       promptRevisions.push({
         experiment,
         level,
         revision,
         sha256: sha,
         prompt: sample?.prompt || '',
-        firstSeen: shaFirst.get(sha) || '',
+        firstSeen,
       });
     });
     for (const cell of group) {
@@ -232,7 +233,7 @@ export function buildCatalogFromCells(cells, extras = {}) {
     const mine = revised.filter((cell) => cell.model === id);
     return {
       id,
-      complete: countBy(mine, ['complete']),
+      complete: countBy(mine, ['complete', 'complete']),
       unavailable: countBy(mine, ['unavailable']),
       pending: countBy(mine, ['pending', 'missing']),
       failed: countBy(mine, ['failed', 'blocked']),
