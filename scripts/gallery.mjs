@@ -6,7 +6,6 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -85,6 +84,10 @@ function loadSuite() {
   return existsSync(path) ? json(path) : null;
 }
 
+function supportedPromptLevels(suite = loadSuite()) {
+  return new Set(Object.keys(suite?.promptLevels || { A: true }));
+}
+
 function cellField(cell, ...keys) {
   for (const key of keys) {
     if (cell[key] != null && cell[key] !== '') return cell[key];
@@ -104,6 +107,7 @@ function isPlayable(hasHtml, status) {
 
 function indexPublishedCells(galleryDir, suite) {
   const titles = new Map((suite?.benchmarks || []).map((b) => [b.id, b.title]));
+  const levels = supportedPromptLevels(suite);
   const cells = [];
   if (!existsSync(galleryDir)) return cells;
   for (const modelName of readdirSync(galleryDir)) {
@@ -113,7 +117,7 @@ function indexPublishedCells(galleryDir, suite) {
     for (const promptV of readdirSync(modelDir)) {
       const parsed = parsePromptVersion(promptV);
       const level = String(parsed.promptLevel || parsed.promptLevel || '').toUpperCase();
-      if (level !== 'A') continue;
+      if (!levels.has(level)) continue;
       const pvDir = join(modelDir, promptV);
       if (!statSync(pvDir).isDirectory()) continue;
       for (const date of readdirSync(pvDir)) {
@@ -227,29 +231,9 @@ function listRuns() {
   return runs;
 }
 
-function stripReservedGalleryLevels() {
-  if (!existsSync(GALLERY)) return 0;
-  let removed = 0;
-  for (const modelName of readdirSync(GALLERY)) {
-    if (SKIP.has(modelName)) continue;
-    const modelDir = join(GALLERY, modelName);
-    if (!statSync(modelDir).isDirectory()) continue;
-    for (const promptV of readdirSync(modelDir)) {
-      const parsed = parsePromptVersion(promptV);
-      const level = String(parsed.promptLevel || parsed.promptLevel || '').toUpperCase();
-      if (level !== 'B' && level !== 'C' && !/-[BC]$/.test(promptV)) continue;
-      rmSync(join(modelDir, promptV), { recursive: true, force: true });
-      removed++;
-    }
-    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
-      rmSync(modelDir, { recursive: true, force: true });
-    }
-  }
-  return removed;
-}
-
 function publishRun(runDir) {
   const m = json(join(runDir, 'manifest.json'));
+  const levels = supportedPromptLevels();
   const experimentOrder = [];
   const seenExp = new Set();
   const modelOrder = [];
@@ -260,7 +244,7 @@ function publishRun(runDir) {
 
   for (const cell of m.cells || []) {
     const level = String(cellField(cell, 'promptLevel', 'promptLevel')).toUpperCase();
-    if (level !== 'A') continue;
+    if (!levels.has(level)) continue;
     const benchmarkId = cellField(cell, 'benchmarkId', 'benchmarkId');
     const model = cellField(cell, 'requestedModel', 'requestedModel');
     if (!benchmarkId || !model) continue;
@@ -281,7 +265,7 @@ function publishRun(runDir) {
     const destRel = galleryRelPath({
       model,
       benchmarkId,
-      promptLevel: 'A',
+      promptLevel: level,
       date: m.date,
       runId: m.runId,
       attempt: cell.attempt || cell.attempt || 1,
@@ -314,7 +298,6 @@ function publishRun(runDir) {
 }
 
 function finishGallery(extras, counts) {
-  const dropped = stripReservedGalleryLevels();
   const suite = loadSuite();
   const experimentOrder = [...(extras.experimentOrder || [])];
   const seenExp = new Set(experimentOrder);
@@ -334,7 +317,6 @@ function finishGallery(extras, counts) {
   console.log(
     `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
   );
-  if (dropped) console.log(`removed ${dropped} reserved B/C gallery folders`);
   console.log(`viewer sha256 ${hash}`);
 }
 
@@ -345,8 +327,6 @@ function cmdGallery(args) {
   const modelOrder = [];
   const seenModel = new Set();
   let last = null;
-
-  stripReservedGalleryLevels();
 
   const runs =
     args.all || (!args.run && !args.viewer)
@@ -389,14 +369,12 @@ function cmdGallery(args) {
 try {
   const args = parse(process.argv.slice(2));
   if (args.viewer) {
-    const dropped = stripReservedGalleryLevels();
     const catalog = writeCatalog();
     const hash = writeGalleryViewer();
     console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
     console.log(
       `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
     );
-    if (dropped) console.log(`removed ${dropped} reserved B/C gallery folders`);
     console.log(`viewer sha256 ${hash}`);
   } else {
     cmdGallery(args);
