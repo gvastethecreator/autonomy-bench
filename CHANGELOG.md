@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 — 2026-08-23
+
+- Browser Autonomy Suite v2.0.0 keeps all 33 benchmark concepts while refactoring Raw A prompts around controlled under-specification. Rollercoaster A remains byte-for-byte unchanged.
+- Activate the full A/B/C prompt ladder. B appends one universal 20-word autonomy suffix to A; C appends one universal 20-word showcase suffix to B. Suite tests lock both constructions and word deltas.
+- Remove unnecessary `interactive`, `polished`, `exceptional`, `playable`, `playful`, `explorable`, and similar pressure from Raw prompts where it is not semantically essential. Cursor Experiment intentionally remains interactive; Infinite Maze remains explicitly self-navigating.
+- Adopt showcase-first, interaction-optional evaluation as a review lens rather than a hidden worker requirement.
+- Add `judgment` and `showcaseQuality` to the default evaluation profile, separating decision quality from autonomy and presentation quality from general UX/visual finish.
+- Publish and index A/B/C gallery takes instead of deleting or filtering B/C as reserved levels.
+- Update methodology, contribution rules, CLI docs, coordinator skill, suite README, and evaluation guidance for the live prompt ladder.
+
 ## 0.6.0 — 2026-08-23
 
 - Add anonymous gallery winner votes. One vote per visitor per prompt-V (`rollercoaster-A`). The vote targets a model, not a take date.
