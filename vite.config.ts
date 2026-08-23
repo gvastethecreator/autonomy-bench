@@ -8,6 +8,8 @@ const generated = [
   '.wrangler/**',
   'dist/**',
   'node_modules/**',
+  'worker-configuration.d.ts',
+  'workers/**',
 ];
 
 export default defineConfig({

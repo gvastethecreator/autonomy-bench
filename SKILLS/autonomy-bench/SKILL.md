@@ -1,6 +1,6 @@
 ---
 name: autonomy-bench
-description: 'Plan, execute, record, compare, and finalize reproducible model-autonomy benchmarks from versioned prompt suites. Use for single-HTML coding benchmarks, A/B/C prompt ladders, model shootouts, repeated trials, receipt-driven run histories, and Prototype Lab export.'
+description: 'Plan, execute, record, compare, and finalize reproducible model-autonomy benchmarks from versioned prompt suites. Use for single-HTML coding benchmarks, frozen v1 prompts, model shootouts, repeated trials, receipt-driven run histories, and Prototype Lab export.'
 ---
 
 # Autonomy Bench
@@ -11,7 +11,7 @@ Autonomy Bench is a **benchmark coordinator**, not a design treatment. It freeze
 
 - Never improve, clarify, or secretly expand a benchmark prompt before dispatch.
 - Never let one benchmark cell see sibling outputs, scores, critiques, or coordinator preferences.
-- A/B/C prompt levels are independent runs. Do not continue the same conversation from A to B to C.
+- Each benchmark has a frozen v1 A prompt. B and C stay reserved until those prompts are written. Do not continue a conversation from one cell into another.
 - Record only observable provenance. Unknown values stay `not captured`.
 - Do not request or store hidden chain-of-thought. Evaluation records conclusions, evidence, and concise rationales only.
 - One cell = one benchmark + one prompt level + one requested model + one attempt.
@@ -36,7 +36,7 @@ Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
 2. Freeze a run with `bench plan`. Keep the generated `manifest.json` immutable.
 3. Dispatch every cell in a fresh context using only its `prompt.md` and permitted execution envelope.
 4. Save model-produced files under that cell's `output/` directory.
-5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, harness (program), timing, token usage when visible, isolation evidence, tool visibility, limitations, and output hashes.
+5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, harness (program), contributor GitHub login, timing, token usage when visible, isolation evidence, tool visibility, limitations, and output hashes. Unknown stays `not captured`.
 6. Evaluate only after raw outputs are frozen. Prefer blind evaluation when comparing models.
 7. Run `bench status`; resolve missing receipts or record blockers explicitly.
 8. Run `bench gallery --run <run-id>` to copy HTML, prompts, and receipts into `gallery/<model>/<prompt-V>/<fecha>/` and rebuild the public catalog from that tree. Serve `gallery/` (`vp run dev`) and publish that folder.

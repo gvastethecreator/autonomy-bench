@@ -1,1 +1,0 @@
-Create a continuously self-navigating infinite first-person maze in a single HTML file using Three.js. When the page loads, start the journey automatically. Do not require keyboard, mouse, touch, or pointer-lock input. Generate new maze sections ahead of the camera and choose valid routes automatically. Make sensible design and implementation decisions yourself.

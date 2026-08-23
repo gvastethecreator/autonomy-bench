@@ -2,11 +2,7 @@
 
 Receipt-driven benchmark for how coding models handle underspecified single-HTML browser tasks.
 
-The suite has 33 tasks. Each task uses a three-level prompt ladder:
-
-- **A — Raw:** the minimum task statement.
-- **B — Autonomous:** the same task, with permission to decide design and implementation.
-- **C — Showcase:** a self-running animated showcase. Interaction stays optional.
+The suite has 33 tasks. Each task has a frozen v1 A prompt: a minimum statement of the work. B and C remain reserved ladder slots. The model decides design, implementation, and how finished the result should feel.
 
 This is not a typical coding test. It measures what a model adds when the prompt leaves important decisions open.
 
@@ -30,7 +26,7 @@ vp run dev
 
 ```powershell
 vp run bench -- list
-vp run bench -- plan --models grok-4.6 --benchmarks rollercoaster --levels A,B,C --adapter agent --harness cursor
+vp run bench -- plan --models grok-4.6 --benchmarks rollercoaster --levels A --adapter agent --harness cursor
 vp run bench -- gallery --run <run-id>
 vp run deploy
 ```
@@ -51,9 +47,9 @@ Full CLI, run modes, and gallery publish steps: [docs/commands.md](docs/commands
 
 ## Status
 
-- Suite version `1.3.0` in `suites/browser-autonomy/suite.json`.
-- Package version `0.4.0`. See [CHANGELOG.md](CHANGELOG.md).
-- Prompt C is a finished automatic showcase. Infinite Maze A/B/C use autonomous traversal. Published revisions are v1 of those prompts.
+- Suite version `1.5.0` in `suites/browser-autonomy/suite.json`.
+- Package version `0.6.0`. See [CHANGELOG.md](CHANGELOG.md).
+- Prompt A is frozen v1. B and C stay reserved until those prompts are written. Infinite Maze still requires autonomous traversal. Published gallery takes are A.
 - `n=1` runs are exploratory. Use at least two independent attempts before claiming a stable model effect.
 
 ## License
