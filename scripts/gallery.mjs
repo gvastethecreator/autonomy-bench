@@ -85,6 +85,10 @@ function loadSuite() {
   return existsSync(path) ? json(path) : null;
 }
 
+function supportedPromptLevels(suite = loadSuite()) {
+  return new Set(Object.keys(suite?.promptLevels || { A: true }));
+}
+
 function cellField(cell, ...keys) {
   for (const key of keys) {
     if (cell[key] != null && cell[key] !== '') return cell[key];
@@ -93,7 +97,7 @@ function cellField(cell, ...keys) {
 }
 
 function publishStatus(status) {
-  if (status === 'complete' || status === 'complete') return 'complete';
+  if (status === 'complete') return 'complete';
   return status || 'missing';
 }
 
@@ -102,8 +106,36 @@ function isPlayable(hasHtml, status) {
   return hasHtml && (st === 'complete' || st === 'pending');
 }
 
+function liveBenchmarkIds() {
+  return new Set((loadSuite()?.benchmarks || []).map((b) => b.id));
+}
+
+function stripRetiredGalleryBenchmarks() {
+  if (!existsSync(GALLERY)) return 0;
+  const known = liveBenchmarkIds();
+  if (!known.size) return 0;
+  let removed = 0;
+  for (const modelName of readdirSync(GALLERY)) {
+    if (SKIP.has(modelName)) continue;
+    const modelDir = join(GALLERY, modelName);
+    if (!statSync(modelDir).isDirectory()) continue;
+    for (const promptV of readdirSync(modelDir)) {
+      const parsed = parsePromptVersion(promptV);
+      const id = parsed.benchmarkId;
+      if (!id || known.has(id)) continue;
+      rmSync(join(modelDir, promptV), { recursive: true, force: true });
+      removed++;
+    }
+    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
+      rmSync(modelDir, { recursive: true, force: true });
+    }
+  }
+  return removed;
+}
+
 function indexPublishedCells(galleryDir, suite) {
   const titles = new Map((suite?.benchmarks || []).map((b) => [b.id, b.title]));
+  const levels = supportedPromptLevels(suite);
   const cells = [];
   if (!existsSync(galleryDir)) return cells;
   for (const modelName of readdirSync(galleryDir)) {
@@ -112,8 +144,8 @@ function indexPublishedCells(galleryDir, suite) {
     if (!statSync(modelDir).isDirectory()) continue;
     for (const promptV of readdirSync(modelDir)) {
       const parsed = parsePromptVersion(promptV);
-      const level = String(parsed.promptLevel || parsed.promptLevel || '').toUpperCase();
-      if (level !== 'A') continue;
+      const level = String(parsed.promptLevel || '').toUpperCase();
+      if (!levels.has(level)) continue;
       const pvDir = join(modelDir, promptV);
       if (!statSync(pvDir).isDirectory()) continue;
       for (const date of readdirSync(pvDir)) {
@@ -134,10 +166,10 @@ function indexPublishedCells(galleryDir, suite) {
         if (!hasHtml && !receipt) continue;
         const status = publishStatus(receipt ? receipt.status : hasHtml ? 'pending' : 'missing');
         const rel = `${modelName}/${promptV}/${date}`;
-        const experiment = receipt?.benchmarkId || parsed.benchmarkId || parsed.benchmarkId;
+        const experiment = receipt?.benchmarkId || parsed.benchmarkId;
         if (titles.size && experiment && !titles.has(experiment)) continue;
         const attemptMatch = String(date).match(/-a(\d+)$/);
-        const promptSha = receipt?.promptSha256 || receipt?.promptSha256 || '';
+        const promptSha = receipt?.promptSha256 || '';
         cells.push({
           cellId:
             receipt?.cellId ||
@@ -145,14 +177,11 @@ function indexPublishedCells(galleryDir, suite) {
           model: receipt?.requestedModel || modelName,
           experiment,
           title: titles.get(experiment) || experiment,
-          level: String(
-            receipt?.promptLevel || parsed.promptLevel || parsed.promptLevel,
-          ).toUpperCase(),
+          level: String(receipt?.promptLevel || parsed.promptLevel).toUpperCase(),
           attempt: receipt?.attempt || (attemptMatch ? Number(attemptMatch[1]) : 1),
           status,
           date,
           runId: receipt?.runId || '',
-          promptSha256: promptSha,
           promptSha256: promptSha,
           src: isPlayable(hasHtml, status) ? `${rel}/index.html` : null,
           receiptSrc: receipt ? `${rel}/receipt.json` : null,
@@ -228,56 +257,9 @@ function listRuns() {
   return runs;
 }
 
-function stripReservedGalleryLevels() {
-  if (!existsSync(GALLERY)) return 0;
-  let removed = 0;
-  for (const modelName of readdirSync(GALLERY)) {
-    if (SKIP.has(modelName)) continue;
-    const modelDir = join(GALLERY, modelName);
-    if (!statSync(modelDir).isDirectory()) continue;
-    for (const promptV of readdirSync(modelDir)) {
-      const parsed = parsePromptVersion(promptV);
-      const level = String(parsed.promptLevel || parsed.promptLevel || '').toUpperCase();
-      if (level !== 'B' && level !== 'C' && !/-[BC]$/.test(promptV)) continue;
-      rmSync(join(modelDir, promptV), { recursive: true, force: true });
-      removed++;
-    }
-    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
-      rmSync(modelDir, { recursive: true, force: true });
-    }
-  }
-  return removed;
-}
-
-function liveBenchmarkIds() {
-  return new Set((loadSuite()?.benchmarks || []).map((b) => b.id));
-}
-
-function stripRetiredGalleryBenchmarks() {
-  if (!existsSync(GALLERY)) return 0;
-  const known = liveBenchmarkIds();
-  if (!known.size) return 0;
-  let removed = 0;
-  for (const modelName of readdirSync(GALLERY)) {
-    if (SKIP.has(modelName)) continue;
-    const modelDir = join(GALLERY, modelName);
-    if (!statSync(modelDir).isDirectory()) continue;
-    for (const promptV of readdirSync(modelDir)) {
-      const parsed = parsePromptVersion(promptV);
-      const id = parsed.benchmarkId;
-      if (!id || known.has(id)) continue;
-      rmSync(join(modelDir, promptV), { recursive: true, force: true });
-      removed++;
-    }
-    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
-      rmSync(modelDir, { recursive: true, force: true });
-    }
-  }
-  return removed;
-}
-
 function publishRun(runDir) {
   const m = json(join(runDir, 'manifest.json'));
+  const levels = supportedPromptLevels();
   const experimentOrder = [];
   const seenExp = new Set();
   const modelOrder = [];
@@ -288,10 +270,10 @@ function publishRun(runDir) {
   let copiedPrompts = 0;
 
   for (const cell of m.cells || []) {
-    const level = String(cellField(cell, 'promptLevel', 'promptLevel')).toUpperCase();
-    if (level !== 'A') continue;
-    const benchmarkId = cellField(cell, 'benchmarkId', 'benchmarkId');
-    const model = cellField(cell, 'requestedModel', 'requestedModel');
+    const level = String(cellField(cell, 'promptLevel')).toUpperCase();
+    if (!levels.has(level)) continue;
+    const benchmarkId = cellField(cell, 'benchmarkId');
+    const model = cellField(cell, 'requestedModel');
     if (!benchmarkId || !model) continue;
     if (known.size && !known.has(benchmarkId)) continue;
     if (!seenExp.has(benchmarkId)) {
@@ -302,19 +284,19 @@ function publishRun(runDir) {
       seenModel.add(model);
       modelOrder.push(model);
     }
-    const htmlPath = join(runDir, cellField(cell, 'outputPath', 'outputPath'), 'index.html');
-    const recPath = join(runDir, cellField(cell, 'receiptPath', 'receiptPath'));
-    const promptPath = join(runDir, cellField(cell, 'promptPath', 'promptPath'));
+    const htmlPath = join(runDir, cellField(cell, 'outputPath'), 'index.html');
+    const recPath = join(runDir, cellField(cell, 'receiptPath'));
+    const promptPath = join(runDir, cellField(cell, 'promptPath'));
     const hasHtml = existsSync(htmlPath);
     const receipt = existsSync(recPath) ? json(recPath) : null;
     const status = publishStatus(receipt ? receipt.status : hasHtml ? 'pending' : 'missing');
     const destRel = galleryRelPath({
       model,
       benchmarkId,
-      promptLevel: 'A',
+      promptLevel: level,
       date: m.date,
       runId: m.runId,
-      attempt: cell.attempt || cell.attempt || 1,
+      attempt: cell.attempt || 1,
     });
     if (!isPlayable(hasHtml, status) && !receipt) continue;
     const destDir = ensure(join(GALLERY, destRel));
@@ -344,7 +326,7 @@ function publishRun(runDir) {
 }
 
 function finishGallery(extras, counts) {
-  const dropped = stripReservedGalleryLevels() + stripRetiredGalleryBenchmarks();
+  const dropped = stripRetiredGalleryBenchmarks();
   const suite = loadSuite();
   const known = liveBenchmarkIds();
   const experimentOrder = [...(extras.experimentOrder || [])].filter(
@@ -367,7 +349,7 @@ function finishGallery(extras, counts) {
   console.log(
     `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
   );
-  if (dropped) console.log(`removed ${dropped} retired or reserved gallery folders`);
+  if (dropped) console.log(`removed ${dropped} retired gallery folders`);
   console.log(`viewer sha256 ${hash}`);
 }
 
@@ -379,7 +361,6 @@ function cmdGallery(args) {
   const seenModel = new Set();
   let last = null;
 
-  stripReservedGalleryLevels();
   stripRetiredGalleryBenchmarks();
 
   const runs =
@@ -423,14 +404,14 @@ function cmdGallery(args) {
 try {
   const args = parse(process.argv.slice(2));
   if (args.viewer) {
-    const dropped = stripReservedGalleryLevels() + stripRetiredGalleryBenchmarks();
+    const dropped = stripRetiredGalleryBenchmarks();
     const catalog = writeCatalog();
     const hash = writeGalleryViewer();
     console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
     console.log(
       `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
     );
-    if (dropped) console.log(`removed ${dropped} retired or reserved gallery folders`);
+    if (dropped) console.log(`removed ${dropped} retired gallery folders`);
     console.log(`viewer sha256 ${hash}`);
   } else {
     cmdGallery(args);

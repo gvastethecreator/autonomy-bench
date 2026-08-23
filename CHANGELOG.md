@@ -2,9 +2,15 @@
 
 ## 0.7.0 — 2026-08-23
 
-- Remove Terrain Explorer (`terrain-explorer`) from the Browser Autonomy Suite.
-- Suite version `1.6.0`: 32 benchmarks.
+- Browser Autonomy Suite v2.0.0: 32 benchmarks with a frozen A/B/C prompt ladder. Rollercoaster A remains byte-for-byte unchanged.
+- Remove Terrain Explorer (`terrain-explorer`) from the suite. Frozen run cells stay in the ledger. Gallery publish drops retired benchmark folders.
 - Drop the published `ox-alpha-free` gallery take. Frozen run cells stay in the ledger.
+- Activate the full A/B/C prompt ladder. B appends one universal 20-word autonomy suffix to A; C appends one universal 20-word showcase suffix to B. Suite tests lock both constructions and word deltas.
+- Remove unnecessary `interactive`, `polished`, `exceptional`, `playable`, `playful`, `explorable`, and similar pressure from Raw prompts where it is not semantically essential. Cursor Experiment intentionally remains interactive; Infinite Maze remains explicitly self-navigating.
+- Adopt showcase-first, interaction-optional evaluation as a review lens rather than a hidden worker requirement.
+- Add `judgment` and `showcaseQuality` to the default evaluation profile, separating decision quality from autonomy and presentation quality from general UX/visual finish.
+- Publish and index A/B/C gallery takes instead of deleting or filtering B/C as reserved levels.
+- Update methodology, contribution rules, CLI docs, coordinator skill, suite README, and evaluation guidance for the live prompt ladder.
 
 ## 0.6.0 — 2026-08-23
 
