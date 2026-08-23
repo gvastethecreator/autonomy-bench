@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 — 2026-08-23
+
+- Update toolchain and dependencies: `pnpm@11.22.0`, `vitest@4.1.11`.
+- Clean residual folders, obsolete migration scripts, and scratch drafts.
+- Harden `.gitignore` with `.wrangler/`, logs, and OS/local overrides.
+- Redesign `.vscode/tasks.json` with concise names and emojis (`⚡ dev`, `🔍 check`, `🧪 test`, `🚀 deploy`, etc.).
+- Update documentation and repository toolchain references.
+
 ## 0.3.0 — 2026-08-23
 
 - Adopt Vite+ (`vp`) for Vite, Oxlint, Oxfmt, and Vitest; VS Code tasks live in `.vscode/tasks.json`.
