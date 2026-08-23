@@ -21,7 +21,10 @@ describe('browser-autonomy suite', () => {
       expect(benchmark.prompts.B).toBeUndefined();
       expect(benchmark.prompts.C).toBeUndefined();
     }
-    expect(suite.benchmarks.length).toBeGreaterThan(0);
+    expect(suite.benchmarks.length).toBe(32);
+    expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
+      'terrain-explorer',
+    );
   });
 
   it('keeps infinite maze as an autonomous traversal prompt', () => {

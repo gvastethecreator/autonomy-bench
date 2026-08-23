@@ -135,6 +135,7 @@ function indexPublishedCells(galleryDir, suite) {
         const status = publishStatus(receipt ? receipt.status : hasHtml ? 'pending' : 'missing');
         const rel = `${modelName}/${promptV}/${date}`;
         const experiment = receipt?.benchmarkId || parsed.benchmarkId || parsed.benchmarkId;
+        if (titles.size && experiment && !titles.has(experiment)) continue;
         const attemptMatch = String(date).match(/-a(\d+)$/);
         const promptSha = receipt?.promptSha256 || receipt?.promptSha256 || '';
         cells.push({
@@ -248,12 +249,40 @@ function stripReservedGalleryLevels() {
   return removed;
 }
 
+function liveBenchmarkIds() {
+  return new Set((loadSuite()?.benchmarks || []).map((b) => b.id));
+}
+
+function stripRetiredGalleryBenchmarks() {
+  if (!existsSync(GALLERY)) return 0;
+  const known = liveBenchmarkIds();
+  if (!known.size) return 0;
+  let removed = 0;
+  for (const modelName of readdirSync(GALLERY)) {
+    if (SKIP.has(modelName)) continue;
+    const modelDir = join(GALLERY, modelName);
+    if (!statSync(modelDir).isDirectory()) continue;
+    for (const promptV of readdirSync(modelDir)) {
+      const parsed = parsePromptVersion(promptV);
+      const id = parsed.benchmarkId;
+      if (!id || known.has(id)) continue;
+      rmSync(join(modelDir, promptV), { recursive: true, force: true });
+      removed++;
+    }
+    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
+      rmSync(modelDir, { recursive: true, force: true });
+    }
+  }
+  return removed;
+}
+
 function publishRun(runDir) {
   const m = json(join(runDir, 'manifest.json'));
   const experimentOrder = [];
   const seenExp = new Set();
   const modelOrder = [];
   const seenModel = new Set();
+  const known = liveBenchmarkIds();
   let copiedHtml = 0;
   let copiedReceipts = 0;
   let copiedPrompts = 0;
@@ -264,6 +293,7 @@ function publishRun(runDir) {
     const benchmarkId = cellField(cell, 'benchmarkId', 'benchmarkId');
     const model = cellField(cell, 'requestedModel', 'requestedModel');
     if (!benchmarkId || !model) continue;
+    if (known.size && !known.has(benchmarkId)) continue;
     if (!seenExp.has(benchmarkId)) {
       seenExp.add(benchmarkId);
       experimentOrder.push(benchmarkId);
@@ -314,9 +344,12 @@ function publishRun(runDir) {
 }
 
 function finishGallery(extras, counts) {
-  const dropped = stripReservedGalleryLevels();
+  const dropped = stripReservedGalleryLevels() + stripRetiredGalleryBenchmarks();
   const suite = loadSuite();
-  const experimentOrder = [...(extras.experimentOrder || [])];
+  const known = liveBenchmarkIds();
+  const experimentOrder = [...(extras.experimentOrder || [])].filter(
+    (id) => !known.size || known.has(id),
+  );
   const seenExp = new Set(experimentOrder);
   if (suite?.benchmarks) {
     for (const benchmark of suite.benchmarks) {
@@ -334,7 +367,7 @@ function finishGallery(extras, counts) {
   console.log(
     `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
   );
-  if (dropped) console.log(`removed ${dropped} reserved B/C gallery folders`);
+  if (dropped) console.log(`removed ${dropped} retired or reserved gallery folders`);
   console.log(`viewer sha256 ${hash}`);
 }
 
@@ -347,6 +380,7 @@ function cmdGallery(args) {
   let last = null;
 
   stripReservedGalleryLevels();
+  stripRetiredGalleryBenchmarks();
 
   const runs =
     args.all || (!args.run && !args.viewer)
@@ -389,14 +423,14 @@ function cmdGallery(args) {
 try {
   const args = parse(process.argv.slice(2));
   if (args.viewer) {
-    const dropped = stripReservedGalleryLevels();
+    const dropped = stripReservedGalleryLevels() + stripRetiredGalleryBenchmarks();
     const catalog = writeCatalog();
     const hash = writeGalleryViewer();
     console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
     console.log(
       `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
     );
-    if (dropped) console.log(`removed ${dropped} reserved B/C gallery folders`);
+    if (dropped) console.log(`removed ${dropped} retired or reserved gallery folders`);
     console.log(`viewer sha256 ${hash}`);
   } else {
     cmdGallery(args);

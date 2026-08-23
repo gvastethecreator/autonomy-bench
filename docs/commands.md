@@ -38,7 +38,7 @@ Run modes:
 - `prompt-ladder`: A/B/C slots stay in the suite. A is frozen; B and C prompts are reserved until written.
 - `model-shootout`: several models against the same frozen prompt.
 - `matrix`: chosen benchmarks × models × attempts.
-- `suite`: the complete 33-benchmark matrix.
+- `suite`: the complete 32-benchmark matrix.
 
 Adapters:
 
