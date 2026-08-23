@@ -2,7 +2,7 @@
 
 Receipt-driven benchmark for how coding models handle underspecified single-HTML browser tasks.
 
-The suite has 33 tasks. Each task has a frozen v1 A prompt: a minimum statement of the work. B and C remain reserved ladder slots. The model decides design, implementation, and how finished the result should feel.
+The suite has 32 tasks. Each task has a frozen v1 A prompt: a minimum statement of the work. B and C remain reserved ladder slots. The model decides design, implementation, and how finished the result should feel.
 
 This is not a typical coding test. It measures what a model adds when the prompt leaves important decisions open.
 
@@ -47,8 +47,8 @@ Full CLI, run modes, and gallery publish steps: [docs/commands.md](docs/commands
 
 ## Status
 
-- Suite version `1.5.0` in `suites/browser-autonomy/suite.json`.
-- Package version `0.6.0`. See [CHANGELOG.md](CHANGELOG.md).
+- Suite version `1.6.0` in `suites/browser-autonomy/suite.json`.
+- Package version `0.7.0`. See [CHANGELOG.md](CHANGELOG.md).
 - Prompt A is frozen v1. B and C stay reserved until those prompts are written. Infinite Maze still requires autonomous traversal. Published gallery takes are A.
 - `n=1` runs are exploratory. Use at least two independent attempts before claiming a stable model effect.
 

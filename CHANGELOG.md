@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 — 2026-08-23
+
+- Remove Terrain Explorer (`terrain-explorer`) from the Browser Autonomy Suite.
+- Suite version `1.6.0`: 32 benchmarks.
+- Drop the published `ox-alpha-free` gallery take. Frozen run cells stay in the ledger.
+
 ## 0.6.0 — 2026-08-23
 
 - Add anonymous gallery winner votes. One vote per visitor per prompt-V (`rollercoaster-A`). The vote targets a model, not a take date.
