@@ -421,8 +421,7 @@ function cmdDoctor() {
     if (ids.has(b.id)) errors.push(`duplicate id ${b.id}`);
     ids.add(b.id);
     if (!hasPrompt(b, 'A')) errors.push(`${b.id} missing A`);
-    for (const l of frozenLevels(s))
-      if (!hasPrompt(b, l)) errors.push(`${b.id} missing ${l}`);
+    for (const l of frozenLevels(s)) if (!hasPrompt(b, l)) errors.push(`${b.id} missing ${l}`);
   }
   if (errors.length) {
     console.error(errors.join('\n'));

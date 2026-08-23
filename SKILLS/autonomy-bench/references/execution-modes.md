@@ -3,7 +3,7 @@
 ## Run shapes
 
 - **single** — one cell.
-- **prompt-ladder** — A/B/C slots. A is frozen; B and C prompts are reserved until written.
+- **prompt-ladder** — A/B/C for the same benchmark and model. A is Raw, B adds exactly 20 words of autonomy permission, and C adds exactly 20 further words of showcase pressure.
 - **model-shootout** — same benchmark prompt across models.
 - **matrix** — arbitrary Cartesian selection.
 - **suite** — complete configured suite.
