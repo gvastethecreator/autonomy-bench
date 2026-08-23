@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stride — Procedural Biped</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      overflow: hidden;
+      background: #0a0e17;
+      font-family: 'Outfit', sans-serif;
+      color: #e8edf5;
+    }
+
+    canvas { display: block; }
+
+    #overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    header {
+      position: absolute;
+      top: 28px;
+      left: 32px;
+      pointer-events: auto;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #7eb8ff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    header p {
+      margin-top: 6px;
+      font-size: 0.85rem;
+      font-weight: 300;
+      color: rgba(232, 237, 245, 0.55);
+    }
+
+    #panel {
+      position: absolute;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 22px;
+      background: rgba(12, 18, 32, 0.72);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(126, 184, 255, 0.15);
+      border-radius: 16px;
+      pointer-events: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 120px;
+    }
+
+    .control-group label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(232, 237, 245, 0.45);
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(126, 184, 255, 0.2);
+      outline: none;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #7eb8ff;
+      cursor: pointer;
+      box-shadow: 0 0 12px rgba(126, 184, 255, 0.6);
+    }
+
+    button {
+      padding: 10px 18px;
+      border: 1px solid rgba(126, 184, 255, 0.3);
+      border-radius: 10px;
+      background: rgba(126, 184, 255, 0.12);
+      color: #e8edf5;
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      background: rgba(126, 184, 255, 0.25);
+      border-color: rgba(126, 184, 255, 0.5);
+    }
+
+    button.active {
+      background: rgba(126, 184, 255, 0.35);
+      border-color: #7eb8ff;
+    }
+
+    #hint {
+      position: absolute;
+      bottom: 28px;
+      right: 32px;
+      font-size: 0.75rem;
+      color: rgba(232, 237, 245, 0.35);
+      pointer-events: none;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0e17;
+      z-index: 100;
+      transition: opacity 0.6s;
+    }
+
+    #loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loader-ring {
+      width: 48px;
+      height: 48px;
+      border: 2px solid rgba(126, 184, 255, 0.15);
+      border-top-color: #7eb8ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading"><div class="loader-ring"></div></div>
+
+  <div id="overlay">
+    <header>
+      <h1>Stride</h1>
+      <p>Procedural biped walk cycle</p>
+    </header>
+    <div id="panel">
+      <div class="control-group">
+        <label>Speed</label>
+        <input type="range" id="speed" min="0" max="3" step="0.01" value="1.2">
+      </div>
+      <div class="control-group">
+        <label>Stride</label>
+        <input type="range" id="stride" min="0.5" max="2" step="0.01" value="1">
+      </div>
+      <button id="pauseBtn">Pause</button>
+      <button id="moodBtn">Night</button>
+    </div>
+    <div id="hint">Drag to orbit · Scroll to zoom</div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ── Scene setup ──────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0e17);
+    scene.fog = new THREE.FogExp2(0x0a0e17, 0.028);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 120);
+    camera.position.set(4, 2.8, 6);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 1.1, 0);
+    controls.minDistance = 3;
+    controls.maxDistance = 14;
+    controls.maxPolarAngle = Math.PI / 2 + 0.15;
+
+    // ── Lighting ─────────────────────────────────────────────────
+    const ambient = new THREE.AmbientLight(0x3a5080, 0.5);
+    scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xfff0d0, 2.2);
+    sun.position.set(6, 10, 4);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 30;
+    sun.shadow.camera.left = -8;
+    sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 8;
+    sun.shadow.camera.bottom = -8;
+    sun.shadow.bias = -0.0005;
+    scene.add(sun);
+
+    const rim = new THREE.DirectionalLight(0x7eb8ff, 0.6);
+    rim.position.set(-4, 3, -6);
+    scene.add(rim);
+
+    const fill = new THREE.PointLight(0xff6b9d, 0.4, 12);
+    fill.position.set(-2, 2, 3);
+    scene.add(fill);
+
+    // ── Environment ──────────────────────────────────────────────
+    const groundGeo = new THREE.CircleGeometry(18, 64);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x141c2e,
+      roughness: 0.85,
+      metalness: 0.1,
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const ringGeo = new THREE.RingGeometry(3.5, 3.52, 64);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x7eb8ff, transparent: true, opacity: 0.25, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.01;
+    scene.add(ring);
+
+    const particles = [];
+    const particleGeo = new THREE.SphereGeometry(0.03, 6, 6);
+    for (let i = 0; i < 40; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setHSL(0.58 + Math.random() * 0.1, 0.6, 0.6 + Math.random() * 0.2),
+        transparent: true,
+        opacity: 0.3 + Math.random() * 0.4,
+      });
+      const p = new THREE.Mesh(particleGeo, mat);
+      p.position.set(
+        (Math.random() - 0.5) * 16,
+        Math.random() * 6 + 0.5,
+        (Math.random() - 0.5) * 16
+      );
+      p.userData.speed = 0.2 + Math.random() * 0.5;
+      p.userData.phase = Math.random() * Math.PI * 2;
+      scene.add(p);
+      particles.push(p);
+    }
+
+    // ── Biped construction ───────────────────────────────────────
+    function createLimb(length, radius, color, segments = 8) {
+      const geo = new THREE.CapsuleGeometry(radius, length, segments, 12);
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.45,
+        metalness: 0.15,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function createJoint(radius, color) {
+      const geo = new THREE.SphereGeometry(radius, 16, 16);
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.35,
+        metalness: 0.25,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      return mesh;
+    }
+
+    const COLORS = {
+      body: 0x4a7cff,
+      bodyDark: 0x2d5acc,
+      accent: 0xff6b9d,
+      joint: 0x1a2540,
+      eye: 0xffffff,
+      eyeGlow: 0x7eb8ff,
+    };
+
+    class Biped {
+      constructor() {
+        this.root = new THREE.Group();
+        this.phase = 0;
+        this.walkSpeed = 1.2;
+        this.strideScale = 1;
+        this.paused = false;
+
+        // Pelvis / hips
+        this.hips = new THREE.Group();
+        this.hips.position.y = 1.05;
+        this.root.add(this.hips);
+
+        this.pelvis = createJoint(0.18, COLORS.bodyDark);
+        this.hips.add(this.pelvis);
+
+        // Torso
+        this.torso = new THREE.Group();
+        this.torso.position.y = 0.12;
+        this.hips.add(this.torso);
+
+        const chestGeo = new THREE.CapsuleGeometry(0.22, 0.45, 8, 12);
+        const chestMat = new THREE.MeshStandardMaterial({ color: COLORS.body, roughness: 0.4, metalness: 0.2 });
+        this.chest = new THREE.Mesh(chestGeo, chestMat);
+        this.chest.position.y = 0.35;
+        this.chest.castShadow = true;
+        this.torso.add(this.chest);
+
+        // Head
+        this.neck = new THREE.Group();
+        this.neck.position.y = 0.62;
+        this.torso.add(this.neck);
+
+        const headGeo = new THREE.SphereGeometry(0.2, 20, 20);
+        const headMat = new THREE.MeshStandardMaterial({ color: COLORS.body, roughness: 0.35, metalness: 0.2 });
+        this.head = new THREE.Mesh(headGeo, headMat);
+        this.head.position.y = 0.22;
+        this.head.castShadow = true;
+        this.neck.add(this.head);
+
+        const eyeGeo = new THREE.SphereGeometry(0.05, 10, 10);
+        const eyeMat = new THREE.MeshStandardMaterial({ color: COLORS.eye, emissive: COLORS.eyeGlow, emissiveIntensity: 0.8 });
+        this.eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+        this.eyeL.position.set(-0.08, 0.04, 0.16);
+        this.head.add(this.eyeL);
+        this.eyeR = this.eyeL.clone();
+        this.eyeR.position.x = 0.08;
+        this.head.add(this.eyeR);
+
+        const antenna = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.015, 0.015, 0.2, 8),
+          new THREE.MeshStandardMaterial({ color: COLORS.accent, emissive: COLORS.accent, emissiveIntensity: 0.3 })
+        );
+        antenna.position.set(0, 0.32, 0);
+        this.neck.add(antenna);
+
+        const antennaTip = new THREE.Mesh(
+          new THREE.SphereGeometry(0.04, 10, 10),
+          new THREE.MeshStandardMaterial({ color: COLORS.accent, emissive: COLORS.accent, emissiveIntensity: 0.6 })
+        );
+        antennaTip.position.y = 0.12;
+        antenna.add(antennaTip);
+        this.antennaTip = antennaTip;
+
+        // Legs
+        this.legs = [];
+        for (const side of [-1, 1]) {
+          const leg = this.buildLeg(side);
+          this.legs.push(leg);
+          this.hips.add(leg.root);
+        }
+
+        // Arms
+        this.arms = [];
+        for (const side of [-1, 1]) {
+          const arm = this.buildArm(side);
+          this.arms.push(arm);
+          this.chest.add(arm.root);
+        }
+
+        scene.add(this.root);
+      }
+
+      buildLeg(side) {
+        const root = new THREE.Group();
+        root.position.set(side * 0.14, -0.05, 0);
+
+        const hipJoint = createJoint(0.1, COLORS.joint);
+        root.add(hipJoint);
+
+        const upperGroup = new THREE.Group();
+        root.add(upperGroup);
+
+        const upper = createLimb(0.38, 0.07, COLORS.body);
+        upper.position.y = -0.19;
+        upperGroup.add(upper);
+
+        const kneeGroup = new THREE.Group();
+        kneeGroup.position.y = -0.38;
+        upperGroup.add(kneeGroup);
+
+        const kneeJoint = createJoint(0.08, COLORS.joint);
+        kneeGroup.add(kneeJoint);
+
+        const lower = createLimb(0.36, 0.055, COLORS.bodyDark);
+        lower.position.y = -0.18;
+        kneeGroup.add(lower);
+
+        const footGroup = new THREE.Group();
+        footGroup.position.y = -0.36;
+        kneeGroup.add(footGroup);
+
+        const footGeo = new THREE.BoxGeometry(0.12, 0.05, 0.22);
+        const footMat = new THREE.MeshStandardMaterial({ color: COLORS.accent, roughness: 0.5, metalness: 0.1 });
+        const foot = new THREE.Mesh(footGeo, footMat);
+        foot.position.set(0, -0.025, 0.04);
+        foot.castShadow = true;
+        footGroup.add(foot);
+
+        return { root, upperGroup, kneeGroup, footGroup, side };
+      }
+
+      buildArm(side) {
+        const root = new THREE.Group();
+        root.position.set(side * 0.28, 0.15, 0);
+
+        const shoulder = createJoint(0.07, COLORS.joint);
+        root.add(shoulder);
+
+        const upperGroup = new THREE.Group();
+        root.add(upperGroup);
+
+        const upper = createLimb(0.28, 0.045, COLORS.body);
+        upper.position.y = -0.14;
+        upperGroup.add(upper);
+
+        const elbowGroup = new THREE.Group();
+        elbowGroup.position.y = -0.28;
+        upperGroup.add(elbowGroup);
+
+        const elbow = createJoint(0.055, COLORS.joint);
+        elbowGroup.add(elbow);
+
+        const lower = createLimb(0.24, 0.035, COLORS.bodyDark);
+        lower.position.y = -0.12;
+        elbowGroup.add(lower);
+
+        return { root, upperGroup, elbowGroup, side };
+      }
+
+      update(dt, time) {
+        if (!this.paused) {
+          this.phase += dt * this.walkSpeed * 4.5;
+        }
+
+        const s = this.strideScale;
+        const t = this.phase;
+
+        // Hip bob & sway
+        const bob = Math.abs(Math.sin(t)) * 0.04 * s;
+        const sway = Math.sin(t * 0.5) * 0.03;
+        this.hips.position.y = 1.05 + bob;
+        this.hips.rotation.z = sway;
+
+        // Torso counter-rotation
+        this.torso.rotation.y = Math.sin(t) * 0.08 * s;
+        this.torso.rotation.x = Math.sin(t * 2) * 0.03;
+
+        // Head look
+        this.neck.rotation.y = -this.torso.rotation.y * 0.5;
+        this.neck.rotation.x = Math.sin(t * 2 + 0.5) * 0.04;
+        this.antennaTip.material.emissiveIntensity = 0.4 + Math.sin(time * 3) * 0.3;
+
+        // Leg animation
+        for (const leg of this.legs) {
+          const phase = t + (leg.side > 0 ? 0 : Math.PI);
+          const swing = Math.sin(phase) * s;
+
+          leg.upperGroup.rotation.x = swing * 0.55;
+          leg.kneeGroup.rotation.x = Math.max(0, -swing * 0.9 + 0.15);
+          leg.footGroup.rotation.x = -leg.kneeGroup.rotation.x * 0.4 + swing * 0.15;
+          leg.root.rotation.z = leg.side * 0.05;
+        }
+
+        // Arm swing (opposite to legs)
+        for (const arm of this.arms) {
+          const phase = t + (arm.side > 0 ? Math.PI : 0);
+          const swing = Math.sin(phase) * s;
+
+          arm.upperGroup.rotation.x = swing * 0.45;
+          arm.elbowGroup.rotation.x = Math.abs(swing) * 0.35 + 0.1;
+          arm.root.rotation.z = arm.side * -0.08;
+        }
+
+        // Forward locomotion illusion — circle path
+        const pathRadius = 2.2;
+        this.root.position.x = Math.sin(t * 0.15) * pathRadius;
+        this.root.position.z = Math.cos(t * 0.15) * pathRadius;
+        this.root.rotation.y = -t * 0.15 + Math.PI;
+      }
+    }
+
+    const biped = new Biped();
+
+    // ── UI ───────────────────────────────────────────────────────
+    const speedSlider = document.getElementById('speed');
+    const strideSlider = document.getElementById('stride');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const moodBtn = document.getElementById('moodBtn');
+
+    speedSlider.addEventListener('input', () => { biped.walkSpeed = parseFloat(speedSlider.value); });
+    strideSlider.addEventListener('input', () => { biped.strideScale = parseFloat(strideSlider.value); });
+
+    pauseBtn.addEventListener('click', () => {
+      biped.paused = !biped.paused;
+      pauseBtn.textContent = biped.paused ? 'Play' : 'Pause';
+      pauseBtn.classList.toggle('active', biped.paused);
+    });
+
+    let isNight = false;
+    moodBtn.addEventListener('click', () => {
+      isNight = !isNight;
+      moodBtn.textContent = isNight ? 'Day' : 'Night';
+      moodBtn.classList.toggle('active', isNight);
+
+      if (isNight) {
+        scene.background.setHex(0x050810);
+        scene.fog.color.setHex(0x050810);
+        scene.fog.density = 0.04;
+        sun.intensity = 0.3;
+        sun.color.setHex(0x6688cc);
+        ambient.intensity = 0.25;
+        rim.intensity = 0.9;
+        fill.intensity = 0.7;
+        groundMat.color.setHex(0x0a1020);
+      } else {
+        scene.background.setHex(0x0a0e17);
+        scene.fog.color.setHex(0x0a0e17);
+        scene.fog.density = 0.028;
+        sun.intensity = 2.2;
+        sun.color.setHex(0xfff0d0);
+        ambient.intensity = 0.5;
+        rim.intensity = 0.6;
+        fill.intensity = 0.4;
+        groundMat.color.setHex(0x141c2e);
+      }
+    });
+
+    // ── Resize ───────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ── Animation loop ───────────────────────────────────────────
+    const clock = new THREE.Clock();
+    let elapsed = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      elapsed += dt;
+
+      biped.update(dt, elapsed);
+
+      for (const p of particles) {
+        p.position.y += Math.sin(elapsed * p.userData.speed + p.userData.phase) * 0.003;
+        p.rotation.y += dt * 0.3;
+      }
+
+      ring.rotation.z += dt * 0.15;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    document.getElementById('loading').classList.add('hidden');
+    animate();
+  </script>
+</body>
+</html>

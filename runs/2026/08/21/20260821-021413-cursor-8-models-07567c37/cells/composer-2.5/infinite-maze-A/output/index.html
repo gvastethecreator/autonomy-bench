@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Maze</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; font-family: "Segoe UI", system-ui, sans-serif; }
+    canvas { display: block; }
+
+    #overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 1.25rem;
+      background: radial-gradient(ellipse at center, rgba(12, 10, 18, 0.92) 0%, rgba(4, 3, 8, 0.98) 70%);
+      color: #e8e4dc; z-index: 10; transition: opacity 0.6s ease;
+      pointer-events: auto;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    #overlay h1 {
+      font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 300; letter-spacing: 0.35em;
+      text-transform: uppercase; color: #f5f0e6; text-shadow: 0 0 40px rgba(255, 200, 120, 0.25);
+    }
+    #overlay p { font-size: 0.95rem; color: #a8a098; letter-spacing: 0.05em; max-width: 28rem; text-align: center; line-height: 1.6; }
+    #overlay kbd {
+      display: inline-block; padding: 0.15rem 0.45rem; margin: 0 0.1rem;
+      border: 1px solid rgba(255, 220, 160, 0.25); border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06); font-size: 0.85em; color: #dccfb8;
+    }
+    #startBtn {
+      margin-top: 0.5rem; padding: 0.75rem 2.2rem; font-size: 0.85rem; letter-spacing: 0.2em;
+      text-transform: uppercase; cursor: pointer; border: 1px solid rgba(255, 200, 120, 0.35);
+      background: linear-gradient(180deg, rgba(60, 45, 30, 0.9), rgba(30, 22, 14, 0.95));
+      color: #f0e6d2; border-radius: 2px; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    #startBtn:hover { border-color: rgba(255, 210, 140, 0.7); box-shadow: 0 0 24px rgba(255, 180, 80, 0.15); }
+
+    #hud {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 14px; height: 14px;
+      transform: translate(-50%, -50%);
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: rgba(255, 230, 200, 0.35);
+    }
+    #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    #crosshair::after { top: 6px; left: 0; width: 14px; height: 2px; }
+
+    #minimap {
+      position: absolute; bottom: 24px; right: 24px;
+      width: 140px; height: 140px; border: 1px solid rgba(255, 200, 120, 0.2);
+      background: rgba(8, 6, 12, 0.75); border-radius: 4px;
+      box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.5);
+    }
+    #coords {
+      position: absolute; bottom: 24px; left: 24px;
+      font-size: 0.72rem; letter-spacing: 0.12em; color: rgba(200, 190, 170, 0.55);
+      text-transform: uppercase;
+    }
+    #vignette {
+      position: fixed; inset: 0; pointer-events: none; z-index: 4;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <h1>Infinite Maze</h1>
+    <p>
+      A procedurally generated labyrinth that extends forever.<br />
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp; <kbd>Shift</kbd> sprint
+    </p>
+    <button id="startBtn" type="button">Enter the maze</button>
+  </div>
+  <div id="hud">
+    <div id="crosshair"></div>
+    <canvas id="minimap" width="140" height="140"></canvas>
+    <div id="coords">X 0 · Z 0</div>
+  </div>
+  <div id="vignette"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      const CELL = 3.2;
+      const WALL_H = 3.4;
+      const CHUNK = 8;
+      const VIEW_RADIUS = 2;
+      const EYE_H = 1.65;
+      const MOVE_SPEED = 4.2;
+      const SPRINT_MULT = 1.75;
+      const MOUSE_SENS = 0.0022;
+      const SEED = 0x6d2b79f5;
+
+      const keys = Object.create(null);
+      let locked = false;
+      let yaw = 0;
+      let pitch = 0;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x08060c);
+      scene.fog = new THREE.FogExp2(0x0a0810, 0.045);
+
+      const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.08, 80);
+      camera.rotation.order = "YXZ";
+
+      const torch = new THREE.PointLight(0xffb870, 1.35, 22, 1.8);
+      torch.castShadow = true;
+      torch.shadow.mapSize.set(512, 512);
+      torch.shadow.bias = -0.002;
+      camera.add(torch);
+      camera.add(new THREE.PointLight(0x6a8cff, 0.12, 8, 2));
+      scene.add(camera);
+
+      scene.add(new THREE.AmbientLight(0x1a1520, 0.35));
+      const moon = new THREE.DirectionalLight(0x8899bb, 0.08);
+      moon.position.set(12, 30, -8);
+      scene.add(moon);
+
+      function mulberry32(a) {
+        return function () {
+          a |= 0; a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function cellKey(x, z) { return x + "," + z; }
+      function chunkKey(cx, cz) { return cx + "," + cz; }
+
+      const passages = new Set();
+      const visitedCells = new Set();
+      const activeChunks = new Map();
+      const wallMeshes = [];
+      const floorMeshes = [];
+      const ceilingMeshes = [];
+
+      function edgeKey(x1, z1, x2, z2) {
+        if (x1 < x2 || (x1 === x2 && z1 < z2)) return x1 + "," + z1 + "|" + x2 + "," + z2;
+        return x2 + "," + z2 + "|" + x1 + "," + z1;
+      }
+
+      function hasPassage(x1, z1, x2, z2) {
+        return passages.has(edgeKey(x1, z1, x2, z2));
+      }
+
+      function openPassage(x1, z1, x2, z2) {
+        passages.add(edgeKey(x1, z1, x2, z2));
+      }
+
+      function neighbors(x, z) {
+        return [[x, z - 1], [x + 1, z], [x, z + 1], [x - 1, z]];
+      }
+
+      function carveCell(x, z, rng) {
+        const k = cellKey(x, z);
+        if (visitedCells.has(k)) return;
+        visitedCells.add(k);
+        const nbs = neighbors(x, z);
+        for (let i = nbs.length - 1; i > 0; i--) {
+          const j = Math.floor(rng() * (i + 1));
+          const tmp = nbs[i]; nbs[i] = nbs[j]; nbs[j] = tmp;
+        }
+        for (const [nx, nz] of nbs) {
+          if (!visitedCells.has(cellKey(nx, nz))) {
+            openPassage(x, z, nx, nz);
+            carveCell(nx, nz, rng);
+          }
+        }
+      }
+
+      function ensureCell(x, z) {
+        const k = cellKey(x, z);
+        if (visitedCells.has(k)) return;
+        const rng = mulberry32(((x * 73856093) ^ (z * 19349663) ^ SEED) >>> 0);
+        carveCell(x, z, rng);
+      }
+
+      function ensureChunk(cx, cz) {
+        const ck = chunkKey(cx, cz);
+        if (activeChunks.has(ck)) return;
+        activeChunks.set(ck, true);
+        const x0 = cx * CHUNK;
+        const z0 = cz * CHUNK;
+        for (let dx = 0; dx < CHUNK; dx++) {
+          for (let dz = 0; dz < CHUNK; dz++) {
+            ensureCell(x0 + dx, z0 + dz);
+          }
+        }
+        for (let dx = -1; dx <= CHUNK; dx++) {
+          for (let dz = -1; dz <= CHUNK; dz++) {
+            ensureCell(x0 + dx, z0 + dz);
+          }
+        }
+        buildChunkGeometry(cx, cz);
+      }
+
+      function makeStoneTexture(base, accent, noise) {
+        const c = document.createElement("canvas");
+        c.width = c.height = 256;
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, 256, 256);
+        for (let i = 0; i < 900; i++) {
+          const x = Math.random() * 256;
+          const y = Math.random() * 256;
+          const s = Math.random() * 3 + 0.5;
+          ctx.fillStyle = Math.random() > 0.5 ? accent : noise;
+          ctx.globalAlpha = Math.random() * 0.18 + 0.04;
+          ctx.fillRect(x, y, s, s);
+        }
+        for (let y = 0; y < 256; y += 32) {
+          ctx.globalAlpha = 0.06;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, y, 256, 1);
+        }
+        ctx.globalAlpha = 1;
+        const tex = new THREE.CanvasTexture(c);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.encoding = THREE.sRGBEncoding;
+        return tex;
+      }
+
+      const wallTex = makeStoneTexture("#5a4e44", "#6e6258", "#3e3630");
+      wallTex.repeat.set(1.5, 1.5);
+      const floorTex = makeStoneTexture("#2a2420", "#353028", "#1a1614");
+      floorTex.repeat.set(2, 2);
+      const ceilTex = makeStoneTexture("#1a1820", "#252230", "#121018");
+      ceilTex.repeat.set(2, 2);
+
+      const wallMat = new THREE.MeshStandardMaterial({
+        map: wallTex, roughness: 0.88, metalness: 0.04, color: 0xd8cfc4
+      });
+      const floorMat = new THREE.MeshStandardMaterial({
+        map: floorTex, roughness: 0.95, metalness: 0.02, color: 0x908880
+      });
+      const ceilMat = new THREE.MeshStandardMaterial({
+        map: ceilTex, roughness: 0.98, metalness: 0, color: 0x686070, side: THREE.BackSide
+      });
+      const trimMat = new THREE.MeshStandardMaterial({
+        color: 0x3a322c, roughness: 0.7, metalness: 0.08
+      });
+
+      const wallGeoH = new THREE.BoxGeometry(CELL, WALL_H, 0.22);
+      const wallGeoV = new THREE.BoxGeometry(0.22, WALL_H, CELL);
+      const floorGeo = new THREE.PlaneGeometry(CELL * CHUNK, CELL * CHUNK);
+      const ceilGeo = new THREE.PlaneGeometry(CELL * CHUNK, CELL * CHUNK);
+      const baseGeo = new THREE.BoxGeometry(CELL, 0.14, 0.22);
+      const baseGeoV = new THREE.BoxGeometry(0.22, 0.14, CELL);
+
+      function worldPos(cellX, cellZ) {
+        return [cellX * CELL + CELL * 0.5, 0, cellZ * CELL + CELL * 0.5];
+      }
+
+      function buildChunkGeometry(cx, cz) {
+        const group = new THREE.Group();
+        const x0 = cx * CHUNK;
+        const z0 = cz * CHUNK;
+        const ox = x0 * CELL;
+        const oz = z0 * CELL;
+
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(ox + (CELL * CHUNK) / 2, 0, oz + (CELL * CHUNK) / 2);
+        floor.receiveShadow = true;
+        group.add(floor);
+        floorMeshes.push(floor);
+
+        const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set(ox + (CELL * CHUNK) / 2, WALL_H, oz + (CELL * CHUNK) / 2);
+        group.add(ceil);
+        ceilingMeshes.push(ceil);
+
+        for (let dx = 0; dx < CHUNK; dx++) {
+          for (let dz = 0; dz < CHUNK; dz++) {
+            const gx = x0 + dx;
+            const gz = z0 + dz;
+            const [px, , pz] = worldPos(gx, gz);
+
+            if (!hasPassage(gx, gz, gx, gz - 1)) {
+              const w = new THREE.Mesh(wallGeoH, wallMat);
+              w.position.set(px, WALL_H / 2, pz - CELL / 2);
+              w.castShadow = w.receiveShadow = true;
+              group.add(w);
+              wallMeshes.push(w);
+              const b = new THREE.Mesh(baseGeo, trimMat);
+              b.position.set(px, 0.07, pz - CELL / 2);
+              group.add(b);
+            }
+            if (!hasPassage(gx, gz, gx + 1, gz)) {
+              const w = new THREE.Mesh(wallGeoV, wallMat);
+              w.position.set(px + CELL / 2, WALL_H / 2, pz);
+              w.castShadow = w.receiveShadow = true;
+              group.add(w);
+              wallMeshes.push(w);
+              const b = new THREE.Mesh(baseGeoV, trimMat);
+              b.position.set(px + CELL / 2, 0.07, pz);
+              group.add(b);
+            }
+            if (!hasPassage(gx, gz, gx, gz + 1)) {
+              const w = new THREE.Mesh(wallGeoH, wallMat);
+              w.position.set(px, WALL_H / 2, pz + CELL / 2);
+              w.castShadow = w.receiveShadow = true;
+              group.add(w);
+              wallMeshes.push(w);
+            }
+            if (!hasPassage(gx, gz, gx - 1, gz)) {
+              const w = new THREE.Mesh(wallGeoV, wallMat);
+              w.position.set(px - CELL / 2, WALL_H / 2, pz);
+              w.castShadow = w.receiveShadow = true;
+              group.add(w);
+              wallMeshes.push(w);
+            }
+          }
+        }
+
+        const pillarGeo = new THREE.BoxGeometry(0.35, WALL_H, 0.35);
+        for (let i = 0; i < 4; i++) {
+          const rng = mulberry32(((cx * 928371 + cz * 123457 + i * 777) ^ SEED) >>> 0);
+          if (rng() > 0.55) continue;
+          const dx = Math.floor(rng() * CHUNK);
+          const dz = Math.floor(rng() * CHUNK);
+          const [px, , pz] = worldPos(x0 + dx, z0 + dz);
+          const p = new THREE.Mesh(pillarGeo, trimMat);
+          p.position.set(px, WALL_H / 2, pz);
+          p.castShadow = true;
+          group.add(p);
+        }
+
+        scene.add(group);
+      }
+
+      function cellFromWorld(x, z) {
+        return [Math.floor(x / CELL), Math.floor(z / CELL)];
+      }
+
+      function chunkFromCell(gx, gz) {
+        return [Math.floor(gx / CHUNK), Math.floor(gz / CHUNK)];
+      }
+
+      function updateChunks() {
+        const [gx, gz] = cellFromWorld(camera.position.x, camera.position.z);
+        const [pcx, pcz] = chunkFromCell(gx, gz);
+        for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+          for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+            ensureChunk(pcx + dx, pcz + dz);
+          }
+        }
+      }
+
+      function wallCollision(nx, nz) {
+        const margin = 0.28;
+        const r = 0.32;
+        const samples = [
+          [nx, nz], [nx + r, nz], [nx - r, nz], [nx, nz + r], [nx, nz - r]
+        ];
+        for (const [sx, sz] of samples) {
+          const [gx, gz] = cellFromWorld(sx, sz);
+          const [cx, , cz] = worldPos(gx, gz);
+          const lx = sx - cx;
+          const lz = sz - cz;
+          const half = CELL / 2 - margin;
+          if (!hasPassage(gx, gz, gx, gz - 1) && lz < -half) return true;
+          if (!hasPassage(gx, gz, gx + 1, gz) && lx > half) return true;
+          if (!hasPassage(gx, gz, gx, gz + 1) && lz > half) return true;
+          if (!hasPassage(gx, gz, gx - 1, gz) && lx < -half) return true;
+        }
+        return false;
+      }
+
+      const dustGeo = new THREE.BufferGeometry();
+      const DUST = 120;
+      const dustPos = new Float32Array(DUST * 3);
+      for (let i = 0; i < DUST; i++) {
+        dustPos[i * 3] = (Math.random() - 0.5) * 16;
+        dustPos[i * 3 + 1] = Math.random() * WALL_H;
+        dustPos[i * 3 + 2] = (Math.random() - 0.5) * 16;
+      }
+      dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+      const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+        color: 0xffd8a0, size: 0.04, transparent: true, opacity: 0.35, depthWrite: false
+      }));
+      camera.add(dust);
+
+      const minimap = document.getElementById("minimap");
+      const mctx = minimap.getContext("2d");
+      const MAP_R = 9;
+
+      function drawMinimap() {
+        const w = minimap.width;
+        const h = minimap.height;
+        mctx.fillStyle = "rgba(8, 6, 12, 0.9)";
+        mctx.fillRect(0, 0, w, h);
+        const [pgx, pgz] = cellFromWorld(camera.position.x, camera.position.z);
+        const scale = w / (MAP_R * 2 + 1);
+
+        for (let dx = -MAP_R; dx <= MAP_R; dx++) {
+          for (let dz = -MAP_R; dz <= MAP_R; dz++) {
+            const gx = pgx + dx;
+            const gz = pgz + dz;
+            ensureCell(gx, gz);
+            const mx = (dx + MAP_R + 0.5) * scale;
+            const my = (dz + MAP_R + 0.5) * scale;
+            mctx.fillStyle = "#2a2622";
+            mctx.fillRect(mx - scale * 0.45, my - scale * 0.45, scale * 0.9, scale * 0.9);
+            mctx.strokeStyle = "#1a1816";
+            mctx.lineWidth = 1;
+            if (!hasPassage(gx, gz, gx, gz - 1)) { mctx.beginPath(); mctx.moveTo(mx - scale * 0.45, my - scale * 0.45); mctx.lineTo(mx + scale * 0.45, my - scale * 0.45); mctx.stroke(); }
+            if (!hasPassage(gx, gz, gx + 1, gz)) { mctx.beginPath(); mctx.moveTo(mx + scale * 0.45, my - scale * 0.45); mctx.lineTo(mx + scale * 0.45, my + scale * 0.45); mctx.stroke(); }
+            if (!hasPassage(gx, gz, gx, gz + 1)) { mctx.beginPath(); mctx.moveTo(mx - scale * 0.45, my + scale * 0.45); mctx.lineTo(mx + scale * 0.45, my + scale * 0.45); mctx.stroke(); }
+            if (!hasPassage(gx, gz, gx - 1, gz)) { mctx.beginPath(); mctx.moveTo(mx - scale * 0.45, my - scale * 0.45); mctx.lineTo(mx - scale * 0.45, my + scale * 0.45); mctx.stroke(); }
+          }
+        }
+
+        mctx.save();
+        mctx.translate(w / 2, h / 2);
+        mctx.rotate(-yaw);
+        mctx.fillStyle = "#ffb870";
+        mctx.beginPath();
+        mctx.moveTo(0, -5);
+        mctx.lineTo(4, 5);
+        mctx.lineTo(-4, 5);
+        mctx.closePath();
+        mctx.fill();
+        mctx.restore();
+      }
+
+      const coordsEl = document.getElementById("coords");
+      const clock = new THREE.Clock();
+      let lastChunkUpdate = 0;
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.05);
+
+        if (locked) {
+          const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0, "YXZ"));
+          const right = new THREE.Vector3(1, 0, 0).applyEuler(new THREE.Euler(0, yaw, 0, "YXZ"));
+          let move = new THREE.Vector3();
+          if (keys.w) move.add(fwd);
+          if (keys.s) move.sub(fwd);
+          if (keys.d) move.add(right);
+          if (keys.a) move.sub(right);
+          if (move.lengthSq() > 0) {
+            move.normalize();
+            const spd = MOVE_SPEED * (keys.shift ? SPRINT_MULT : 1);
+            const nx = camera.position.x + move.x * spd * dt;
+            const nz = camera.position.z + move.z * spd * dt;
+            if (!wallCollision(nx, camera.position.z)) camera.position.x = nx;
+            if (!wallCollision(camera.position.x, nz)) camera.position.z = nz;
+          }
+          torch.intensity = 1.35 + Math.sin(clock.elapsedTime * 9) * 0.08;
+        }
+
+        camera.position.y = EYE_H;
+        lastChunkUpdate += dt;
+        if (lastChunkUpdate > 0.35) {
+          updateChunks();
+          lastChunkUpdate = 0;
+        }
+
+        const [gx, gz] = cellFromWorld(camera.position.x, camera.position.z);
+        coordsEl.textContent = "X " + gx + " · Z " + gz;
+        drawMinimap();
+        renderer.render(scene, camera);
+      }
+
+      document.addEventListener("keydown", (e) => { keys[e.key.toLowerCase()] = true; });
+      document.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+      document.addEventListener("mousemove", (e) => {
+        if (!locked) return;
+        yaw -= e.movementX * MOUSE_SENS;
+        pitch -= e.movementY * MOUSE_SENS;
+        pitch = Math.max(-1.45, Math.min(1.45, pitch));
+        camera.rotation.set(pitch, yaw, 0, "YXZ");
+      });
+
+      const overlay = document.getElementById("overlay");
+      const startBtn = document.getElementById("startBtn");
+
+      function enterPointerLock() {
+        renderer.domElement.requestPointerLock();
+      }
+
+      startBtn.addEventListener("click", enterPointerLock);
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) enterPointerLock(); });
+
+      document.addEventListener("pointerlockchange", () => {
+        locked = document.pointerLockElement === renderer.domElement;
+        overlay.classList.toggle("hidden", locked);
+      });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      camera.position.set(CELL * 1.5, EYE_H, CELL * 1.5);
+      yaw = 0;
+      updateChunks();
+      animate();
+    })();
+  </script>
+</body>
+</html>

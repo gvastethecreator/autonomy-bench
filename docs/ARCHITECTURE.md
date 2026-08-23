@@ -16,7 +16,7 @@ A cell id is derived from benchmark, level, normalized model id, and attempt. A 
 
 ## Date layout
 
-Runs use the coordinator's explicit timestamp but are stored as `runs/YYYY/MM/DD/<run-id>/`. The manifest also records timezone/offset when supplied by the caller.
+Runs use the coordinator's explicit timestamp but are stored as `runs/YYYY/MM/DD/<run-id>/`. Inside a run, cells are `cells/<model>/<prompt-V>/`, where `<prompt-V>` is `{benchmark}-{A|B|C}`. The public gallery drops the run wrapper and uses `gallery/<model>/<prompt-V>/<fecha>/`, with `<fecha>` taken from the run id (`YYYY-MM-DD-HHMMSS`).
 
 ## Finalization
 

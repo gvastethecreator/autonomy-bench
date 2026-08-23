@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>The Endless Maze</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#07080c;
+    font-family:"Segoe UI", system-ui, -apple-system, sans-serif; color:#cfd3e0; }
+  #game { display:block; width:100%; height:100%; }
+  #vig { position:fixed; inset:0; pointer-events:none; z-index:4;
+    background:radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.62) 100%); }
+  #cross { position:fixed; left:50%; top:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
+    border-radius:50%; background:rgba(255,240,220,.75); z-index:5; pointer-events:none;
+    box-shadow:0 0 6px rgba(255,200,120,.8); }
+  #mm { position:fixed; top:14px; right:14px; z-index:5; border-radius:8px; opacity:.92;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 8px 30px rgba(0,0,0,.5); }
+  #hud { position:fixed; left:14px; bottom:12px; font-size:11px; letter-spacing:.09em;
+    color:rgba(210,214,228,.55); z-index:5; pointer-events:none; text-shadow:0 1px 2px #000; }
+  #toast { position:fixed; left:50%; bottom:44px; transform:translateX(-50%); z-index:6;
+    font-size:11px; letter-spacing:.14em; color:rgba(232,223,201,.85); pointer-events:none;
+    background:rgba(8,10,14,.7); padding:6px 14px; border-radius:6px; opacity:0;
+    transition:opacity .25s; border:1px solid rgba(255,255,255,.07); }
+  #toast.show { opacity:1; }
+  #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; background:rgba(5,6,10,.84); backdrop-filter:blur(7px);
+    z-index:10; cursor:pointer; transition:opacity .3s; text-align:center; padding:0 20px; }
+  #overlay.hidden { opacity:0; pointer-events:none; }
+  #overlay h1 { font-size:clamp(26px,5vw,44px); letter-spacing:.35em; font-weight:200;
+    color:#e8dfc9; margin:0 0 10px; text-shadow:0 0 26px rgba(255,170,80,.28); }
+  #overlay p { margin:6px 0; color:rgba(207,211,224,.65); font-size:13px; letter-spacing:.12em; }
+  .keys { display:flex; gap:26px; margin:26px 0 8px; flex-wrap:wrap; justify-content:center; }
+  .keys span { font-size:11px; letter-spacing:.1em; color:rgba(207,211,224,.55); }
+  .keys b { color:#e8dfc9; font-weight:600; margin-right:6px; }
+  #ovHint { margin-top:30px !important; color:rgba(255,190,110,.8) !important;
+    animation:pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:.45} 50%{opacity:1} }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="vig"></div>
+<div id="cross"></div>
+<canvas id="mm" width="168" height="168"></canvas>
+<div id="hud"></div>
+<div id="toast"></div>
+<div id="overlay">
+  <h1 id="ovTitle">THE ENDLESS MAZE</h1>
+  <p id="ovSub">An infinite labyrinth, procedurally carved. No exit &mdash; only depth.</p>
+  <div class="keys">
+    <span><b>W A S D</b>move</span>
+    <span><b>MOUSE</b>look</span>
+    <span><b>SHIFT</b>run</span>
+    <span><b>M</b>sound</span>
+  </div>
+  <p id="ovHint">&mdash; click to enter &mdash;</p>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ================= deterministic hashing & rng ================= */
+const SEED = (parseInt(new URLSearchParams(location.search).get('seed'), 10) || 20260821) | 0;
+function hashInt(x){ x|=0; x=Math.imul(x^(x>>>16),0x7feb352d); x=Math.imul(x^(x>>>15),0x846ca68b); x^=x>>>16; return x>>>0; }
+function hash2(x,y){ return hashInt(Math.imul(x|0,0x27d4eb2d) ^ Math.imul(y|0,0x165667b1) ^ SEED); }
+function hashf(x,y){ return hash2(x,y)/4294967296; }
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+
+/* ================= maze structure =================
+   World is a grid of CS-sized cells, grouped into CH x CH chunks.
+   Interior walls come from a per-chunk recursive-backtracker perfect maze,
+   seeded by chunk coordinates. Chunk-boundary walls are a pure function of
+   the edge coordinates, so neighbouring chunks always agree. Every shared
+   edge has one forced opening plus hash-driven extras, which guarantees the
+   infinite maze stays fully connected. */
+const CS = 4;        // cell size (world units)
+const CH = 8;        // cells per chunk side
+const WH = 3.4;      // wall height
+const WT = 0.4;      // wall thickness
+const RADIUS = 3;    // chunk load radius (Chebyshev)
+const EYE = 1.72;
+const PR = 0.36;     // player collision radius
+
+const dataCache = new Map();
+function genData(cx, cy){
+  const rng = mulberry32(hash2(cx, cy));
+  const vW = new Uint8Array(CH*CH).fill(1); // vW[lx*CH+ly]: wall west of local cell (lx used 1..7)
+  const hW = new Uint8Array(CH*CH).fill(1); // hW[lx*CH+ly]: wall north of local cell (ly used 1..7)
+  const vis = new Uint8Array(CH*CH);
+  const stack = [0]; vis[0] = 1;
+  let seen = 1;
+  const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+  while (seen < CH*CH){
+    const cur = stack[stack.length-1];
+    const lx = (cur/CH)|0, ly = cur%CH;
+    const opts = [];
+    for (const [dx,dy] of DIRS){
+      const nx = lx+dx, ny = ly+dy;
+      if (nx<0 || ny<0 || nx>=CH || ny>=CH) continue;
+      const ni = nx*CH+ny;
+      if (!vis[ni]) opts.push([nx,ny,ni,dx,dy]);
+    }
+    if (!opts.length){ stack.pop(); continue; }
+    const [nx,ny,ni,dx,dy] = opts[(rng()*opts.length)|0];
+    if (dx===1) vW[ni]=0; else if (dx===-1) vW[cur]=0;
+    else if (dy===1) hW[ni]=0; else hW[cur]=0;
+    vis[ni]=1; stack.push(ni); seen++;
+  }
+  // occasional open room carved into the perfect maze, never touching the border
+  if (rng() < 0.3){
+    const rw = 2+((rng()*3)|0), rh = 2+((rng()*3)|0);
+    const rx = 1+((rng()*(CH-rw-1))|0), ry = 1+((rng()*(CH-rh-1))|0);
+    for (let x=rx; x<rx+rw; x++) for (let y=ry; y<ry+rh; y++){
+      if (x>rx) vW[x*CH+y]=0;
+      if (y>ry) hW[x*CH+y]=0;
+    }
+  }
+  return { vW, hW };
+}
+function getData(cx, cy){
+  const k = cx+','+cy;
+  let d = dataCache.get(k);
+  if (!d){
+    d = genData(cx, cy);
+    dataCache.set(k, d);
+    if (dataCache.size > 800) evictData();
+  }
+  return d;
+}
+function evictData(){
+  const pcx = Math.floor(pos.x/(CH*CS)), pcy = Math.floor(pos.z/(CH*CS));
+  for (const k of dataCache.keys()){
+    const [cx,cy] = k.split(',').map(Number);
+    if (Math.max(Math.abs(cx-pcx), Math.abs(cy-pcy)) > 6) dataCache.delete(k);
+  }
+}
+// boundary edges: identical result from both neighbouring chunks
+function bOpenV(i, j){
+  const cy = Math.floor(j/CH), ly = j - cy*CH;
+  if (ly === (hash2(i, Math.imul(cy,7919)) & 7)) return true;
+  return hashf(Math.imul(i,3)+101, j) < 0.22;
+}
+function bOpenH(i, j){
+  const cx = Math.floor(i/CH), lx = i - cx*CH;
+  if (lx === (hash2(Math.imul(cx,7919), j) & 7)) return true;
+  return hashf(i, Math.imul(j,3)+103) < 0.22;
+}
+// wallV(i,j): wall on the west edge of cell (i,j); wallH(i,j): north edge
+function wallV(i, j){
+  const cx = Math.floor(i/CH), lx = i - cx*CH;
+  if (lx === 0) return !bOpenV(i, j);
+  const cy = Math.floor(j/CH), ly = j - cy*CH;
+  return getData(cx, cy).vW[lx*CH+ly] === 1;
+}
+function wallH(i, j){
+  const cy = Math.floor(j/CH), ly = j - cy*CH;
+  if (ly === 0) return !bOpenH(i, j);
+  const cx = Math.floor(i/CH), lx = i - cx*CH;
+  return getData(cx, cy).hW[lx*CH+ly] === 1;
+}
+
+/* ================= procedural textures ================= */
+const trng = mulberry32(SEED ^ 0x5bd1e995);
+function makeCanvas(s){ const c = document.createElement('canvas'); c.width = c.height = s; return [c, c.getContext('2d')]; }
+function canvasTex(c){
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+function speckle(g, s, n, alpha){
+  for (let k=0; k<n; k++){
+    const x = trng()*s, y = trng()*s, w = 1+trng()*1.5;
+    g.fillStyle = trng()<0.5 ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha*0.7})`;
+    for (const ox of [-s,0,s]) for (const oy of [-s,0,s]) g.fillRect(x+ox, y+oy, w, w);
+  }
+}
+function rectW(g, s, x, y, w, h){
+  g.fillRect(x, y, w, h);
+  if (x < 0) g.fillRect(x+s, y, w, h);
+  if (x+w > s) g.fillRect(x-s, y, w, h);
+}
+function wallTexture(){
+  const s = 256, [c,g] = makeCanvas(s);
+  g.fillStyle = '#45403a'; g.fillRect(0,0,s,s); // mortar
+  const rows = 8, rh = s/rows, bw = s/4;
+  for (let r=0; r<rows; r++){
+    const off = (r%2)*bw/2;
+    for (let b=-1; b<4; b++){
+      const x = b*bw+off, y = r*rh;
+      const h = trng();
+      g.fillStyle = `hsl(${26+h*12},${9+h*9}%,${34+h*15}%)`;
+      rectW(g, s, x+2, y+2, bw-4, rh-4);
+      g.fillStyle = 'rgba(255,255,255,0.06)'; rectW(g, s, x+2, y+2, bw-4, 3);
+      g.fillStyle = 'rgba(0,0,0,0.20)';       rectW(g, s, x+2, y+rh-6, bw-4, 4);
+      if (h > 0.74){ // moss patch
+        g.fillStyle = 'rgba(64,92,42,0.22)';
+        g.beginPath(); g.arc(x+bw*0.5, y+rh*0.62, 7+h*10, 0, 7); g.fill();
+      }
+    }
+  }
+  speckle(g, s, 900, 0.05);
+  // baked occlusion: darker toward ceiling line and floor line
+  const gr = g.createLinearGradient(0,0,0,s);
+  gr.addColorStop(0,   'rgba(0,0,0,0.34)');
+  gr.addColorStop(0.22,'rgba(0,0,0,0)');
+  gr.addColorStop(0.72,'rgba(0,0,0,0)');
+  gr.addColorStop(1,   'rgba(0,0,0,0.46)');
+  g.fillStyle = gr; g.fillRect(0,0,s,s);
+  return canvasTex(c);
+}
+function floorTexture(){
+  const s = 256, [c,g] = makeCanvas(s);
+  g.fillStyle = '#322f2b'; g.fillRect(0,0,s,s);
+  const n = 2, cell = s/n;
+  for (let x=0; x<n; x++) for (let y=0; y<n; y++){
+    const h = trng();
+    const inset = 3+trng()*3;
+    g.fillStyle = `hsl(${26+h*10},${7+h*6}%,${19+h*9}%)`;
+    g.fillRect(x*cell+inset, y*cell+inset, cell-inset*2, cell-inset*2);
+    g.fillStyle = 'rgba(255,255,255,0.05)'; g.fillRect(x*cell+inset, y*cell+inset, cell-inset*2, 4);
+    g.fillStyle = 'rgba(0,0,0,0.22)'; g.fillRect(x*cell+inset, (y+1)*cell-inset-5, cell-inset*2, 5);
+    if (trng() < 0.5){
+      g.fillStyle = 'rgba(0,0,0,0.10)';
+      g.beginPath();
+      g.arc(x*cell+cell*(0.3+trng()*0.4), y*cell+cell*(0.3+trng()*0.4), 12+trng()*20, 0, 7);
+      g.fill();
+    }
+  }
+  g.strokeStyle = 'rgba(0,0,0,0.28)'; g.lineWidth = 1;
+  for (let k=0; k<7; k++){
+    let x = trng()*s, y = trng()*s;
+    g.beginPath(); g.moveTo(x,y);
+    for (let st=0; st<6; st++){ x += (trng()-0.5)*40; y += (trng()-0.5)*40; g.lineTo(x,y); }
+    g.stroke();
+  }
+  speckle(g, s, 700, 0.05);
+  return canvasTex(c);
+}
+function ceilTexture(){
+  const s = 256, [c,g] = makeCanvas(s);
+  g.fillStyle = '#201d1a'; g.fillRect(0,0,s,s);
+  const n = 4, cell = s/n;
+  for (let x=0; x<n; x++) for (let y=0; y<n; y++){
+    const h = trng();
+    g.fillStyle = `hsl(${24+h*8},${6+h*5}%,${11+h*6}%)`;
+    g.fillRect(x*cell+2, y*cell+2, cell-4, cell-4);
+  }
+  speckle(g, s, 500, 0.04);
+  return canvasTex(c);
+}
+
+/* ================= renderer / scene ================= */
+const canvas = document.getElementById('game');
+const overlay = document.getElementById('overlay');
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+} catch (e) {
+  document.getElementById('ovTitle').textContent = 'WEBGL UNAVAILABLE';
+  document.getElementById('ovSub').textContent = 'This experience needs WebGL.';
+  document.getElementById('ovHint').textContent = '';
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07080c);
+scene.fog = new THREE.Fog(0x07080c, 9, 58);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.08, 220);
+camera.rotation.order = 'YXZ';
+
+scene.add(new THREE.HemisphereLight(0x39415e, 0x0a0806, 0.6));
+const torch = new THREE.PointLight(0xffa04e, 28, 34, 1.7);
+scene.add(torch);
+
+const wallMat  = new THREE.MeshStandardMaterial({ map:wallTexture(),  roughness:0.94, metalness:0.02 });
+const floorMat = new THREE.MeshStandardMaterial({ map:floorTexture(), roughness:0.90, metalness:0.05 });
+const ceilMat  = new THREE.MeshStandardMaterial({ map:ceilTexture(),  roughness:0.97 });
+
+/* ================= chunk mesh building =================
+   Walls are thin boxes merged into one BufferGeometry per chunk.
+   UVs are projected from world coordinates, so the brickwork stays
+   continuous across wall segments and chunk borders. */
+function pushBox(P, N, U, I, cx, cy, cz, sx, sy, sz, uvS){
+  const hx=sx/2, hy=sy/2, hz=sz/2;
+  const F = [
+    [[ 1,0,0], [[ hx,-hy, hz],[ hx,-hy,-hz],[ hx, hy,-hz],[ hx, hy, hz]], 2,1],
+    [[-1,0,0], [[-hx,-hy,-hz],[-hx,-hy, hz],[-hx, hy, hz],[-hx, hy,-hz]], 2,1],
+    [[0, 1,0], [[-hx, hy, hz],[ hx, hy, hz],[ hx, hy,-hz],[-hx, hy,-hz]], 0,2],
+    [[0,-1,0], [[-hx,-hy,-hz],[ hx,-hy,-hz],[ hx,-hy, hz],[-hx,-hy, hz]], 0,2],
+    [[0,0, 1], [[-hx,-hy, hz],[ hx,-hy, hz],[ hx, hy, hz],[-hx, hy, hz]], 0,1],
+    [[0,0,-1], [[ hx,-hy,-hz],[-hx,-hy,-hz],[-hx, hy,-hz],[ hx, hy,-hz]], 0,1],
+  ];
+  for (const [n, corners, au, av] of F){
+    const base = P.length/3;
+    for (const q of corners){
+      const wx=cx+q[0], wy=cy+q[1], wz=cz+q[2];
+      P.push(wx,wy,wz); N.push(n[0],n[1],n[2]);
+      const p = [wx,wy,wz];
+      U.push(p[au]*uvS, p[av]*uvS);
+    }
+    I.push(base, base+1, base+2, base, base+2, base+3);
+  }
+}
+function mapUVWorld(geo){
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let k=0; k<uv.count; k++) uv.setXY(k, pos.getX(k)*0.5, pos.getZ(k)*0.5);
+  uv.needsUpdate = true;
+}
+function buildChunk(cx, cy){
+  const P=[], N=[], U=[], I=[];
+  const i0 = cx*CH, j0 = cy*CH;
+  for (let lx=0; lx<CH; lx++) for (let ly=0; ly<CH; ly++){
+    const i = i0+lx, j = j0+ly;
+    if (wallV(i,j)) pushBox(P,N,U,I, i*CS, WH/2, (j+0.5)*CS, WT, WH, CS+WT, 0.5);
+    if (wallH(i,j)) pushBox(P,N,U,I, (i+0.5)*CS, WH/2, j*CS, CS+WT, WH, WT, 0.5);
+  }
+  const group = new THREE.Group();
+  const disposables = [];
+  if (I.length){
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P,3));
+    g.setAttribute('normal',   new THREE.Float32BufferAttribute(N,3));
+    g.setAttribute('uv',       new THREE.Float32BufferAttribute(U,2));
+    g.setIndex(I);
+    group.add(new THREE.Mesh(g, wallMat));
+    disposables.push(g);
+  }
+  const size = CH*CS, wx = cx*size + size/2, wz = cy*size + size/2;
+  const fg = new THREE.PlaneGeometry(size, size);
+  fg.rotateX(-Math.PI/2); fg.translate(wx, 0, wz); mapUVWorld(fg);
+  group.add(new THREE.Mesh(fg, floorMat)); disposables.push(fg);
+  const cg = new THREE.PlaneGeometry(size, size);
+  cg.rotateX(Math.PI/2); cg.translate(wx, WH+0.01, wz); mapUVWorld(cg);
+  group.add(new THREE.Mesh(cg, ceilMat)); disposables.push(cg);
+  scene.add(group);
+  return { group, disposables };
+}
+
+const chunks = new Map();
+let lastCX = NaN, lastCY = NaN;
+function ensureChunks(){
+  const pcx = Math.floor(pos.x/(CH*CS)), pcy = Math.floor(pos.z/(CH*CS));
+  if (pcx === lastCX && pcy === lastCY) return;
+  lastCX = pcx; lastCY = pcy;
+  for (let dx=-RADIUS; dx<=RADIUS; dx++) for (let dy=-RADIUS; dy<=RADIUS; dy++){
+    const k = (pcx+dx)+','+(pcy+dy);
+    if (!chunks.has(k)) chunks.set(k, buildChunk(pcx+dx, pcy+dy));
+  }
+  for (const [k, ch] of chunks){
+    const [cx,cy] = k.split(',').map(Number);
+    if (Math.max(Math.abs(cx-pcx), Math.abs(cy-pcy)) > RADIUS){
+      scene.remove(ch.group);
+      ch.disposables.forEach(d => d.dispose());
+      chunks.delete(k);
+    }
+  }
+}
+
+/* ================= player ================= */
+const pos = new THREE.Vector3(CS/2, 0, CS/2); // spawn at centre of cell (0,0)
+const vel = new THREE.Vector3();
+let yaw = 0, pitch = 0, roll = 0;
+let bobPhase = 0, lastStepCycle = 0, dist = 0, fovT = 72;
+const keys = {};
+let locked = false, started = false, dragMode = false, dragging = false;
+
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyM') toggleMute(); });
+addEventListener('keyup',   e => { keys[e.code] = false; });
+
+const ovTitle = document.getElementById('ovTitle');
+const ovSub   = document.getElementById('ovSub');
+const ovHint  = document.getElementById('ovHint');
+overlay.addEventListener('click', () => {
+  initAudio();
+  if (AC && AC.state === 'suspended') AC.resume();
+  document.body.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === document.body;
+  if (locked){
+    started = true;
+    overlay.classList.add('hidden');
+  } else {
+    for (const k in keys) keys[k] = false;
+    overlay.classList.remove('hidden');
+    if (started){
+      ovTitle.textContent = 'PAUSED';
+      ovSub.textContent = 'The maze waits in the dark.';
+      ovHint.textContent = '— click to continue —';
+    }
+  }
+});
+document.addEventListener('pointerlockerror', () => {
+  // fallback for environments without pointer lock: drag to look
+  dragMode = true; started = true;
+  overlay.classList.add('hidden');
+});
+document.addEventListener('mousemove', e => {
+  if (locked){ yaw -= e.movementX*0.0022; pitch -= e.movementY*0.0022; }
+  else if (dragMode && dragging){ yaw -= e.movementX*0.003; pitch -= e.movementY*0.003; }
+  else return;
+  pitch = Math.max(-1.55, Math.min(1.55, pitch));
+});
+canvas.addEventListener('mousedown', () => dragging = true);
+addEventListener('mouseup', () => dragging = false);
+
+function circleAABB(minx, minz, maxx, maxz){
+  const cxp = Math.max(minx, Math.min(pos.x, maxx));
+  const czp = Math.max(minz, Math.min(pos.z, maxz));
+  let dx = pos.x - cxp, dz = pos.z - czp;
+  const d2 = dx*dx + dz*dz;
+  if (d2 > PR*PR) return;
+  if (d2 > 1e-9){
+    const d = Math.sqrt(d2), push = (PR - d)/d;
+    pos.x += dx*push; pos.z += dz*push;
+  } else {
+    const pl = pos.x-minx, pr = maxx-pos.x, pt = pos.z-minz, pb = maxz-pos.z;
+    const m = Math.min(pl, pr, pt, pb);
+    if (m === pl) pos.x = minx - PR;
+    else if (m === pr) pos.x = maxx + PR;
+    else if (m === pt) pos.z = minz - PR;
+    else pos.z = maxz + PR;
+  }
+}
+function collide(){
+  for (let pass=0; pass<2; pass++){
+    const ci = Math.floor(pos.x/CS), cj = Math.floor(pos.z/CS);
+    for (let i=ci-1; i<=ci+1; i++) for (let j=cj-1; j<=cj+1; j++){
+      if (wallV(i,j)) circleAABB(i*CS - WT/2, j*CS - WT/2, i*CS + WT/2, (j+1)*CS + WT/2);
+      if (wallH(i,j)) circleAABB(i*CS - WT/2, j*CS - WT/2, (i+1)*CS + WT/2, j*CS + WT/2);
+    }
+  }
+}
+function updatePlayer(dt, t){
+  let ix = 0, iz = 0;
+  if (keys.KeyW || keys.ArrowUp)    iz -= 1;
+  if (keys.KeyS || keys.ArrowDown)  iz += 1;
+  if (keys.KeyA || keys.ArrowLeft)  ix -= 1;
+  if (keys.KeyD || keys.ArrowRight) ix += 1;
+  const sprint = keys.ShiftLeft || keys.ShiftRight;
+  const moving = ix !== 0 || iz !== 0;
+  let tx = 0, tz = 0;
+  if (moving){
+    const l = Math.hypot(ix, iz); ix /= l; iz /= l;
+    const sp = sprint ? 7.4 : 4.3;
+    const sin = Math.sin(yaw), cos = Math.cos(yaw);
+    tx = (-sin*(-iz) + cos*ix) * sp;
+    tz = (-cos*(-iz) - sin*ix) * sp;
+  }
+  const k = 1 - Math.exp(-10*dt);
+  vel.x += (tx - vel.x) * k;
+  vel.z += (tz - vel.z) * k;
+  pos.x += vel.x * dt;
+  pos.z += vel.z * dt;
+  collide();
+
+  const spH = Math.hypot(vel.x, vel.z);
+  dist += spH * dt;
+  bobPhase += spH * dt * 1.9;
+  const cyc = Math.floor(bobPhase / Math.PI);
+  if (cyc !== lastStepCycle){ lastStepCycle = cyc; if (spH > 0.8) footstep(spH); }
+  const speedF = Math.min(spH/4.3, 1);
+  const bobY = Math.sin(bobPhase) * 0.05 * speedF;
+
+  const rollT = Math.sin(bobPhase) * 0.006 * speedF;
+  roll += (rollT - roll) * Math.min(1, 8*dt);
+
+  camera.position.set(pos.x, EYE + bobY, pos.z);
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+  camera.rotation.z = roll;
+
+  const fovTarget = (sprint && spH > 5) ? 78 : 72;
+  if (Math.abs(fovTarget - fovT) > 0.05){
+    fovT += (fovTarget - fovT) * Math.min(1, 6*dt);
+    camera.fov = fovT;
+    camera.updateProjectionMatrix();
+  }
+}
+function updateTorch(t){
+  const f = Math.sin(t*11.3) + Math.sin(t*23.7+1.7) + Math.sin(t*5.1+0.5);
+  torch.intensity = 28 + f*2.6;
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+  const rx =  Math.cos(yaw), rz = -Math.sin(yaw);
+  torch.position.set(
+    pos.x + fx*0.4 + rx*0.15,
+    EYE - 0.25 + Math.sin(t*1.7)*0.03,
+    pos.z + fz*0.4 + rz*0.15
+  );
+}
+
+/* ================= dust motes ================= */
+const PN = 340;
+const pPos = new Float32Array(PN*3);
+const pVel = new Float32Array(PN*3);
+for (let k=0; k<PN; k++){
+  pPos[k*3]   = (Math.random()-0.5)*26;
+  pPos[k*3+1] = Math.random()*WH;
+  pPos[k*3+2] = (Math.random()-0.5)*26;
+  pVel[k*3]   = (Math.random()-0.5)*0.12;
+  pVel[k*3+1] = -0.02 - Math.random()*0.05;
+  pVel[k*3+2] = (Math.random()-0.5)*0.12;
+}
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3).setUsage(THREE.DynamicDrawUsage));
+const points = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  color:0xffd9a8, size:0.05, sizeAttenuation:true, transparent:true,
+  opacity:0.45, blending:THREE.AdditiveBlending, depthWrite:false
+}));
+points.frustumCulled = false;
+scene.add(points);
+function updateParticles(dt){
+  const a = pGeo.attributes.position.array;
+  for (let k=0; k<PN; k++){
+    let x = a[k*3] + pVel[k*3]*dt, y = a[k*3+1] + pVel[k*3+1]*dt, z = a[k*3+2] + pVel[k*3+2]*dt;
+    if (x < pos.x-13) x += 26; else if (x > pos.x+13) x -= 26;
+    if (z < pos.z-13) z += 26; else if (z > pos.z+13) z -= 26;
+    if (y < 0.05) y = WH-0.1; else if (y > WH) y = 0.1;
+    a[k*3] = x; a[k*3+1] = y; a[k*3+2] = z;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+/* ================= generative audio ================= */
+let AC = null, master = null, muted = false;
+function initAudio(){
+  if (AC) return;
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ return; }
+  master = AC.createGain(); master.gain.value = 1; master.connect(AC.destination);
+  // low brown-noise cavern rumble
+  const len = AC.sampleRate*2, buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+  let last = 0;
+  for (let k=0; k<len; k++){ const w = Math.random()*2-1; last = (last + 0.02*w)/1.02; d[k] = last*3.2; }
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 190;
+  const ag = AC.createGain(); ag.gain.value = 0.05;
+  src.connect(lp); lp.connect(ag); ag.connect(master); src.start();
+  const lfo = AC.createOscillator(); lfo.frequency.value = 0.06;
+  const lg = AC.createGain(); lg.gain.value = 0.018;
+  lfo.connect(lg); lg.connect(ag.gain); lfo.start();
+  setTimeout(drip, 2500 + Math.random()*4000);
+}
+function drip(){
+  if (!AC) return;
+  const t = AC.currentTime + 0.02;
+  const o = AC.createOscillator(), g = AC.createGain();
+  const f = 700 + Math.random()*1000;
+  o.frequency.setValueAtTime(f, t);
+  o.frequency.exponentialRampToValueAtTime(f*0.45, t+0.08);
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.05, t+0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.5);
+  o.connect(g);
+  if (AC.createStereoPanner){
+    const p = AC.createStereoPanner(); p.pan.value = Math.random()*2-1;
+    g.connect(p); p.connect(master);
+  } else g.connect(master);
+  o.start(t); o.stop(t+0.6);
+  setTimeout(drip, 3500 + Math.random()*9000);
+}
+function footstep(sp){
+  if (!AC || muted) return;
+  const t = AC.currentTime;
+  const len = (0.08*AC.sampleRate)|0;
+  const buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+  for (let k=0; k<len; k++) d[k] = (Math.random()*2-1) * (1-k/len) * (1-k/len);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = 'bandpass';
+  f.frequency.value = 300 + Math.random()*240; f.Q.value = 1.1;
+  const g = AC.createGain(); g.gain.value = Math.min(0.11, 0.035 + sp*0.009);
+  src.connect(f); f.connect(g); g.connect(master); src.start(t);
+}
+const toast = document.getElementById('toast');
+let toastTimer;
+function showToast(msg){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1200);
+}
+function toggleMute(){
+  muted = !muted;
+  if (master && AC) master.gain.setTargetAtTime(muted ? 0 : 1, AC.currentTime, 0.05);
+  showToast(muted ? 'sound off' : 'sound on');
+}
+
+/* ================= minimap ================= */
+const mm = document.getElementById('mm'), mg = mm.getContext('2d');
+let mmLast = 0;
+function drawMinimap(tms){
+  if (tms - mmLast < 100) return;
+  mmLast = tms;
+  const S = mm.width, range = 1.6*CH*CS, scale = S/(range*2);
+  mg.clearRect(0, 0, S, S);
+  mg.fillStyle = 'rgba(6,8,12,0.72)'; mg.fillRect(0, 0, S, S);
+  const toX = wx => S/2 + (wx - pos.x)*scale;
+  const toY = wz => S/2 + (wz - pos.z)*scale;
+  const i0 = Math.floor((pos.x-range)/CS), i1 = Math.ceil((pos.x+range)/CS);
+  const j0 = Math.floor((pos.z-range)/CS), j1 = Math.ceil((pos.z+range)/CS);
+  mg.strokeStyle = 'rgba(190,198,214,0.45)'; mg.lineWidth = 1;
+  mg.beginPath();
+  for (let i=i0; i<=i1; i++) for (let j=j0; j<=j1; j++){
+    if (wallV(i,j)){ mg.moveTo(toX(i*CS), toY(j*CS)); mg.lineTo(toX(i*CS), toY((j+1)*CS)); }
+    if (wallH(i,j)){ mg.moveTo(toX(i*CS), toY(j*CS)); mg.lineTo(toX((i+1)*CS), toY(j*CS)); }
+  }
+  mg.stroke();
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+  mg.save();
+  mg.translate(S/2, S/2);
+  mg.rotate(Math.atan2(fx, -fz));
+  mg.fillStyle = '#ffd9a0';
+  mg.beginPath(); mg.moveTo(0,-6); mg.lineTo(4.5,5); mg.lineTo(-4.5,5); mg.closePath(); mg.fill();
+  mg.restore();
+  mg.strokeStyle = 'rgba(255,255,255,0.10)';
+  mg.strokeRect(0.5, 0.5, S-1, S-1);
+}
+
+/* ================= hud / main loop ================= */
+const hud = document.getElementById('hud');
+let frames = 0, fpsT = 0;
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  if (locked || dragMode) updatePlayer(dt, t);
+  ensureChunks();
+  updateParticles(dt);
+  updateTorch(t);
+  drawMinimap(t*1000);
+  frames++;
+  if (t - fpsT > 0.5){
+    const fps = Math.round(frames/(t - fpsT));
+    frames = 0; fpsT = t;
+    hud.textContent = `x ${pos.x.toFixed(0)} · z ${pos.z.toFixed(0)} · ${dist|0} m wandered · ${fps} fps · seed ${SEED}`;
+  }
+  renderer.render(scene, camera);
+}
+ensureChunks();
+loop();
+</script>
+</body>
+</html>

@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Endless Night Drive</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #05070f;
+    height: 100%;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  /* cinematic vignette + subtle top/bottom letterbox */
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 55%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%),
+      linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 12%),
+      linear-gradient(to top, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0) 16%);
+  }
+
+  #hud {
+    position: fixed; left: 0; right: 0; bottom: 26px;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  #speed {
+    color: #cfe3ff;
+    text-align: center;
+    text-shadow: 0 0 12px rgba(90,140,255,0.35);
+    opacity: 0.92;
+  }
+  #speed .num {
+    font-size: 44px; font-weight: 200; letter-spacing: 2px; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  #speed .unit {
+    font-size: 11px; letter-spacing: 4px; text-transform: uppercase;
+    color: #7f93b8; margin-top: 4px;
+  }
+
+  #title {
+    position: fixed; top: 22px; left: 0; right: 0;
+    text-align: center; pointer-events: none;
+    color: #8fa3c7; font-size: 12px; letter-spacing: 6px; text-transform: uppercase;
+    opacity: 0.8;
+  }
+  #title b { color: #d7e4ff; font-weight: 500; }
+
+  #hint {
+    position: fixed; bottom: 26px; right: 28px; pointer-events: none;
+    color: #5d6d8c; font-size: 11px; letter-spacing: 1.5px; text-align: right;
+    line-height: 1.7;
+  }
+  #hint span { color: #9fb2d6; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="vignette"></div>
+<div id="title"><b>Endless</b> Night Drive</div>
+<div id="hud">
+  <div id="speed">
+    <div class="num" id="speedNum">0</div>
+    <div class="unit">km/h</div>
+  </div>
+</div>
+<div id="hint"><span>W / &uarr;</span> accelerate &nbsp;&middot;&nbsp; <span>S / &darr;</span> brake<br><span>A D / &larr; &rarr;</span> steer</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- setup
+  var canvas = document.getElementById('scene');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+
+  var scene = new THREE.Scene();
+  var NIGHT = new THREE.Color(0x05070f);
+  scene.background = NIGHT;
+  scene.fog = new THREE.Fog(NIGHT.getHex(), 40, 320);
+
+  var camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 900);
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ------------------------------------------------------------- lighting
+  scene.add(new THREE.AmbientLight(0x223055, 0.55));
+  var hemi = new THREE.HemisphereLight(0x1a2340, 0x05060a, 0.5);
+  scene.add(hemi);
+
+  // moonlight, faint and cold
+  var moonLight = new THREE.DirectionalLight(0x8fa8d8, 0.22);
+  moonLight.position.set(-60, 120, -80);
+  scene.add(moonLight);
+
+  // headlights: a warm spotlight thrown ahead of the car
+  var headlight = new THREE.SpotLight(0xffe9c4, 1.6, 170, 0.46, 0.55, 1.2);
+  headlight.position.set(0, 3.0, 0);
+  var headlightTarget = new THREE.Object3D();
+  scene.add(headlightTarget);
+  headlight.target = headlightTarget;
+  scene.add(headlight);
+
+  // faint red glow of the dashboard on the bonnet
+  var dashGlow = new THREE.PointLight(0xff3b30, 0.35, 6);
+  scene.add(dashGlow);
+
+  // ------------------------------------------------------ texture helpers
+  function makeGlowTexture(inner, outer) {
+    var c = document.createElement('canvas');
+    c.width = c.height = 128;
+    var g = c.getContext('2d');
+    var grad = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+    grad.addColorStop(0, inner);
+    grad.addColorStop(0.35, outer);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    var tex = new THREE.CanvasTexture(c);
+    return tex;
+  }
+  var warmGlowTex = makeGlowTexture('rgba(255,236,190,1)', 'rgba(255,170,60,0.35)');
+  var whiteGlowTex = makeGlowTexture('rgba(255,255,255,1)', 'rgba(190,210,255,0.30)');
+  var redGlowTex = makeGlowTexture('rgba(255,80,70,1)', 'rgba(255,30,20,0.30)');
+  var moonTex = makeGlowTexture('rgba(240,244,255,1)', 'rgba(160,180,230,0.25)');
+
+  function glowSprite(tex, scale, opacity) {
+    var mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var s = new THREE.Sprite(mat);
+    s.scale.set(scale, scale, 1);
+    return s;
+  }
+
+  // ------------------------------------------------------------- the sky
+  var starGroup = new THREE.Group();
+  (function makeStars() {
+    var COUNT = 1600;
+    var pos = new Float32Array(COUNT * 3);
+    var col = new Float32Array(COUNT * 3);
+    for (var i = 0; i < COUNT; i++) {
+      // dome distribution
+      var theta = Math.random() * Math.PI * 2;
+      var phi = Math.acos(1 - Math.random() * 0.95); // bias toward horizon-up
+      var r = 700;
+      var x = r * Math.sin(phi) * Math.cos(theta);
+      var y = r * Math.cos(phi) * 0.6 + 20;
+      var z = r * Math.sin(phi) * Math.sin(theta);
+      pos[i * 3] = x; pos[i * 3 + 1] = Math.max(y, 8); pos[i * 3 + 2] = z;
+      var b = 0.35 + Math.random() * 0.65;
+      var tint = Math.random();
+      col[i * 3] = b * (tint < 0.2 ? 1.0 : 0.85);
+      col[i * 3 + 1] = b * 0.9;
+      col[i * 3 + 2] = b * (tint > 0.8 ? 1.0 : 0.95);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    var mat = new THREE.PointsMaterial({
+      size: 1.6, sizeAttenuation: false, vertexColors: true,
+      transparent: true, opacity: 0.9, depthWrite: false
+    });
+    starGroup.add(new THREE.Points(geo, mat));
+  })();
+  scene.add(starGroup);
+
+  var moon = glowSprite(moonTex, 90, 0.95);
+  scene.add(moon);
+
+  // ------------------------------------------------------------ the road
+  var ROAD_WIDTH = 12;
+  var SEG_LEN = 20;
+  var NUM_SEGS = 34;                 // 680 units of visible road
+  var RECYCLE_AHEAD = NUM_SEGS * SEG_LEN;
+
+  // gentle endless curves: lateral road centre as a function of world z
+  function roadX(z) {
+    return 16 * Math.sin(z * 0.0042) + 9 * Math.sin(z * 0.0013 + 1.7);
+  }
+  function roadAngle(z) {
+    var dz = 2.0;
+    return Math.atan2(roadX(z + dz) - roadX(z - dz), 2 * dz);
+  }
+
+  var asphaltMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.95, metalness: 0.0 });
+  var shoulderMat = new THREE.MeshStandardMaterial({ color: 0x0c0e13, roughness: 1.0 });
+  var lineMat = new THREE.MeshBasicMaterial({ color: 0xb8c4d8 });
+  var dashMat = new THREE.MeshBasicMaterial({ color: 0xd9e2f2 });
+  var poleMat = new THREE.MeshStandardMaterial({ color: 0x2a2e38, roughness: 0.7, metalness: 0.4 });
+  var lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffc36b });
+  var trunkMat = new THREE.MeshStandardMaterial({ color: 0x0d0f14, roughness: 1 });
+  var leafMat = new THREE.MeshStandardMaterial({ color: 0x0a1410, roughness: 1 });
+  var reflectorMat = new THREE.MeshBasicMaterial({ color: 0xff5040 });
+
+  var roadGeo = new THREE.PlaneGeometry(ROAD_WIDTH, SEG_LEN + 0.6);
+  var shoulderGeo = new THREE.PlaneGeometry(3.2, SEG_LEN + 0.6);
+  var edgeGeo = new THREE.PlaneGeometry(0.22, SEG_LEN + 0.6);
+  var dashGeo = new THREE.PlaneGeometry(0.28, 4.2);
+  var poleGeo = new THREE.CylinderGeometry(0.09, 0.12, 7.5, 6);
+  var armGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.4, 5);
+  var headGeo = new THREE.BoxGeometry(0.9, 0.22, 0.4);
+  var trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 2.2, 5);
+  var leafGeo = new THREE.ConeGeometry(1.7, 4.6, 7);
+  var postGeo = new THREE.BoxGeometry(0.14, 0.9, 0.14);
+  var reflGeo = new THREE.BoxGeometry(0.16, 0.12, 0.05);
+
+  function flat(geo, mat, y) {
+    var m = new THREE.Mesh(geo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = y;
+    return m;
+  }
+
+  function makeTree(scale) {
+    var t = new THREE.Group();
+    var trunk = new THREE.Mesh(trunkGeo, trunkMat);
+    trunk.position.y = 1.1;
+    var leaves = new THREE.Mesh(leafGeo, leafMat);
+    leaves.position.y = 4.0;
+    var leaves2 = new THREE.Mesh(leafGeo, leafMat);
+    leaves2.scale.set(0.7, 0.7, 0.7);
+    leaves2.position.y = 5.6;
+    t.add(trunk); t.add(leaves); t.add(leaves2);
+    t.scale.set(scale, scale, scale);
+    t.rotation.y = Math.random() * Math.PI * 2;
+    return t;
+  }
+
+  function makeLamp(side) {
+    var lamp = new THREE.Group();
+    var pole = new THREE.Mesh(poleGeo, poleMat);
+    pole.position.y = 3.75;
+    lamp.add(pole);
+    var arm = new THREE.Mesh(armGeo, poleMat);
+    arm.rotation.z = Math.PI / 2 * side;
+    arm.position.set(-1.15 * side, 7.35, 0);
+    lamp.add(arm);
+    var head = new THREE.Mesh(headGeo, lampHeadMat);
+    head.position.set(-2.3 * side, 7.28, 0);
+    lamp.add(head);
+    var glow = glowSprite(warmGlowTex, 7, 0.85);
+    glow.position.set(-2.3 * side, 7.2, 0);
+    lamp.add(glow);
+    // pool of warm light faked as an additive ground disc
+    var pool = glowSprite(warmGlowTex, 13, 0.16);
+    pool.position.set(-2.3 * side, 0.35, 0);
+    lamp.add(pool);
+    return lamp;
+  }
+
+  var segments = [];
+  for (var i = 0; i < NUM_SEGS; i++) {
+    var g = new THREE.Group();
+
+    g.add(flat(roadGeo, asphaltMat, 0));
+    var shL = flat(shoulderGeo, shoulderMat, -0.01); shL.position.x = -(ROAD_WIDTH / 2 + 1.6); g.add(shL);
+    var shR = flat(shoulderGeo, shoulderMat, -0.01); shR.position.x = (ROAD_WIDTH / 2 + 1.6); g.add(shR);
+    var eL = flat(edgeGeo, lineMat, 0.02); eL.position.x = -(ROAD_WIDTH / 2 - 0.35); g.add(eL);
+    var eR = flat(edgeGeo, lineMat, 0.02); eR.position.x = (ROAD_WIDTH / 2 - 0.35); g.add(eR);
+    g.add(flat(dashGeo, dashMat, 0.02));
+
+    // reflector posts at both edges
+    for (var ps = -1; ps <= 1; ps += 2) {
+      var post = new THREE.Mesh(postGeo, poleMat);
+      post.position.set(ps * (ROAD_WIDTH / 2 + 1.1), 0.45, 0);
+      g.add(post);
+      var refl = new THREE.Mesh(reflGeo, reflectorMat);
+      refl.position.set(ps * (ROAD_WIDTH / 2 + 1.02), 0.82, 0);
+      g.add(refl);
+    }
+
+    // street lamp every other segment, alternating sides
+    if (i % 2 === 0) {
+      var side = (i % 4 === 0) ? 1 : -1;
+      var lamp = makeLamp(side);
+      lamp.position.x = side * (ROAD_WIDTH / 2 + 2.6);
+      g.add(lamp);
+    }
+
+    // trees scattered beyond the shoulders
+    var treeCount = Math.floor(Math.random() * 3);
+    for (var tI = 0; tI < treeCount; tI++) {
+      var tSide = Math.random() < 0.5 ? -1 : 1;
+      var tree = makeTree(0.8 + Math.random() * 1.6);
+      tree.position.set(
+        tSide * (ROAD_WIDTH / 2 + 6 + Math.random() * 26),
+        0,
+        (Math.random() - 0.5) * SEG_LEN
+      );
+      g.add(tree);
+    }
+
+    g.userData.worldZ = -i * SEG_LEN;
+    scene.add(g);
+    segments.push(g);
+  }
+
+  // ground plane that follows the camera (everything the lamps don't reach)
+  var ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(1600, 1600),
+    new THREE.MeshStandardMaterial({ color: 0x070a10, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.05;
+  scene.add(ground);
+
+  // distant ridge silhouettes, two layers parallaxing with the camera
+  function makeRidge(color, height, count, spread) {
+    var grp = new THREE.Group();
+    var mat = new THREE.MeshBasicMaterial({ color: color, fog: false });
+    for (var i = 0; i < count; i++) {
+      var h = height * (0.5 + Math.random());
+      var cone = new THREE.Mesh(new THREE.ConeGeometry(h * 1.6, h, 4), mat);
+      var a = (i / count) * Math.PI * 2;
+      cone.position.set(Math.cos(a) * spread, h / 2 - 4, Math.sin(a) * spread);
+      cone.rotation.y = Math.random() * Math.PI;
+      grp.add(cone);
+    }
+    return grp;
+  }
+  var ridgeFar = makeRidge(0x0a0e1a, 90, 26, 640);
+  var ridgeNear = makeRidge(0x0d1220, 55, 22, 460);
+  scene.add(ridgeFar); scene.add(ridgeNear);
+
+  // ------------------------------------------------------------- traffic
+  function makeCar(oncoming) {
+    var car = new THREE.Group();
+    var body = new THREE.Mesh(
+      new THREE.BoxGeometry(2.0, 1.1, 4.4),
+      new THREE.MeshStandardMaterial({ color: 0x0b0d12, roughness: 0.6, metalness: 0.3 })
+    );
+    body.position.y = 0.75;
+    car.add(body);
+    var cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 0.75, 2.2),
+      new THREE.MeshStandardMaterial({ color: 0x080a0f, roughness: 0.4, metalness: 0.4 })
+    );
+    cabin.position.set(0, 1.55, 0.2);
+    car.add(cabin);
+
+    if (oncoming) {
+      // two bright headlight glows facing us
+      for (var s = -1; s <= 1; s += 2) {
+        var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0xfff3d0 }));
+        bulb.position.set(s * 0.7, 0.8, 2.25);
+        car.add(bulb);
+        var gl = glowSprite(whiteGlowTex, 3.4, 0.95);
+        gl.position.set(s * 0.7, 0.8, 2.35);
+        car.add(gl);
+      }
+    } else {
+      // same-direction car: red taillights
+      for (var s2 = -1; s2 <= 1; s2 += 2) {
+        var tail = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.06),
+          new THREE.MeshBasicMaterial({ color: 0xff2a20 }));
+        tail.position.set(s2 * 0.72, 0.95, -2.24);
+        car.add(tail);
+        var rg = glowSprite(redGlowTex, 1.8, 0.85);
+        rg.position.set(s2 * 0.72, 0.95, -2.35);
+        car.add(rg);
+      }
+    }
+    return car;
+  }
+
+  var oncomingCars = [];
+  for (var oc = 0; oc < 5; oc++) {
+    var c1 = makeCar(true);
+    c1.userData.worldZ = -150 - oc * 160 - Math.random() * 90;
+    c1.userData.relSpeed = 55 + Math.random() * 25; // closing speed on top of ours
+    scene.add(c1);
+    oncomingCars.push(c1);
+  }
+  var aheadCars = [];
+  for (var ac = 0; ac < 3; ac++) {
+    var c2 = makeCar(false);
+    c2.userData.worldZ = -220 - ac * 260 - Math.random() * 120;
+    c2.userData.relSpeed = -(18 + Math.random() * 10); // slower than us: we catch up
+    scene.add(c2);
+    aheadCars.push(c2);
+  }
+
+  // -------------------------------------------------------------- inputs
+  var keys = {};
+  window.addEventListener('keydown', function (e) {
+    keys[e.code] = true;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].indexOf(e.code) >= 0) e.preventDefault();
+  });
+  window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+
+  // --------------------------------------------------------------- state
+  var speed = 22;            // units / second
+  var CRUISE = 34;
+  var MAXSPEED = 78;
+  var camZ = 0;
+  var laneOffset = 0;        // steering offset within our lane
+  var speedNum = document.getElementById('speedNum');
+  var clock = new THREE.Clock();
+  var elapsed = 0;
+
+  function recycleSegment(seg) {
+    // move the segment to the front of the queue
+    seg.userData.worldZ -= RECYCLE_AHEAD;
+  }
+
+  function placeOnRoad(obj, worldZ, lateral) {
+    obj.position.set(roadX(worldZ) + lateral, 0, worldZ - camZ);
+    obj.rotation.y = roadAngle(worldZ);
+  }
+
+  // ---------------------------------------------------------------- loop
+  function animate() {
+    requestAnimationFrame(animate);
+    var dt = Math.min(clock.getDelta(), 0.05);
+    elapsed += dt;
+
+    // speed control
+    var accel = 0;
+    if (keys['KeyW'] || keys['ArrowUp']) accel += 26;
+    if (keys['KeyS'] || keys['ArrowDown']) accel -= 46;
+    if (accel === 0) accel = (CRUISE - speed) * 0.35; // drift back to cruise
+    speed = THREE.MathUtils.clamp(speed + accel * dt, 6, MAXSPEED);
+
+    // steering within the lane
+    var steer = 0;
+    if (keys['KeyA'] || keys['ArrowLeft']) steer -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) steer += 1;
+    laneOffset = THREE.MathUtils.clamp(laneOffset + steer * 6.5 * dt, -3.4, 3.4);
+    if (steer === 0) laneOffset *= (1 - 1.6 * dt);
+
+    camZ -= speed * dt;
+
+    // recycle road segments that fell behind the camera
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      if (seg.userData.worldZ - camZ > SEG_LEN) recycleSegment(seg);
+      placeOnRoad(seg, seg.userData.worldZ, 0);
+    }
+
+    // traffic
+    var ci, cz;
+    for (ci = 0; ci < oncomingCars.length; ci++) {
+      var oc2 = oncomingCars[ci];
+      oc2.userData.worldZ += oc2.userData.relSpeed * dt; // they drive toward us
+      if (oc2.userData.worldZ - camZ > 30) {
+        oc2.userData.worldZ = camZ - 700 - Math.random() * 250;
+        oc2.userData.relSpeed = 55 + Math.random() * 25;
+      }
+      cz = oc2.userData.worldZ;
+      oc2.position.set(roadX(cz) - ROAD_WIDTH / 4 - 0.4, 0, cz - camZ);
+      oc2.rotation.y = roadAngle(cz) + Math.PI;
+    }
+    for (ci = 0; ci < aheadCars.length; ci++) {
+      var ac2 = aheadCars[ci];
+      ac2.userData.worldZ += ac2.userData.relSpeed * dt; // they pull away slowly
+      if (ac2.userData.worldZ - camZ > 25) { // we passed them: send far ahead
+        ac2.userData.worldZ = camZ - 650 - Math.random() * 300;
+      }
+      cz = ac2.userData.worldZ;
+      ac2.position.set(roadX(cz) + ROAD_WIDTH / 4 + 0.4, 0, cz - camZ);
+      ac2.rotation.y = roadAngle(cz);
+    }
+
+    // camera follows the road with a little lag, plus steering offset
+    var targetX = roadX(camZ) + laneOffset;
+    var bob = Math.sin(elapsed * 9.0) * 0.03 * (speed / MAXSPEED);
+    camera.position.set(
+      camera.position.x + (targetX - camera.position.x) * Math.min(1, 4.5 * dt),
+      3.1 + bob,
+      0
+    );
+    var lookZ = -46;
+    var lookX = roadX(camZ + lookZ) + laneOffset * 0.6;
+    camera.lookAt(lookX, 2.2, lookZ);
+    // subtle roll into the curve
+    var roll = (roadX(camZ - 30) - roadX(camZ)) * 0.004 - steer * 0.012;
+    camera.rotation.z += roll;
+
+    // speed-reactive FOV
+    var targetFov = 62 + (speed / MAXSPEED) * 16;
+    camera.fov += (targetFov - camera.fov) * Math.min(1, 3 * dt);
+    camera.updateProjectionMatrix();
+
+    // headlights ride with the camera
+    headlight.position.set(camera.position.x, 3.0, -1);
+    headlightTarget.position.set(roadX(camZ - 60) + laneOffset * 0.5, 0, -60);
+    dashGlow.position.set(camera.position.x, 2.2, -1.5);
+
+    // sky, moon and ridges stay glued around the camera
+    starGroup.position.set(camera.position.x, 0, camZ);
+    starGroup.rotation.y += dt * 0.002;
+    moon.position.set(camera.position.x - 190, 165, camZ - 560);
+    ridgeFar.position.set(camera.position.x * 0.98, 0, camZ);
+    ridgeNear.position.set(camera.position.x * 0.94, 0, camZ);
+    ground.position.set(camera.position.x, -0.05, camZ - 300);
+
+    speedNum.textContent = Math.round(speed * 3.6);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+})();
+</script>
+</body>
+</html>

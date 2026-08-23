@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Living Procedural Medieval City</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e14; }
+    canvas { display: block; }
+    #overlay {
+      position: fixed; top: 16px; left: 16px; color: #e8dcc8;
+      font: 13px/1.5 "Palatino Linotype", "Book Antiqua", Palatino, serif;
+      pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+      max-width: 280px;
+    }
+    #overlay h1 { font-size: 18px; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 4px; }
+    #overlay p { opacity: 0.85; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <h1>Procedural Medieval City</h1>
+    <p>Drag to orbit · Scroll to zoom · Living smoke, citizens, windmills &amp; day/night cycle</p>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ── Seeded RNG ──────────────────────────────────────────────
+    function mulberry32(a) {
+      return function() {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    const SEED = 1337;
+    const rand = mulberry32(SEED);
+    const randRange = (a, b) => a + rand() * (b - a);
+    const randInt = (a, b) => Math.floor(randRange(a, b + 1));
+    const pick = arr => arr[randInt(0, arr.length - 1)];
+
+    // ── Scene setup ─────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87aecf);
+    scene.fog = new THREE.FogExp2(0xb8c8dc, 0.006);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 500);
+    camera.position.set(55, 42, 55);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.minDistance = 15;
+    controls.maxDistance = 120;
+    controls.target.set(0, 4, 0);
+
+    // ── Lighting & day/night ────────────────────────────────────
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+    sun.position.set(40, 60, 20);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 180;
+    sun.shadow.camera.left = -70;
+    sun.shadow.camera.right = 70;
+    sun.shadow.camera.top = 70;
+    sun.shadow.camera.bottom = -70;
+    sun.shadow.bias = -0.0004;
+    scene.add(sun);
+
+    const hemi = new THREE.HemisphereLight(0xc8dff0, 0x3a4a28, 0.45);
+    scene.add(hemi);
+
+    const ambient = new THREE.AmbientLight(0x404860, 0.25);
+    scene.add(ambient);
+
+    const torchLights = [];
+    const animated = { smoke: [], flags: [], citizens: [], windmills: [], torches: [], birds: [], fountain: null };
+
+    // ── Materials palette ───────────────────────────────────────
+    const mats = {
+      stone: new THREE.MeshStandardMaterial({ color: 0x8a8578, roughness: 0.92 }),
+      stoneDark: new THREE.MeshStandardMaterial({ color: 0x5c5850, roughness: 0.95 }),
+      plaster: new THREE.MeshStandardMaterial({ color: 0xd8cfc0, roughness: 0.88 }),
+      timber: new THREE.MeshStandardMaterial({ color: 0x4a2f1a, roughness: 0.85 }),
+      roofRed: new THREE.MeshStandardMaterial({ color: 0x7a3028, roughness: 0.78 }),
+      roofSlate: new THREE.MeshStandardMaterial({ color: 0x3a4048, roughness: 0.72 }),
+      roofThatch: new THREE.MeshStandardMaterial({ color: 0xb8945a, roughness: 0.95 }),
+      ground: new THREE.MeshStandardMaterial({ color: 0x5a6b3a, roughness: 1 }),
+      cobble: new THREE.MeshStandardMaterial({ color: 0x6a6660, roughness: 0.98 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.9 }),
+      water: new THREE.MeshStandardMaterial({ color: 0x3a7a9a, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.82 }),
+      leaf: new THREE.MeshStandardMaterial({ color: 0x3d6b2a, roughness: 0.9 }),
+      gold: new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: 0.35, metalness: 0.6 }),
+      banner: new THREE.MeshStandardMaterial({ color: 0x8b1a1a, roughness: 0.7, side: THREE.DoubleSide }),
+      cloth: new THREE.MeshStandardMaterial({ color: 0x4a6080, roughness: 0.8, side: THREE.DoubleSide }),
+    };
+
+    function box(w, h, d, mat, x, y, z, parent, cast = true) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z);
+      m.castShadow = cast;
+      m.receiveShadow = true;
+      (parent || scene).add(m);
+      return m;
+    }
+
+    function cyl(rt, rb, h, seg, mat, x, y, z, parent) {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      (parent || scene).add(m);
+      return m;
+    }
+
+    function cone(r, h, seg, mat, x, y, z, parent) {
+      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, seg), mat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      (parent || scene).add(m);
+      return m;
+    }
+
+    // ── Ground & moat ───────────────────────────────────────────
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(95, 64), mats.ground);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const moat = new THREE.Mesh(new THREE.RingGeometry(52, 58, 64), mats.water);
+    moat.rotation.x = -Math.PI / 2;
+    moat.position.y = 0.05;
+    scene.add(moat);
+
+    // ── City grid ───────────────────────────────────────────────
+    const GRID = 9;
+    const CELL = 8;
+    const HALF = (GRID * CELL) / 2;
+    const roads = new Set();
+
+    for (let i = 0; i <= GRID; i++) {
+      const p = -HALF + i * CELL;
+      for (let j = -HALF; j <= HALF; j += 0.8) {
+        roads.add(`${Math.round(p * 10) / 10},${Math.round(j * 10) / 10}`);
+        roads.add(`${Math.round(j * 10) / 10},${Math.round(p * 10) / 10}`);
+      }
+    }
+
+    function isRoad(x, z, pad = 1.8) {
+      for (let dx = -pad; dx <= pad; dx += 0.5) {
+        for (let dz = -pad; dz <= pad; dz += 0.5) {
+          const k = `${Math.round((x + dx) * 10) / 10},${Math.round((z + dz) * 10) / 10}`;
+          if (roads.has(k)) return true;
+        }
+      }
+      return false;
+    }
+
+    // Cobblestone roads
+    const roadGeo = new THREE.PlaneGeometry(GRID * CELL + 4, 1.6);
+    for (let i = 0; i <= GRID; i++) {
+      const p = -HALF + i * CELL;
+      const h = new THREE.Mesh(roadGeo, mats.cobble);
+      h.rotation.x = -Math.PI / 2;
+      h.position.set(0, 0.02, p);
+      h.receiveShadow = true;
+      scene.add(h);
+      const v = new THREE.Mesh(new THREE.PlaneGeometry(1.6, GRID * CELL + 4), mats.cobble);
+      v.rotation.x = -Math.PI / 2;
+      v.position.set(p, 0.02, 0);
+      v.receiveShadow = true;
+      scene.add(v);
+    }
+
+    // Central plaza
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(7, 32), mats.cobble);
+    plaza.rotation.x = -Math.PI / 2;
+    plaza.position.y = 0.03;
+    plaza.receiveShadow = true;
+    scene.add(plaza);
+
+    // ── Fountain (living water) ─────────────────────────────────
+    function buildFountain() {
+      const g = new THREE.Group();
+      cyl(3.2, 3.5, 0.6, 16, mats.stone, 0, 0.3, 0, g);
+      cyl(2.2, 2.4, 0.5, 12, mats.stone, 0, 0.85, 0, g);
+      const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3, 0.15, 24), mats.water);
+      basin.position.y = 0.55;
+      g.add(basin);
+      cyl(0.35, 0.4, 1.8, 8, mats.stone, 0, 1.5, 0, g);
+      const spout = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), mats.water);
+      spout.position.y = 2.5;
+      g.add(spout);
+      animated.fountain = { group: g, spout, basin, phase: rand() * Math.PI * 2 };
+      scene.add(g);
+    }
+    buildFountain();
+
+    // ── Building generators ─────────────────────────────────────
+    function roofMesh(w, d, h, mat, y, parent) {
+      const shape = new THREE.Shape();
+      shape.moveTo(-w / 2, 0);
+      shape.lineTo(0, h);
+      shape.lineTo(w / 2, 0);
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false });
+      geo.translate(0, 0, -d / 2);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.y = y;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      parent.add(m);
+      return m;
+    }
+
+    function addChimneySmoke(x, y, z) {
+      const count = randInt(4, 8);
+      const particles = [];
+      for (let i = 0; i < count; i++) {
+        const s = new THREE.Mesh(
+          new THREE.SphereGeometry(randRange(0.08, 0.18), 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0xcccccc, transparent: true, opacity: randRange(0.15, 0.35) })
+        );
+        s.position.set(x + randRange(-0.2, 0.2), y + i * 0.5, z + randRange(-0.2, 0.2));
+        scene.add(s);
+        particles.push({ mesh: s, baseY: y, idx: i, drift: randRange(-0.3, 0.3) });
+      }
+      animated.smoke.push({ particles, origin: new THREE.Vector3(x, y, z) });
+    }
+
+    function buildHouse(x, z, w, d, floors, style) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      const rot = randInt(0, 3) * Math.PI / 2;
+      g.rotation.y = rot;
+
+      const fh = 2.4;
+      const totalH = floors * fh;
+
+      if (style === 'timber') {
+        box(w, totalH, d, mats.plaster, 0, totalH / 2, 0, g);
+        const posts = [[-w/2+0.15, d/2], [w/2-0.15, d/2], [-w/2+0.15, -d/2], [w/2-0.15, -d/2]];
+        posts.forEach(([px, pz]) => box(0.2, totalH, 0.2, mats.timber, px, totalH/2, pz, g));
+        for (let f = 1; f < floors; f++) {
+          box(w - 0.1, 0.15, 0.15, mats.timber, 0, f * fh, d/2 + 0.01, g);
+        }
+      } else {
+        box(w, totalH, d, mats.stone, 0, totalH / 2, 0, g);
+      }
+
+      const roofMat = pick([mats.roofRed, mats.roofSlate, mats.roofThatch]);
+      roofMesh(w + 0.6, d + 0.4, randRange(1.8, 2.8), roofMat, totalH, g);
+
+      // Windows (warm glow at night)
+      for (let f = 0; f < floors; f++) {
+        const wy = f * fh + fh * 0.55;
+        const winMat = new THREE.MeshStandardMaterial({
+          color: 0xffcc66, emissive: 0xffaa33, emissiveIntensity: 0.3, roughness: 0.3
+        });
+        box(0.5, 0.7, 0.08, winMat, 0, wy, d / 2 + 0.05, g, false);
+      }
+
+      if (rand() > 0.35) {
+        const cx = randRange(-w * 0.2, w * 0.2);
+        const cz = randRange(-d * 0.2, d * 0.2);
+        box(0.35, 1.2, 0.35, mats.stoneDark, cx, totalH + 0.6, cz, g);
+        const wx = x + cx * Math.cos(rot) - cz * Math.sin(rot);
+        const wz = z + cx * Math.sin(rot) + cz * Math.cos(rot);
+        addChimneySmoke(wx, totalH + 1.4, wz);
+      }
+
+      scene.add(g);
+      return g;
+    }
+
+    function buildTower(x, z, r, h) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      cyl(r, r * 1.05, h, 12, mats.stone, 0, h / 2, 0, g);
+      cone(r * 1.3, h * 0.35, 8, mats.roofSlate, 0, h + h * 0.17, 0, g);
+      // Crenellations
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        box(0.5, 0.6, 0.5, mats.stoneDark, Math.cos(a) * r, h + 0.3, Math.sin(a) * r, g);
+      }
+      // Banner
+      const pole = cyl(0.06, 0.06, 3, 6, mats.wood, 0, h + 1.5, 0, g);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.8, 4, 2), mats.banner);
+      flag.position.set(0.6, h + 2.5, 0);
+      g.add(flag);
+      animated.flags.push({ mesh: flag, phase: rand() * Math.PI * 2 });
+      scene.add(g);
+    }
+
+    function buildCathedral(x, z) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+
+      box(14, 8, 22, mats.stone, 0, 4, 0, g);
+      box(6, 14, 6, mats.stone, 0, 11, 0, g);
+      roofMesh(15, 23, 4, mats.roofSlate, 8, g);
+      roofMesh(7, 7, 6, mats.roofSlate, 14, g);
+
+      // Spire
+      cyl(0.8, 1.2, 6, 8, mats.stone, 0, 20, 0, g);
+      cone(1.5, 8, 8, mats.gold, 0, 27, 0, g);
+
+      // Rose window
+      const rose = new THREE.Mesh(
+        new THREE.CircleGeometry(1.2, 12),
+        new THREE.MeshStandardMaterial({ color: 0x6688bb, emissive: 0x334466, emissiveIntensity: 0.5 })
+      );
+      rose.position.set(0, 6, 11.05);
+      g.add(rose);
+
+      // Flying buttresses hint
+      for (let s of [-1, 1]) {
+        box(0.4, 4, 3, mats.stoneDark, s * 8, 4, 8, g);
+      }
+
+      scene.add(g);
+    }
+
+    function buildWindmill(x, z) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      cyl(3, 3.5, 6, 12, mats.plaster, 0, 3, 0, g);
+      cone(3.8, 3, 12, mats.roofThatch, 0, 7.5, 0, g);
+
+      const hub = new THREE.Group();
+      hub.position.set(0, 5.5, 2.8);
+      g.add(hub);
+
+      for (let i = 0; i < 4; i++) {
+        const blade = new THREE.Group();
+        blade.rotation.z = (i / 4) * Math.PI * 2;
+        box(0.25, 5, 0.12, mats.wood, 0, 2.5, 0, blade);
+        box(0.15, 4.5, 0.08, mats.cloth, 0.1, 2.5, 0.07, blade, false);
+        hub.add(blade);
+      }
+      animated.windmills.push({ hub, speed: randRange(0.4, 0.9) });
+      scene.add(g);
+    }
+
+    function buildMarketStall(x, z) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = randRange(0, Math.PI * 2);
+
+      box(2.5, 0.1, 1.5, mats.wood, 0, 0.8, 0, g);
+      for (let c of [-1, 1]) {
+        cyl(0.05, 0.05, 2.2, 6, mats.wood, c * 1, 1.1, 0.6, g);
+      }
+      const awning = new THREE.Mesh(new THREE.PlaneGeometry(3, 2, 3, 2), mats.cloth);
+      awning.rotation.x = -0.3;
+      awning.position.set(0, 2.3, 0);
+      g.add(awning);
+      animated.flags.push({ mesh: awning, phase: rand() * Math.PI * 2, amp: 0.08 });
+
+      // Produce crates
+      box(0.4, 0.35, 0.4, mats.wood, -0.5, 1.0, 0, g);
+      const fruit = new THREE.Mesh(
+        new THREE.SphereGeometry(0.15, 6, 6),
+        new THREE.MeshStandardMaterial({ color: pick([0xc0392b, 0xe67e22, 0x27ae60]) })
+      );
+      fruit.position.set(-0.5, 1.25, 0);
+      g.add(fruit);
+
+      scene.add(g);
+    }
+
+    function buildTree(x, z) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      cyl(0.25, 0.35, 2, 6, mats.wood, 0, 1, 0, g);
+      const foliage = new THREE.Mesh(new THREE.SphereGeometry(randRange(1.2, 2), 8, 8), mats.leaf);
+      foliage.position.y = randRange(2.5, 3.5);
+      foliage.castShadow = true;
+      g.add(foliage);
+      scene.add(g);
+    }
+
+    function buildTorch(x, y, z) {
+      const g = new THREE.Group();
+      g.position.set(x, y, z);
+      cyl(0.08, 0.1, 1.5, 6, mats.wood, 0, 0.75, 0, g);
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.15, 0.4, 6),
+        new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 0.9 })
+      );
+      flame.position.y = 1.6;
+      g.add(flame);
+
+      const light = new THREE.PointLight(0xff8833, 0.6, 8);
+      light.position.y = 1.6;
+      g.add(light);
+      torchLights.push(light);
+      animated.torches.push({ flame, light, phase: rand() * Math.PI * 2 });
+      scene.add(g);
+    }
+
+    function buildCitizen(path) {
+      const g = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: pick([0x4a3728, 0x2c3e50, 0x5d4037, 0x1a5276]) });
+      cyl(0.18, 0.22, 0.9, 6, bodyMat, 0, 0.95, 0, g);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd4a574 }));
+      head.position.y = 1.55;
+      g.add(head);
+      // Simple cone hat
+      cone(0.2, 0.25, 6, mats.cloth, 0, 1.75, 0, g);
+
+      animated.citizens.push({
+        group: g,
+        path,
+        t: rand(),
+        speed: randRange(0.03, 0.07),
+        phase: rand() * Math.PI * 2
+      });
+      scene.add(g);
+    }
+
+    // ── City wall ───────────────────────────────────────────────
+    function buildWall() {
+      const R = 55;
+      const segments = 48;
+      for (let i = 0; i < segments; i++) {
+        if (i % 6 === 0) continue; // gates
+        const a = (i / segments) * Math.PI * 2;
+        const x = Math.cos(a) * R;
+        const z = Math.sin(a) * R;
+        const g = new THREE.Group();
+        g.position.set(x, 0, z);
+        g.rotation.y = -a + Math.PI / 2;
+        box(5, 5, 2, mats.stone, 0, 2.5, 0, g);
+        for (let c = 0; c < 3; c++) {
+          box(0.6, 0.5, 0.6, mats.stoneDark, -1.5 + c * 1.5, 5.2, 0, g);
+        }
+        scene.add(g);
+      }
+
+      // Gate towers
+      for (let a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+        const x = Math.cos(a) * R;
+        const z = Math.sin(a) * R;
+        buildTower(x, z, 3.5, 12);
+        buildTorch(x + Math.cos(a + Math.PI / 2) * 4, 3, z + Math.sin(a + Math.PI / 2) * 4);
+      }
+    }
+    buildWall();
+
+    // ── Place buildings procedurally ────────────────────────────
+    buildCathedral(-12, -8);
+
+    const reserved = [{ x: -12, z: -8, r: 14 }, { x: 0, z: 0, r: 8 }];
+    function canPlace(x, z, r) {
+      if (Math.hypot(x, z) > 48) return false;
+      if (isRoad(x, z, r + 1)) return false;
+      for (const q of reserved) {
+        if (Math.hypot(x - q.x, z - q.z) < q.r + r) return false;
+      }
+      return true;
+    }
+
+    let placed = 0;
+    for (let attempt = 0; attempt < 400 && placed < 55; attempt++) {
+      const x = randRange(-HALF + 3, HALF - 3);
+      const z = randRange(-HALF + 3, HALF - 3);
+      const w = randRange(3, 5.5);
+      const d = randRange(3, 5.5);
+      const r = Math.max(w, d) * 0.7;
+      if (!canPlace(x, z, r)) continue;
+      reserved.push({ x, z, r: r + 1 });
+      const floors = randInt(1, 3);
+      const style = rand() > 0.4 ? 'timber' : 'stone';
+      buildHouse(x, z, w, d, floors, style);
+      placed++;
+    }
+
+    // Windmills outside walls
+    buildWindmill(68, 20);
+    buildWindmill(-72, -30);
+    buildWindmill(30, -75);
+
+    // Market around plaza
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + randRange(-0.2, 0.2);
+      buildMarketStall(Math.cos(a) * 9, Math.sin(a) * 9);
+    }
+
+    // Trees
+    for (let i = 0; i < 35; i++) {
+      const a = randRange(0, Math.PI * 2);
+      const dist = randRange(58, 88);
+      buildTree(Math.cos(a) * dist, Math.sin(a) * dist);
+    }
+
+    // Citizens on road loops
+    const citizenPaths = [
+      [{ x: -HALF, z: 0 }, { x: HALF, z: 0 }],
+      [{ x: 0, z: -HALF }, { x: 0, z: HALF }],
+      [{ x: -20, z: -20 }, { x: 20, z: -20 }, { x: 20, z: 20 }, { x: -20, z: 20 }],
+      [{ x: -HALF + 8, z: -HALF + 8 }, { x: HALF - 8, z: HALF - 8 }],
+    ];
+    for (let i = 0; i < 18; i++) {
+      buildCitizen(pick(citizenPaths));
+    }
+
+    // Birds
+    for (let i = 0; i < 12; i++) {
+      const bird = new THREE.Mesh(
+        new THREE.ConeGeometry(0.08, 0.3, 4),
+        new THREE.MeshBasicMaterial({ color: 0x222222 })
+      );
+      bird.rotation.z = Math.PI / 2;
+      animated.birds.push({
+        mesh: bird,
+        angle: rand() * Math.PI * 2,
+        radius: randRange(30, 70),
+        height: randRange(15, 35),
+        speed: randRange(0.1, 0.25),
+        flap: rand() * Math.PI * 2
+      });
+      scene.add(bird);
+    }
+
+    // Plaza torches
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      buildTorch(Math.cos(a) * 6, 0, Math.sin(a) * 6);
+    }
+
+    // ── Animation loop ──────────────────────────────────────────
+    const clock = new THREE.Clock();
+    let dayPhase = 0.35;
+
+    function lerpColor(c1, c2, t) {
+      const a = new THREE.Color(c1);
+      const b = new THREE.Color(c2);
+      return a.lerp(b, t);
+    }
+
+    function updateDayNight(t) {
+      dayPhase = (dayPhase + t * 0.015) % 1;
+      const sunAngle = dayPhase * Math.PI * 2;
+      sun.position.set(Math.cos(sunAngle) * 60, Math.sin(sunAngle) * 50 + 5, 25);
+      const daylight = Math.max(0, Math.sin(sunAngle)) * 0.85 + 0.15;
+      sun.intensity = 0.3 + daylight * 1.2;
+
+      const skyDay = new THREE.Color(0x87aecf);
+      const skyDusk = new THREE.Color(0xc47840);
+      const skyNight = new THREE.Color(0x0a1020);
+      let sky;
+      if (dayPhase < 0.25) sky = lerpColor(skyNight, skyDusk, dayPhase / 0.25);
+      else if (dayPhase < 0.35) sky = lerpColor(skyDusk, skyDay, (dayPhase - 0.25) / 0.1);
+      else if (dayPhase < 0.7) sky = skyDay.clone();
+      else if (dayPhase < 0.85) sky = lerpColor(skyDay, skyDusk, (dayPhase - 0.7) / 0.15);
+      else sky = lerpColor(skyDusk, skyNight, (dayPhase - 0.85) / 0.15);
+
+      scene.background = sky;
+      scene.fog.color.copy(sky);
+      hemi.intensity = 0.2 + daylight * 0.35;
+
+      torchLights.forEach(l => { l.intensity = (1 - daylight) * 1.2 + 0.1; });
+    }
+
+    function updateSmoke(t, time) {
+      animated.smoke.forEach(s => {
+        s.particles.forEach(p => {
+          p.mesh.position.y += t * (0.8 + p.idx * 0.15);
+          p.mesh.position.x += Math.sin(time + p.idx) * t * p.drift * 0.3;
+          p.mesh.material.opacity -= t * 0.12;
+          if (p.mesh.material.opacity <= 0) {
+            p.mesh.position.copy(s.origin);
+            p.mesh.position.x += randRange(-0.2, 0.2);
+            p.mesh.position.z += randRange(-0.2, 0.2);
+            p.mesh.material.opacity = randRange(0.2, 0.4);
+          }
+        });
+      });
+    }
+
+    function updateFlags(time) {
+      animated.flags.forEach(f => {
+        const pos = f.mesh.geometry.attributes.position;
+        const amp = f.amp || 0.15;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i);
+          const wave = Math.sin(time * 3 + f.phase + x * 4) * amp * (x + 0.5);
+          pos.setZ(i, wave);
+        }
+        pos.needsUpdate = true;
+      });
+    }
+
+    function updateCitizens(t, time) {
+      animated.citizens.forEach(c => {
+        c.t = (c.t + c.speed * t) % 1;
+        const path = c.path;
+        const seg = Math.min(Math.floor(c.t * path.length), path.length - 1);
+        const localT = (c.t * path.length) - seg;
+        const a = path[seg];
+        const b = path[(seg + 1) % path.length];
+        const x = a.x + (b.x - a.x) * localT;
+        const z = a.z + (b.z - a.z) * localT;
+        c.group.position.set(x, 0, z);
+        c.group.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+        c.group.position.y = Math.abs(Math.sin(time * 8 + c.phase)) * 0.06;
+      });
+    }
+
+    function updateWindmills(t) {
+      animated.windmills.forEach(w => { w.hub.rotation.z += t * w.speed; });
+    }
+
+    function updateTorches(time) {
+      animated.torches.forEach(t => {
+        const flicker = 0.7 + Math.sin(time * 15 + t.phase) * 0.2 + Math.sin(time * 23 + t.phase * 2) * 0.1;
+        t.flame.scale.y = flicker;
+        t.light.intensity = flicker * 0.8;
+      });
+    }
+
+    function updateBirds(t, time) {
+      animated.birds.forEach(b => {
+        b.angle += t * b.speed;
+        b.mesh.position.set(
+          Math.cos(b.angle) * b.radius,
+          b.height + Math.sin(time * 2 + b.flap) * 2,
+          Math.sin(b.angle) * b.radius
+        );
+        b.mesh.rotation.y = -b.angle + Math.PI / 2;
+        b.mesh.rotation.x = Math.sin(time * 10 + b.flap) * 0.4;
+      });
+    }
+
+    function updateFountain(time) {
+      const f = animated.fountain;
+      if (!f) return;
+      f.spout.scale.y = 1 + Math.sin(time * 6 + f.phase) * 0.15;
+      f.basin.material.opacity = 0.75 + Math.sin(time * 4) * 0.07;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = Math.min(clock.getDelta(), 0.05);
+      const time = clock.elapsedTime;
+      controls.update();
+      updateDayNight(t);
+      updateSmoke(t, time);
+      updateFlags(time);
+      updateCitizens(t, time);
+      updateWindmills(t);
+      updateTorches(time);
+      updateBirds(t, time);
+      updateFountain(time);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

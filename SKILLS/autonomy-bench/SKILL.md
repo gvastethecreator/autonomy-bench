@@ -1,6 +1,6 @@
 ---
 name: autonomy-bench
-description: "Plan, execute, record, compare, and finalize reproducible model-autonomy benchmarks from versioned prompt suites. Use for single-HTML coding benchmarks, A/B/C prompt ladders, model shootouts, repeated trials, receipt-driven run histories, and Prototype Lab export."
+description: 'Plan, execute, record, compare, and finalize reproducible model-autonomy benchmarks from versioned prompt suites. Use for single-HTML coding benchmarks, A/B/C prompt ladders, model shootouts, repeated trials, receipt-driven run histories, and Prototype Lab export.'
 ---
 
 # Autonomy Bench
@@ -20,13 +20,13 @@ Autonomy Bench is a **benchmark coordinator**, not a design treatment. It freeze
 
 ## Choose the run shape
 
-| Goal | Shape |
-| --- | --- |
-| Smoke-test one task | `single` |
-| See prompt sensitivity | `prompt-ladder` |
-| Compare models fairly | `model-shootout` |
-| Run selected combinations | `matrix` |
-| Run everything | `suite` |
+| Goal                      | Shape            |
+| ------------------------- | ---------------- |
+| Smoke-test one task       | `single`         |
+| See prompt sensitivity    | `prompt-ladder`  |
+| Compare models fairly     | `model-shootout` |
+| Run selected combinations | `matrix`         |
+| Run everything            | `suite`          |
 
 Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
 
@@ -36,10 +36,11 @@ Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
 2. Freeze a run with `bench plan`. Keep the generated `manifest.json` immutable.
 3. Dispatch every cell in a fresh context using only its `prompt.md` and permitted execution envelope.
 4. Save model-produced files under that cell's `output/` directory.
-5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, timing, isolation evidence, tool visibility, limitations, and output hashes.
+5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, harness (program), timing, token usage when visible, isolation evidence, tool visibility, limitations, and output hashes.
 6. Evaluate only after raw outputs are frozen. Prefer blind evaluation when comparing models.
 7. Run `bench status`; resolve missing receipts or record blockers explicitly.
-8. Run `bench finalize`; this writes `completion-receipt.json` and a SHA-256 integrity manifest.
+8. Run `bench gallery --run <run-id>` to copy HTML, prompts, and receipts into `gallery/<model>/<prompt-V>/<fecha>/`. Serve `gallery/` (`vp run dev`) and publish that folder.
+9. Run `bench finalize`; this writes `completion-receipt.json` and a SHA-256 integrity manifest.
 
 ## Prototype Lab route
 

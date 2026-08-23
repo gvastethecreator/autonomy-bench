@@ -2,7 +2,7 @@
 
 A local-first, receipt-driven benchmark repository for comparing how coding models interpret underspecified browser tasks.
 
-The initial suite contains **30 single-HTML benchmarks**, each with a controlled three-level prompt ladder:
+The suite contains **33 single-HTML benchmarks**, each with a controlled three-level prompt ladder:
 
 - **A — Raw:** minimal task statement.
 - **B — Autonomous:** same task plus explicit permission to make design and implementation decisions.
@@ -26,31 +26,53 @@ suites/                         immutable/versioned benchmark definitions
 runs/
   YYYY/MM/DD/<run-id>/          one frozen benchmark execution
     manifest.json               exact matrix + suite hash
-    cells/<cell-id>/
-      prompt.md                 frozen rendered prompt
-      receipt.template.json     canonical worker receipt skeleton
-      output/                   model-produced files
-      receipt.json              factual execution receipt
+    cells/<model>/<prompt-V>/   ledger: prompt, receipt, raw output
     completion-receipt.json     written only by finalize
+gallery/
+  index.html                    public stage viewer
+  catalog.json
+  .nojekyll
+  <model>/<prompt-V>/<fecha>/index.html
+  <model>/<prompt-V>/<fecha>/prompt.md
+  <model>/<prompt-V>/<fecha>/receipt.json
 exports/
   prototype-lab/<run-id>/       generated Prototype Lab experiment specs
 receipts/
   YYYY/MM/DD/                   repository/workflow receipts
 SKILLS/autonomy-bench/          Agent Skill
-scripts/bench.mjs               dependency-free CLI
+scripts/bench.mjs               planning / status / finalize CLI
+scripts/gallery.mjs             copy outputs into the gallery tree
 schemas/                        receipt + manifest schemas
+vite.config.ts                  Vite+ hub (Vite, Oxlint, Oxfmt, Vitest)
 ```
+
+`<prompt-V>` is `{benchmark}-{A|B|C}` (`rollercoaster-A`). `<fecha>` is `{YYYY-MM-DD}-{HHMMSS}` from the run id. Attempts after the first append `-a02` on the date folder (gallery) or an `a02/` child (ledger).
+
+## Toolchain
+
+This repo uses **Vite+** (`vp`): Vite, Oxlint, Oxfmt, and Vitest share `vite.config.ts`.
+
+```powershell
+vp install
+vp check
+vp test
+vp run bench:doctor
+vp run dev
+```
+
+VS Code tasks live in `.vscode/tasks.json` (`vp: check`, `vp: test`, `vp: gallery`, and the bench/deploy scripts). Install the Vite Plus extension pack so format-on-save matches `vp fmt`.
 
 ## Commands
 
 ```powershell
-pnpm run bench -- list
-pnpm run bench -- show rollercoaster --level A
-pnpm run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A,B,C --attempts 2 --adapter manual
-pnpm run bench -- status --run <run-id>
-pnpm run bench -- export-prototype-lab --run <run-id>
-pnpm run bench -- finalize --run <run-id>
-pnpm run bench -- doctor
+vp run bench -- list
+vp run bench -- show rollercoaster --level A
+vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A,B,C --attempts 2 --adapter manual --harness cursor
+vp run bench -- status --run <run-id>
+vp run bench -- gallery --run <run-id>
+vp run bench -- export-prototype-lab --run <run-id>
+vp run bench -- finalize --run <run-id>
+vp run bench:doctor
 ```
 
 `plan` never calls a model. It freezes the exact matrix and produces one isolated work packet per cell. The execution layer can then be manual, an agent/CLI, or Prototype Lab.
@@ -63,7 +85,7 @@ pnpm run bench -- doctor
 - `prompt-ladder`: A/B/C for the same benchmark and model, always in fresh contexts.
 - `model-shootout`: multiple models against the same frozen prompt.
 - `matrix`: arbitrary benchmarks × levels × models × attempts.
-- `suite`: the complete 30 × 3 matrix.
+- `suite`: the complete 33 × 3 matrix.
 
 ### Execution adapter
 
@@ -85,6 +107,20 @@ A run mode describes **what is compared**. An adapter describes **how cells are 
 8. Keep raw output and factual receipts separate from later evaluator opinions.
 9. Finalize only when every planned cell has a receipt or an explicit blocked/unavailable receipt.
 10. A completion receipt hashes the frozen run inputs and records limitations; it is not a claim that every output is good.
+
+## Gallery
+
+`vp run gallery -- --run <run-id>` copies each take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`, then writes the public viewer at `gallery/index.html`.
+
+The live HTML is the first thing on the page. Prompt and receipt sit in a paper Script drawer (`s` to toggle). Preview with the same worker that publishes the site:
+
+```powershell
+vp run dev
+```
+
+The viewer can show one cell, the A/B/C ladder for one model, or the same level across models. Unavailable models stay in the filmstrip; the stage typesets their prompt instead of faking a preview.
+
+The public gallery is **https://benchmark.gvaste.dev**. Redeploy with `vp run deploy` after regenerating `gallery/`.
 
 ## Prototype Lab bridge
 

@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Living Procedural Medieval City</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1520; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; left: 16px; bottom: 16px; z-index: 2;
+      font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+      color: #f3e6c8; background: rgba(20, 14, 10, 0.55);
+      padding: 10px 14px; border: 1px solid rgba(210, 170, 90, 0.35);
+      pointer-events: none; max-width: min(340px, 90vw);
+    }
+    #hud strong { color: #e8c56a; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <strong>Living Medieval City</strong><br />
+    Drag to orbit · scroll to zoom · auto-wander resumes after idle<br />
+    Seed regenerates a new city each load.
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const started = performance.now();
+const seed = (Date.now() ^ (Math.random() * 1e9 | 0)) >>> 0;
+
+function mulberry32(a) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rand = mulberry32(seed);
+const randRange = (a, b) => a + rand() * (b - a);
+const randInt = (a, b) => Math.floor(randRange(a, b + 1));
+const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87a7c4);
+scene.fog = new THREE.FogExp2(0x9bb4c9, 0.012);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 400);
+camera.position.set(42, 28, 48);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI * 0.48;
+controls.minDistance = 12;
+controls.maxDistance = 120;
+controls.target.set(0, 2, 0);
+
+let userInteracting = false;
+let lastInteract = performance.now();
+controls.addEventListener('start', () => { userInteracting = true; lastInteract = performance.now(); });
+controls.addEventListener('end', () => { userInteracting = false; lastInteract = performance.now(); });
+
+const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x5a4632, 0.55);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.15);
+sun.position.set(40, 60, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 160;
+sun.shadow.camera.left = -70;
+sun.shadow.camera.right = 70;
+sun.shadow.camera.top = 70;
+sun.shadow.camera.bottom = -70;
+sun.shadow.bias = -0.0003;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0x88aacc, 0.25);
+fill.position.set(-30, 20, -40);
+scene.add(fill);
+
+const CITY_R = 36;
+const WALL_R = 38;
+
+function makeMat(color, opts = {}) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: opts.roughness ?? 0.85,
+    metalness: opts.metalness ?? 0.05,
+    flatShading: opts.flat ?? false,
+  });
+}
+
+const mats = {
+  grass: makeMat(0x4a7a3a, { roughness: 0.95 }),
+  dirt: makeMat(0x6b5338, { roughness: 0.95 }),
+  cobble: makeMat(0x6e6860, { roughness: 0.9 }),
+  stone: makeMat(0x8a8478, { roughness: 0.88 }),
+  darkStone: makeMat(0x5c564c, { roughness: 0.9 }),
+  plaster: makeMat(0xd8c9a8, { roughness: 0.92 }),
+  timber: makeMat(0x5a3a22, { roughness: 0.8 }),
+  thatch: makeMat(0x9a7a3a, { roughness: 0.95 }),
+  tile: makeMat(0x8b3a2a, { roughness: 0.75 }),
+  slate: makeMat(0x4a5560, { roughness: 0.7 }),
+  wood: makeMat(0x6b4423, { roughness: 0.75 }),
+  water: new THREE.MeshStandardMaterial({ color: 0x3a6e8a, roughness: 0.35, metalness: 0.2, transparent: true, opacity: 0.85 }),
+  banner: makeMat(0x8b1e1e, { roughness: 0.7 }),
+  skin: makeMat(0xc49a72, { roughness: 0.7 }),
+  cloth: makeMat(0x3a5a8a, { roughness: 0.8 }),
+};
+
+const cityRoot = new THREE.Group();
+scene.add(cityRoot);
+
+// Ground
+{
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(CITY_R + 18, 64), mats.grass);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  cityRoot.add(ground);
+
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(8, 48), mats.cobble);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = 0.02;
+  plaza.receiveShadow = true;
+  cityRoot.add(plaza);
+}
+
+// Road network (radial + ring)
+const roads = new THREE.Group();
+cityRoot.add(roads);
+function addRoad(points, width) {
+  const shape = new THREE.Shape();
+  const half = width / 2;
+  // Build a simple strip along polyline
+  if (points.length < 2) return;
+  const left = [];
+  const right = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const prev = points[Math.max(0, i - 1)];
+    const next = points[Math.min(points.length - 1, i + 1)];
+    const dx = next.x - prev.x;
+    const dz = next.z - prev.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const nx = -dz / len;
+    const nz = dx / len;
+    left.push(new THREE.Vector2(p.x + nx * half, p.z + nz * half));
+    right.push(new THREE.Vector2(p.x - nx * half, p.z - nz * half));
+  }
+  shape.moveTo(left[0].x, left[0].y);
+  for (let i = 1; i < left.length; i++) shape.lineTo(left[i].x, left[i].y);
+  for (let i = right.length - 1; i >= 0; i--) shape.lineTo(right[i].x, right[i].y);
+  shape.closePath();
+  const geo = new THREE.ShapeGeometry(shape);
+  const mesh = new THREE.Mesh(geo, mats.cobble);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.03;
+  mesh.receiveShadow = true;
+  roads.add(mesh);
+}
+
+const spokes = 6;
+for (let i = 0; i < spokes; i++) {
+  const a = (i / spokes) * Math.PI * 2 + 0.15;
+  const pts = [];
+  for (let t = 0; t <= 1; t += 0.1) {
+    const r = 2 + t * (WALL_R - 4);
+    pts.push({ x: Math.cos(a) * r, z: Math.sin(a) * r });
+  }
+  addRoad(pts, 2.2);
+}
+for (const ringR of [14, 24, 32]) {
+  const pts = [];
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * Math.PI * 2;
+    pts.push({ x: Math.cos(a) * ringR, z: Math.sin(a) * ringR });
+  }
+  addRoad(pts, 1.8);
+}
+
+// City wall + gates
+const wallGroup = new THREE.Group();
+cityRoot.add(wallGroup);
+const wallSegs = 48;
+for (let i = 0; i < wallSegs; i++) {
+  if (i % 8 === 0) continue; // gate openings
+  const a0 = (i / wallSegs) * Math.PI * 2;
+  const a1 = ((i + 1) / wallSegs) * Math.PI * 2;
+  const mid = (a0 + a1) / 2;
+  const x = Math.cos(mid) * WALL_R;
+  const z = Math.sin(mid) * WALL_R;
+  const len = WALL_R * (a1 - a0) * 1.05;
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(len, 4.2, 1.4), mats.stone);
+  wall.position.set(x, 2.1, z);
+  wall.rotation.y = -mid + Math.PI / 2;
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  wallGroup.add(wall);
+
+  // battlements
+  for (let b = -1; b <= 1; b++) {
+    const merlon = new THREE.Mesh(new THREE.BoxGeometry(len * 0.22, 0.9, 1.5), mats.darkStone);
+    merlon.position.set(x, 4.55, z);
+    merlon.rotation.y = -mid + Math.PI / 2;
+    const off = b * len * 0.28;
+    merlon.translateX(off);
+    merlon.castShadow = true;
+    wallGroup.add(merlon);
+  }
+}
+
+// Gatehouses
+for (let g = 0; g < 6; g++) {
+  const a = (g / 6) * Math.PI * 2;
+  const x = Math.cos(a) * WALL_R;
+  const z = Math.sin(a) * WALL_R;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(5.5, 6.5, 4), mats.darkStone);
+  base.position.set(x, 3.25, z);
+  base.rotation.y = -a + Math.PI / 2;
+  base.castShadow = true;
+  wallGroup.add(base);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(3.2, 2.4, 4), mats.tile);
+  roof.position.set(x, 7.6, z);
+  roof.rotation.y = -a + Math.PI / 4;
+  roof.castShadow = true;
+  wallGroup.add(roof);
+  const arch = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.2, 4.2), mats.cobble);
+  arch.position.set(x, 1.6, z);
+  arch.rotation.y = -a + Math.PI / 2;
+  wallGroup.add(arch);
+}
+
+// Corner / watch towers
+for (let t = 0; t < 8; t++) {
+  const a = (t / 8) * Math.PI * 2 + Math.PI / 8;
+  const x = Math.cos(a) * (WALL_R + 0.5);
+  const z = Math.sin(a) * (WALL_R + 0.5);
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.1, 9, 8), mats.stone);
+  tower.position.set(x, 4.5, z);
+  tower.castShadow = true;
+  wallGroup.add(tower);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(2.4, 2.8, 8), mats.slate);
+  cap.position.set(x, 10.4, z);
+  cap.castShadow = true;
+  wallGroup.add(cap);
+  const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.5, 6), mats.timber);
+  flagPole.position.set(x, 12.2, z);
+  wallGroup.add(flagPole);
+}
+
+// Keep / castle at center-north
+const keep = new THREE.Group();
+cityRoot.add(keep);
+{
+  const kx = 0, kz = -6;
+  const hall = new THREE.Mesh(new THREE.BoxGeometry(10, 8, 8), mats.darkStone);
+  hall.position.set(kx, 4, kz);
+  hall.castShadow = true;
+  keep.add(hall);
+  const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(7.5, 4, 4), mats.slate);
+  keepRoof.position.set(kx, 10, kz);
+  keepRoof.rotation.y = Math.PI / 4;
+  keepRoof.castShadow = true;
+  keep.add(keepRoof);
+  for (const [ox, oz] of [[-5.5, -4], [5.5, -4], [-5.5, 4], [5.5, 4]]) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.6, 12, 8), mats.stone);
+    t.position.set(kx + ox, 6, kz + oz);
+    t.castShadow = true;
+    keep.add(t);
+    const c = new THREE.Mesh(new THREE.ConeGeometry(1.9, 2.2, 8), mats.tile);
+    c.position.set(kx + ox, 13.1, kz + oz);
+    c.castShadow = true;
+    keep.add(c);
+  }
+  // courtyard fountain
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 0.6, 16), mats.stone);
+  basin.position.set(0, 0.35, 4);
+  keep.add(basin);
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.2, 16), mats.water);
+  water.position.set(0, 0.6, 4);
+  keep.add(water);
+}
+
+function createBuilding(w, d, floors, style) {
+  const g = new THREE.Group();
+  const h = floors * 2.4 + randRange(0.2, 0.8);
+  const bodyMat = style === 'timber' ? mats.plaster : (style === 'stone' ? mats.stone : mats.plaster);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+  body.position.y = h / 2;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  g.add(body);
+
+  if (style === 'timber') {
+    const beamMat = mats.timber;
+    for (let f = 1; f < floors; f++) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.18, d + 0.05), beamMat);
+      beam.position.y = f * 2.4;
+      g.add(beam);
+    }
+    for (const sx of [-w / 2, w / 2]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, h, 0.18), beamMat);
+      post.position.set(sx, h / 2, d / 2);
+      g.add(post);
+      const post2 = post.clone();
+      post2.position.z = -d / 2;
+      g.add(post2);
+    }
+  }
+
+  // roof
+  const roofH = randRange(1.4, 2.6);
+  const roofMat = pick([mats.tile, mats.thatch, mats.slate, mats.tile]);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, roofH, 4), roofMat);
+  roof.position.y = h + roofH * 0.45;
+  roof.rotation.y = Math.PI / 4;
+  roof.castShadow = true;
+  g.add(roof);
+
+  // door
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.4, 0.12), mats.wood);
+  door.position.set(0, 0.7, d / 2 + 0.05);
+  g.add(door);
+
+  // windows
+  const winMat = makeMat(0x1a2230, { roughness: 0.4, metalness: 0.2 });
+  for (let f = 0; f < floors; f++) {
+    const wy = 1.2 + f * 2.4;
+    for (const side of [1, -1]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.08), winMat);
+      win.position.set(side * w * 0.22, wy, d / 2 + 0.04);
+      g.add(win);
+    }
+  }
+
+  // chimney smoke anchor
+  if (rand() > 0.55) {
+    const chim = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.2, 0.45), mats.darkStone);
+    chim.position.set(w * 0.25, h + 0.8, -d * 0.15);
+    g.add(chim);
+    g.userData.hasChimney = true;
+    g.userData.chimneyLocal = chim.position.clone();
+  }
+
+  g.userData.footprint = { w, d };
+  return g;
+}
+
+const buildings = [];
+const occupied = [];
+
+function overlaps(x, z, w, d, pad = 0.6) {
+  const hw = w / 2 + pad;
+  const hd = d / 2 + pad;
+  for (const o of occupied) {
+    if (Math.abs(x - o.x) < hw + o.hw && Math.abs(z - o.z) < hd + o.hd) return true;
+  }
+  // keep roads somewhat clear (radial spokes approx)
+  const r = Math.hypot(x, z);
+  if (r < 9) return true;
+  const ang = Math.atan2(z, x);
+  for (let i = 0; i < spokes; i++) {
+    const a = (i / spokes) * Math.PI * 2 + 0.15;
+    let da = Math.abs(ang - a);
+    da = Math.min(da, Math.PI * 2 - da);
+    if (da < 0.12 && r > 4 && r < WALL_R - 2) return true;
+  }
+  // keep rings
+  for (const ringR of [14, 24, 32]) {
+    if (Math.abs(r - ringR) < 1.3) return true;
+  }
+  return false;
+}
+
+for (let attempt = 0; attempt < 220; attempt++) {
+  const a = rand() * Math.PI * 2;
+  const r = randRange(10, WALL_R - 4.5);
+  const x = Math.cos(a) * r;
+  const z = Math.sin(a) * r;
+  const w = randRange(2.2, 4.8);
+  const d = randRange(2.2, 4.5);
+  if (overlaps(x, z, w, d)) continue;
+  const floors = randInt(1, 3);
+  const style = pick(['timber', 'timber', 'stone', 'plaster']);
+  const b = createBuilding(w, d, floors, style);
+  b.position.set(x, 0, z);
+  b.rotation.y = rand() * Math.PI * 2;
+  cityRoot.add(b);
+  buildings.push(b);
+  occupied.push({ x, z, hw: w / 2, hd: d / 2 });
+}
+
+// Market stalls near plaza
+const market = new THREE.Group();
+cityRoot.add(market);
+for (let i = 0; i < 10; i++) {
+  const a = (i / 10) * Math.PI * 2;
+  const r = 5.5 + randRange(-0.4, 0.4);
+  const stall = new THREE.Group();
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.15, 1.0), mats.wood);
+  table.position.y = 0.7;
+  stall.add(table);
+  const postL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.4, 0.1), mats.timber);
+  postL.position.set(-0.7, 0.7, 0);
+  stall.add(postL);
+  const postR = postL.clone();
+  postR.position.x = 0.7;
+  stall.add(postR);
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 0.08, 1.2),
+    makeMat(pick([0xb33a3a, 0x3a6ab3, 0xd4a017, 0x4a8a4a]), { roughness: 0.8 })
+  );
+  canopy.position.y = 1.45;
+  canopy.rotation.z = randRange(-0.08, 0.08);
+  stall.add(canopy);
+  stall.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+  stall.lookAt(0, 0, 0);
+  market.add(stall);
+}
+
+// Trees outside / parks
+const trees = new THREE.Group();
+cityRoot.add(trees);
+function addTree(x, z, scale = 1) {
+  const t = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2 * scale, 0.28 * scale, 1.6 * scale, 6), mats.timber);
+  trunk.position.y = 0.8 * scale;
+  trunk.castShadow = true;
+  t.add(trunk);
+  const foliage = new THREE.Mesh(
+    new THREE.SphereGeometry(1.1 * scale, 8, 6),
+    makeMat(pick([0x2f6b2f, 0x3d7a35, 0x255528]), { roughness: 0.95 })
+  );
+  foliage.position.y = 2.1 * scale;
+  foliage.castShadow = true;
+  t.add(foliage);
+  t.position.set(x, 0, z);
+  trees.add(t);
+}
+for (let i = 0; i < 40; i++) {
+  const a = rand() * Math.PI * 2;
+  const r = randRange(WALL_R + 2, WALL_R + 14);
+  addTree(Math.cos(a) * r, Math.sin(a) * r, randRange(0.8, 1.5));
+}
+for (let i = 0; i < 12; i++) {
+  const a = rand() * Math.PI * 2;
+  const r = randRange(16, 30);
+  const x = Math.cos(a) * r;
+  const z = Math.sin(a) * r;
+  if (!overlaps(x, z, 2, 2, 1.2)) addTree(x, z, randRange(0.7, 1.2));
+}
+
+// Living: townspeople
+const people = [];
+const clothColors = [0x8b1e1e, 0x2e5a8a, 0x3d6b3d, 0x8a6a2a, 0x5a3a6a, 0x6a4a2a];
+
+function createPerson() {
+  const p = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.22, 0.55, 4, 8),
+    makeMat(pick(clothColors), { roughness: 0.8 })
+  );
+  body.position.y = 0.75;
+  body.castShadow = true;
+  p.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), mats.skin);
+  head.position.y = 1.35;
+  head.castShadow = true;
+  p.add(head);
+  p.userData = {
+    speed: randRange(0.9, 1.8),
+    phase: rand() * Math.PI * 2,
+    path: makeWanderPath(),
+    pathT: rand(),
+  };
+  return p;
+}
+
+function makeWanderPath() {
+  const pts = [];
+  const kind = rand();
+  if (kind < 0.45) {
+    // ring walk
+    const r = pick([8, 14, 24, 30]);
+    const start = rand() * Math.PI * 2;
+    const dir = rand() > 0.5 ? 1 : -1;
+    for (let i = 0; i <= 32; i++) {
+      const a = start + dir * (i / 32) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
+    }
+  } else if (kind < 0.8) {
+    // spoke
+    const a = (randInt(0, spokes - 1) / spokes) * Math.PI * 2 + 0.15;
+    const r0 = randRange(4, 12);
+    const r1 = randRange(20, WALL_R - 3);
+    for (let i = 0; i <= 20; i++) {
+      const t = i / 20;
+      const r = r0 + (r1 - r0) * t;
+      pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
+    }
+    for (let i = 19; i >= 0; i--) pts.push(pts[i].clone());
+  } else {
+    // plaza mill
+    for (let i = 0; i <= 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const r = 3 + Math.sin(i * 0.7) * 1.5;
+      pts.push(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r + 1));
+    }
+  }
+  return pts;
+}
+
+const populace = new THREE.Group();
+cityRoot.add(populace);
+for (let i = 0; i < 55; i++) {
+  const person = createPerson();
+  populace.add(person);
+  people.push(person);
+}
+
+// Carts
+const carts = [];
+function createCart() {
+  const c = new THREE.Group();
+  const bed = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.35, 1.1), mats.wood);
+  bed.position.y = 0.55;
+  bed.castShadow = true;
+  c.add(bed);
+  for (const wx of [-0.55, 0.55]) {
+    for (const wz of [-0.55, 0.55]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.12, 10), mats.darkStone);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wx, 0.35, wz);
+      c.add(wheel);
+    }
+  }
+  const a = (randInt(0, spokes - 1) / spokes) * Math.PI * 2 + 0.15;
+  c.userData = { a, r: randRange(10, 30), speed: randRange(0.15, 0.35), dir: rand() > 0.5 ? 1 : -1, alongSpoke: rand() > 0.5 };
+  cityRoot.add(c);
+  carts.push(c);
+  return c;
+}
+for (let i = 0; i < 4; i++) createCart();
+
+// Smoke particles
+const smokeCount = 80;
+const smokeGeo = new THREE.BufferGeometry();
+const smokePos = new Float32Array(smokeCount * 3);
+const smokeData = [];
+for (let i = 0; i < smokeCount; i++) {
+  smokePos[i * 3] = 0;
+  smokePos[i * 3 + 1] = -10;
+  smokePos[i * 3 + 2] = 0;
+  smokeData.push({ life: rand(), speed: randRange(0.4, 1.0), spread: randRange(0.2, 0.6) });
+}
+smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
+const smokeMat = new THREE.PointsMaterial({
+  color: 0xb8b0a4,
+  size: 0.55,
+  transparent: true,
+  opacity: 0.35,
+  depthWrite: false,
+});
+const smoke = new THREE.Points(smokeGeo, smokeMat);
+cityRoot.add(smoke);
+
+const chimneyWorld = [];
+buildings.forEach((b) => {
+  if (!b.userData.hasChimney) return;
+  const v = b.userData.chimneyLocal.clone();
+  b.localToWorld(v);
+  chimneyWorld.push(v);
+});
+// also keep chimney
+chimneyWorld.push(new THREE.Vector3(2, 10.5, -6));
+
+// Birds
+const birds = [];
+const birdGroup = new THREE.Group();
+cityRoot.add(birdGroup);
+for (let i = 0; i < 18; i++) {
+  const bird = new THREE.Mesh(
+    new THREE.ConeGeometry(0.15, 0.45, 3),
+    makeMat(0x222228, { roughness: 0.6 })
+  );
+  bird.rotation.x = Math.PI / 2;
+  bird.userData = {
+    r: randRange(18, 45),
+    y: randRange(12, 28),
+    a: rand() * Math.PI * 2,
+    speed: randRange(0.25, 0.7),
+    bob: rand() * Math.PI * 2,
+  };
+  birdGroup.add(bird);
+  birds.push(bird);
+}
+
+// Banners on keep
+const banners = [];
+for (const ox of [-3, 3]) {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 5, 6), mats.timber);
+  pole.position.set(ox, 6.5, -1.5);
+  keep.add(pole);
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.8, 4, 6), mats.banner);
+  cloth.position.set(ox + 0.65, 6.8, -1.5);
+  cloth.castShadow = true;
+  keep.add(cloth);
+  banners.push(cloth);
+}
+
+// Clouds
+const clouds = new THREE.Group();
+scene.add(clouds);
+for (let i = 0; i < 12; i++) {
+  const cloud = new THREE.Group();
+  const n = randInt(3, 6);
+  for (let j = 0; j < n; j++) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(randRange(2, 4), 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xf2f4f8, roughness: 1, transparent: true, opacity: 0.85 })
+    );
+    puff.position.set(randRange(-4, 4), randRange(-0.5, 1), randRange(-2, 2));
+    cloud.add(puff);
+  }
+  cloud.position.set(randRange(-80, 80), randRange(28, 42), randRange(-80, 80));
+  cloud.userData.speed = randRange(0.3, 0.9);
+  clouds.add(cloud);
+}
+
+// Day cycle helpers
+const skyDay = new THREE.Color(0x87a7c4);
+const skyDusk = new THREE.Color(0xc48a6a);
+const skyNight = new THREE.Color(0x1a2035);
+const fogDay = new THREE.Color(0x9bb4c9);
+const fogNight = new THREE.Color(0x1e2438);
+
+const clock = new THREE.Clock();
+let camAngle = 0.35;
+
+function samplePath(path, t) {
+  const n = path.length;
+  const f = ((t % 1) + 1) % 1 * (n - 1);
+  const i = Math.floor(f);
+  const frac = f - i;
+  const a = path[i];
+  const b = path[Math.min(i + 1, n - 1)];
+  return new THREE.Vector3().lerpVectors(a, b, frac);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // day / night cycle (~90s)
+  const day = (Math.sin(t * 0.07) + 1) * 0.5;
+  const dusk = Math.sin(t * 0.07);
+  scene.background.copy(skyDay).lerp(skyNight, 1 - day);
+  if (dusk > 0.55) scene.background.lerp(skyDusk, (dusk - 0.55) / 0.45 * 0.4);
+  scene.fog.color.copy(fogDay).lerp(fogNight, 1 - day);
+  sun.intensity = 0.25 + day * 1.0;
+  hemi.intensity = 0.25 + day * 0.4;
+  sun.position.set(Math.cos(t * 0.07) * 50, 20 + day * 45, Math.sin(t * 0.07) * 40);
+
+  // people
+  for (const p of people) {
+    const ud = p.userData;
+    ud.pathT += (ud.speed * dt) / 40;
+    const pos = samplePath(ud.path, ud.pathT);
+    const next = samplePath(ud.path, ud.pathT + 0.01);
+    p.position.x = pos.x;
+    p.position.z = pos.z;
+    p.position.y = Math.abs(Math.sin(t * ud.speed * 4 + ud.phase)) * 0.06;
+    p.lookAt(next.x, p.position.y, next.z);
+  }
+
+  // carts
+  for (const c of carts) {
+    const ud = c.userData;
+    if (ud.alongSpoke) {
+      ud.r += ud.dir * ud.speed * dt * 3;
+      if (ud.r > WALL_R - 4 || ud.r < 8) ud.dir *= -1;
+      c.position.set(Math.cos(ud.a) * ud.r, 0, Math.sin(ud.a) * ud.r);
+      const lookR = ud.r + ud.dir;
+      c.lookAt(Math.cos(ud.a) * lookR, 0, Math.sin(ud.a) * lookR);
+    } else {
+      ud.a += ud.dir * ud.speed * dt * 0.15;
+      c.position.set(Math.cos(ud.a) * ud.r, 0, Math.sin(ud.a) * ud.r);
+      c.lookAt(Math.cos(ud.a + ud.dir * 0.1) * ud.r, 0, Math.sin(ud.a + ud.dir * 0.1) * ud.r);
+    }
+  }
+
+  // smoke
+  const sp = smoke.geometry.attributes.position.array;
+  for (let i = 0; i < smokeCount; i++) {
+    const d = smokeData[i];
+    d.life += dt * d.speed * 0.35;
+    if (d.life > 1 || chimneyWorld.length === 0) {
+      d.life = 0;
+      const src = chimneyWorld[i % chimneyWorld.length];
+      sp[i * 3] = src.x + (rand() - 0.5) * 0.3;
+      sp[i * 3 + 1] = src.y;
+      sp[i * 3 + 2] = src.z + (rand() - 0.5) * 0.3;
+    } else {
+      sp[i * 3] += Math.sin(t + i) * d.spread * dt;
+      sp[i * 3 + 1] += d.speed * dt * 1.2;
+      sp[i * 3 + 2] += Math.cos(t * 0.7 + i) * d.spread * dt;
+    }
+  }
+  smoke.geometry.attributes.position.needsUpdate = true;
+  smokeMat.opacity = 0.15 + day * 0.25;
+
+  // birds
+  for (const b of birds) {
+    const ud = b.userData;
+    ud.a += ud.speed * dt * 0.4;
+    b.position.set(
+      Math.cos(ud.a) * ud.r,
+      ud.y + Math.sin(t * 1.5 + ud.bob) * 0.8,
+      Math.sin(ud.a) * ud.r
+    );
+    b.rotation.y = -ud.a + Math.PI / 2;
+    b.rotation.z = Math.sin(t * 8 + ud.bob) * 0.35;
+  }
+
+  // banners flutter
+  for (const banner of banners) {
+    const pos = banner.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      if (x > 0.1) {
+        pos.setZ(i, Math.sin(t * 3 + y * 4 + x) * 0.12 * x);
+      }
+    }
+    pos.needsUpdate = true;
+  }
+
+  // clouds drift
+  clouds.children.forEach((c) => {
+    c.position.x += c.userData.speed * dt;
+    if (c.position.x > 90) c.position.x = -90;
+  });
+
+  // auto camera wander when idle
+  if (!userInteracting && performance.now() - lastInteract > 4000) {
+    camAngle += dt * 0.08;
+    const rad = 48 + Math.sin(t * 0.15) * 8;
+    const h = 22 + Math.sin(t * 0.11) * 6;
+    camera.position.x = Math.cos(camAngle) * rad;
+    camera.position.z = Math.sin(camAngle) * rad;
+    camera.position.y = h;
+    controls.target.set(Math.sin(t * 0.05) * 4, 3, Math.cos(t * 0.04) * 3);
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+animate();
+
+console.info(`[medieval-city] seed=${seed} buildings=${buildings.length} people=${people.length} boot=${(performance.now() - started) | 0}ms`);
+  </script>
+</body>
+</html>

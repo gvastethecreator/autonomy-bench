@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Maze</title>
+  <style>
+    :root {
+      --ink: #0c0a08;
+      --parchment: #d7c4a3;
+      --ember: #e08a3c;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--ink); }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; inset: 0; pointer-events: none;
+      font-family: "Palatino Linotype", Palatino, "Times New Roman", serif;
+      color: var(--parchment);
+    }
+    #crosshair {
+      position: absolute; left: 50%; top: 50%;
+      width: 10px; height: 10px; margin: -5px 0 0 -5px;
+      opacity: 0.45;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: var(--parchment);
+    }
+    #crosshair::before { left: 4px; top: 0; width: 2px; height: 10px; }
+    #crosshair::after { left: 0; top: 4px; width: 10px; height: 2px; }
+    #overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(18,12,8,0.55) 0%, rgba(6,4,3,0.92) 100%);
+      pointer-events: auto; cursor: pointer;
+      transition: opacity 0.45s ease;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    #card {
+      text-align: center; max-width: 28rem; padding: 2.4rem 2rem;
+      border: 1px solid rgba(215, 196, 163, 0.28);
+      background: rgba(12, 9, 6, 0.62);
+      box-shadow: 0 0 80px rgba(0,0,0,0.55);
+    }
+    #card h1 {
+      font-size: 1.85rem; font-weight: 400; letter-spacing: 0.28em;
+      text-transform: uppercase; margin-bottom: 0.85rem;
+    }
+    #card p {
+      font-size: 0.95rem; line-height: 1.55; opacity: 0.82; margin-bottom: 1.15rem;
+    }
+    #card kbd {
+      display: inline-block; padding: 0.08em 0.4em;
+      border: 1px solid rgba(215,196,163,0.35);
+      border-radius: 3px; font-family: inherit; font-size: 0.86em;
+    }
+    #hint {
+      position: absolute; left: 1.25rem; bottom: 1.1rem;
+      font-size: 0.78rem; letter-spacing: 0.08em; opacity: 0.55;
+    }
+    #vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,0.55) 100%);
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div id="vignette"></div>
+    <div id="crosshair"></div>
+    <div id="hint">WASD move · Shift run · Mouse look · Esc release</div>
+    <div id="overlay">
+      <div id="card">
+        <h1>The Labyrinth</h1>
+        <p>An endless stone maze. Passages fork forever; walls remember where you have been.</p>
+        <p><kbd>Click</kbd> to enter &nbsp;·&nbsp; <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> to walk</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+
+    const CELL = 4.0;
+    const WALL_T = 0.38;
+    const WALL_H = 3.35;
+    const CHUNK = 8;
+    const VIEW_CHUNKS = 2;
+    const PLAYER_R = 0.28;
+    const EYE = 1.62;
+    const WALK = 4.35;
+    const RUN = 7.15;
+
+    const hash2 = (x, z, salt = 0) => {
+      let n = (x | 0) * 374761393 + (z | 0) * 668265263 + salt * 1274126177;
+      n = (n ^ (n >>> 13)) >>> 0;
+      n = Math.imul(n, 1274126177) >>> 0;
+      return n / 4294967296;
+    };
+
+    const openNorth = (x, z) => hash2(x, z, 11) < 0.5;
+    const extraEast = (x, z) => hash2(x, z, 23) < 0.14;
+    const extraNorth = (x, z) => hash2(x, z, 41) < 0.14;
+
+    const wallEast = (x, z) => !(openNorth(x, z) === false || extraEast(x, z));
+    const wallNorth = (x, z) => !(openNorth(x, z) || extraNorth(x, z));
+    const hasTorch = (x, z) => hash2(x, z, 97) < 0.085 && (wallEast(x, z) || wallNorth(x, z));
+
+    const makeTexture = (draw, size = 256, wrap = THREE.RepeatWrapping) => {
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      draw(c.getContext("2d"), size);
+      const t = new THREE.CanvasTexture(c);
+      t.wrapS = t.wrapT = wrap;
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 8;
+      t.needsUpdate = true;
+      return t;
+    };
+
+    const stoneAlbedo = makeTexture((ctx, s) => {
+      ctx.fillStyle = "#5a534a";
+      ctx.fillRect(0, 0, s, s);
+      const bricksX = 4, bricksY = 6;
+      const bw = s / bricksX, bh = s / bricksY;
+      for (let y = 0; y < bricksY; y++) {
+        const offset = (y % 2) * (bw * 0.5);
+        for (let x = -1; x <= bricksX; x++) {
+          const px = x * bw + offset;
+          const py = y * bh;
+          const v = 78 + ((x * 17 + y * 31) % 28);
+          ctx.fillStyle = `rgb(${v + 8},${v - 2},${v - 14})`;
+          ctx.fillRect(px + 2, py + 2, bw - 4, bh - 4);
+          ctx.fillStyle = "rgba(20,16,12,0.35)";
+          ctx.fillRect(px, py, bw, 2);
+          ctx.fillRect(px, py, 2, bh);
+          ctx.fillStyle = "rgba(210,190,160,0.12)";
+          ctx.fillRect(px + 3, py + 3, bw - 8, 3);
+        }
+      }
+      for (let i = 0; i < 900; i++) {
+        const g = 40 + Math.random() * 50;
+        ctx.fillStyle = `rgba(${g},${g - 8},${g - 16},${0.08 + Math.random() * 0.12})`;
+        ctx.fillRect(Math.random() * s, Math.random() * s, 1 + Math.random() * 2, 1);
+      }
+    }, 512);
+    stoneAlbedo.repeat.set(1.2, 1.6);
+
+    const floorAlbedo = makeTexture((ctx, s) => {
+      ctx.fillStyle = "#3a342c";
+      ctx.fillRect(0, 0, s, s);
+      const n = 8, t = s / n;
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const v = 52 + ((x * 13 + y * 29) % 22);
+          ctx.fillStyle = `rgb(${v + 6},${v},${v - 10})`;
+          ctx.fillRect(x * t + 1, y * t + 1, t - 2, t - 2);
+          ctx.strokeStyle = "rgba(18,14,10,0.55)";
+          ctx.strokeRect(x * t + 0.5, y * t + 0.5, t, t);
+        }
+      }
+      for (let i = 0; i < 1200; i++) {
+        ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.18})`;
+        ctx.fillRect(Math.random() * s, Math.random() * s, 2, 2);
+      }
+    }, 512);
+    floorAlbedo.repeat.set(2, 2);
+
+    const ceilingAlbedo = makeTexture((ctx, s) => {
+      ctx.fillStyle = "#2c2824";
+      ctx.fillRect(0, 0, s, s);
+      for (let i = 0; i < 40; i++) {
+        const x = Math.random() * s, y = Math.random() * s, r = 8 + Math.random() * 28;
+        ctx.fillStyle = `rgba(${30 + Math.random() * 20}, ${24 + Math.random() * 12}, 18, 0.35)`;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      }
+    });
+    ceilingAlbedo.repeat.set(2, 2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.shadowMap.enabled = false;
+    document.body.prepend(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x090806);
+    scene.fog = new THREE.FogExp2(0x0c0a08, 0.052);
+
+    const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.08, 80);
+    camera.position.set(CELL * 0.5, EYE, CELL * 0.5);
+
+    const controls = new PointerLockControls(camera, renderer.domElement);
+    scene.add(controls.object);
+
+    const overlay = document.getElementById("overlay");
+    overlay.addEventListener("click", () => controls.lock());
+    controls.addEventListener("lock", () => overlay.classList.add("hidden"));
+    controls.addEventListener("unlock", () => overlay.classList.remove("hidden"));
+
+    scene.add(new THREE.HemisphereLight(0x6a7a8c, 0x1a120c, 0.28));
+    const fill = new THREE.AmbientLight(0x2a2218, 0.22);
+    scene.add(fill);
+
+    const lantern = new THREE.PointLight(0xffc58a, 1.35, 11, 1.6);
+    lantern.position.set(0, 0.15, 0);
+    camera.add(lantern);
+    scene.add(camera);
+
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: stoneAlbedo, roughness: 0.92, metalness: 0.02, color: 0xc8bba8
+    });
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: floorAlbedo, roughness: 0.96, metalness: 0.0, color: 0xb8a88c
+    });
+    const ceilMat = new THREE.MeshStandardMaterial({
+      map: ceilingAlbedo, roughness: 1, metalness: 0, color: 0x8a8074, side: THREE.BackSide
+    });
+    const pillarMat = new THREE.MeshStandardMaterial({
+      color: 0x6a6054, roughness: 0.88, metalness: 0.04
+    });
+    const emberMat = new THREE.MeshBasicMaterial({ color: 0xffaa55 });
+
+    const wallNSGeo = new THREE.BoxGeometry(CELL + WALL_T, WALL_H, WALL_T);
+    const wallEWGeo = new THREE.BoxGeometry(WALL_T, WALL_H, CELL + WALL_T);
+    const pillarGeo = new THREE.BoxGeometry(WALL_T * 1.15, WALL_H + 0.08, WALL_T * 1.15);
+    const torchStickGeo = new THREE.BoxGeometry(0.06, 0.42, 0.06);
+    const torchHeadGeo = new THREE.SphereGeometry(0.07, 8, 8);
+    const floorGeo = new THREE.PlaneGeometry(CHUNK * CELL, CHUNK * CELL);
+    const ceilGeo = new THREE.PlaneGeometry(CHUNK * CELL, CHUNK * CELL);
+
+    const colliders = [];
+    const chunks = new Map();
+    const torchLights = [];
+
+    const chunkKey = (cx, cz) => `${cx},${cz}`;
+
+    const addAABB = (x, z, sx, sz) => {
+      colliders.push({
+        minX: x - sx * 0.5, maxX: x + sx * 0.5,
+        minZ: z - sz * 0.5, maxZ: z + sz * 0.5
+      });
+    };
+
+    function buildChunk(cx, cz) {
+      const key = chunkKey(cx, cz);
+      if (chunks.has(key)) return;
+
+      const group = new THREE.Group();
+      group.userData = { cx, cz, lights: [] };
+
+      const x0 = cx * CHUNK;
+      const z0 = cz * CHUNK;
+      const originX = (x0 + CHUNK * 0.5) * CELL;
+      const originZ = (z0 + CHUNK * 0.5) * CELL;
+
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(originX, 0, originZ);
+      group.add(floor);
+
+      const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+      ceil.rotation.x = -Math.PI / 2;
+      ceil.position.set(originX, WALL_H, originZ);
+      group.add(ceil);
+
+      for (let z = z0; z < z0 + CHUNK; z++) {
+        for (let x = x0; x < x0 + CHUNK; x++) {
+          const cxw = (x + 0.5) * CELL;
+          const czw = (z + 0.5) * CELL;
+
+          if (wallNorth(x, z)) {
+            const mesh = new THREE.Mesh(wallNSGeo, wallMat);
+            mesh.position.set(cxw, WALL_H * 0.5, z * CELL);
+            group.add(mesh);
+            addAABB(cxw, z * CELL, CELL + WALL_T, WALL_T);
+          }
+          if (wallEast(x, z)) {
+            const mesh = new THREE.Mesh(wallEWGeo, wallMat);
+            mesh.position.set((x + 1) * CELL, WALL_H * 0.5, czw);
+            group.add(mesh);
+            addAABB((x + 1) * CELL, czw, WALL_T, CELL + WALL_T);
+          }
+
+          const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+          pillar.position.set(x * CELL, WALL_H * 0.5 + 0.02, z * CELL);
+          group.add(pillar);
+          addAABB(x * CELL, z * CELL, WALL_T * 1.15, WALL_T * 1.15);
+
+          if (hasTorch(x, z)) {
+            const faceEast = wallEast(x, z) && hash2(x, z, 3) < 0.5;
+            const stick = new THREE.Mesh(torchStickGeo, pillarMat);
+            const head = new THREE.Mesh(torchHeadGeo, emberMat);
+            const light = new THREE.PointLight(0xff9a4a, 1.15, 9.5, 1.8);
+            if (faceEast) {
+              const wx = (x + 1) * CELL - WALL_T * 0.55;
+              stick.position.set(wx, 1.55, czw);
+              head.position.set(wx, 1.82, czw);
+              light.position.set(wx - 0.12, 1.85, czw);
+            } else {
+              const wz = z * CELL + WALL_T * 0.55;
+              stick.position.set(cxw, 1.55, wz);
+              head.position.set(cxw, 1.82, wz);
+              light.position.set(cxw, 1.85, wz + 0.12);
+            }
+            group.add(stick, head, light);
+            group.userData.lights.push(light);
+            torchLights.push(light);
+          }
+        }
+      }
+
+      scene.add(group);
+      chunks.set(key, group);
+    }
+
+    function pruneChunks(pcx, pcz) {
+      for (const [key, group] of chunks) {
+        const dx = group.userData.cx - pcx;
+        const dz = group.userData.cz - pcz;
+        if (Math.abs(dx) > VIEW_CHUNKS + 1 || Math.abs(dz) > VIEW_CHUNKS + 1) {
+          for (const light of group.userData.lights) {
+            const i = torchLights.indexOf(light);
+            if (i >= 0) torchLights.splice(i, 1);
+          }
+          scene.remove(group);
+          chunks.delete(key);
+        }
+      }
+      const keep = new Set(chunks.keys());
+      colliders.length = 0;
+      for (const key of keep) {
+        const [csx, csz] = key.split(",").map(Number);
+        const x0 = csx * CHUNK, z0 = csz * CHUNK;
+        for (let z = z0; z < z0 + CHUNK; z++) {
+          for (let x = x0; x < x0 + CHUNK; x++) {
+            if (wallNorth(x, z)) addAABB((x + 0.5) * CELL, z * CELL, CELL + WALL_T, WALL_T);
+            if (wallEast(x, z)) addAABB((x + 1) * CELL, (z + 0.5) * CELL, WALL_T, CELL + WALL_T);
+            addAABB(x * CELL, z * CELL, WALL_T * 1.15, WALL_T * 1.15);
+          }
+        }
+      }
+    }
+
+    function syncChunks() {
+      const p = controls.object.position;
+      const pcx = Math.floor(p.x / (CHUNK * CELL));
+      const pcz = Math.floor(p.z / (CHUNK * CELL));
+      for (let dz = -VIEW_CHUNKS; dz <= VIEW_CHUNKS; dz++) {
+        for (let dx = -VIEW_CHUNKS; dx <= VIEW_CHUNKS; dx++) {
+          buildChunk(pcx + dx, pcz + dz);
+        }
+      }
+      pruneChunks(pcx, pcz);
+    }
+
+    const keys = Object.create(null);
+    window.addEventListener("keydown", (e) => { keys[e.code] = true; if (e.code === "Space") e.preventDefault(); });
+    window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+    const vel = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    let bob = 0;
+
+    function collideAxis(pos, axis) {
+      const r = PLAYER_R;
+      for (let i = 0; i < colliders.length; i++) {
+        const b = colliders[i];
+        if (pos.x + r <= b.minX || pos.x - r >= b.maxX || pos.z + r <= b.minZ || pos.z - r >= b.maxZ) continue;
+        if (axis === "x") {
+          if (pos.x < (b.minX + b.maxX) * 0.5) pos.x = b.minX - r;
+          else pos.x = b.maxX + r;
+        } else {
+          if (pos.z < (b.minZ + b.maxZ) * 0.5) pos.z = b.minZ - r;
+          else pos.z = b.maxZ + r;
+        }
+      }
+    }
+
+    const dust = (() => {
+      const count = 280;
+      const geo = new THREE.BufferGeometry();
+      const arr = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        arr[i * 3] = (Math.random() - 0.5) * 28;
+        arr[i * 3 + 1] = 0.3 + Math.random() * 2.6;
+        arr[i * 3 + 2] = (Math.random() - 0.5) * 28;
+      }
+      geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      const mat = new THREE.PointsMaterial({
+        color: 0xc9b48a, size: 0.035, transparent: true, opacity: 0.28, depthWrite: false
+      });
+      const pts = new THREE.Points(geo, mat);
+      scene.add(pts);
+      return { pts, arr, geo };
+    })();
+
+    let lastChunk = "";
+    const clock = new THREE.Clock();
+
+    function frame() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+      const pos = controls.object.position;
+
+      if (controls.isLocked) {
+        forward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+        forward.y = 0;
+        if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+        forward.normalize();
+        right.set(-forward.z, 0, forward.x);
+
+        dir.set(0, 0, 0);
+        if (keys.KeyW) dir.add(forward);
+        if (keys.KeyS) dir.sub(forward);
+        if (keys.KeyD) dir.add(right);
+        if (keys.KeyA) dir.sub(right);
+        const moving = dir.lengthSq() > 0;
+        if (moving) dir.normalize();
+
+        const speed = keys.ShiftLeft || keys.ShiftRight ? RUN : WALK;
+        const accel = moving ? 18 : 22;
+        vel.x += (dir.x * speed - vel.x) * Math.min(1, accel * dt);
+        vel.z += (dir.z * speed - vel.z) * Math.min(1, accel * dt);
+
+        pos.x += vel.x * dt;
+        collideAxis(pos, "x");
+        pos.z += vel.z * dt;
+        collideAxis(pos, "z");
+        pos.y = EYE;
+
+        const spd = Math.hypot(vel.x, vel.z);
+        if (spd > 0.4) bob += dt * spd * 1.65;
+        const bobAmt = Math.min(spd / RUN, 1) * 0.045;
+        camera.position.y = EYE + Math.sin(bob * 2) * bobAmt;
+      }
+
+      const ck = `${Math.floor(pos.x / (CHUNK * CELL))},${Math.floor(pos.z / (CHUNK * CELL))}`;
+      if (ck !== lastChunk) {
+        lastChunk = ck;
+        syncChunks();
+      }
+
+      for (let i = 0; i < torchLights.length; i++) {
+        const flicker = 0.88 + Math.sin(t * 7.3 + i * 1.7) * 0.08 + Math.sin(t * 13.1 + i) * 0.05;
+        torchLights[i].intensity = 1.15 * flicker;
+      }
+      lantern.intensity = 1.28 + Math.sin(t * 5.2) * 0.06;
+
+      dust.pts.position.set(pos.x, 0, pos.z);
+      const pa = dust.arr;
+      for (let i = 0; i < pa.length; i += 3) {
+        pa[i + 1] += dt * 0.12;
+        if (pa[i + 1] > 3.0) pa[i + 1] = 0.2;
+      }
+      dust.geo.attributes.position.needsUpdate = true;
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    syncChunks();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

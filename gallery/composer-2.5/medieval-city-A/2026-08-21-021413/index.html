@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Living Procedural Medieval City</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a12; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud {
+    position: fixed; top: 16px; left: 16px; color: #e8dcc8; pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8); z-index: 10;
+  }
+  #hud h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.04em; margin-bottom: 4px; }
+  #hud p { font-size: 0.75rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>Procedural Medieval City</h1>
+  <p>Drag to orbit · Scroll to zoom · Living simulation</p>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Seeded RNG ──────────────────────────────────────────────────────────────
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const SEED = 847291;
+const rng = mulberry32(SEED);
+const rand = (a = 0, b = 1) => a + rng() * (b - a);
+const pick = arr => arr[Math.floor(rng() * arr.length)];
+
+// ── Scene setup ─────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x7aa8d8);
+scene.fog = new THREE.FogExp2(0x9cb8d0, 0.0045);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 600);
+camera.position.set(80, 55, 80);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI / 2.05;
+controls.minDistance = 15;
+controls.maxDistance = 200;
+controls.target.set(0, 8, 0);
+
+// ── Lighting ────────────────────────────────────────────────────────────────
+const sun = new THREE.DirectionalLight(0xfff0d0, 2.2);
+sun.position.set(60, 80, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 250;
+sun.shadow.camera.left = -90;
+sun.shadow.camera.right = 90;
+sun.shadow.camera.top = 90;
+sun.shadow.camera.bottom = -90;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+const ambient = new THREE.AmbientLight(0x6080a0, 0.55);
+scene.add(ambient);
+
+const hemi = new THREE.HemisphereLight(0xb8d4ff, 0x3a2a18, 0.45);
+scene.add(hemi);
+
+// ── Materials palette ───────────────────────────────────────────────────────
+const mats = {
+  stone: new THREE.MeshStandardMaterial({ color: 0x8a8278, roughness: 0.92, metalness: 0.05 }),
+  stoneDark: new THREE.MeshStandardMaterial({ color: 0x5c5650, roughness: 0.95, metalness: 0.03 }),
+  timber: new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.88, metalness: 0.02 }),
+  timberLight: new THREE.MeshStandardMaterial({ color: 0x9a6b3a, roughness: 0.85, metalness: 0.02 }),
+  plaster: new THREE.MeshStandardMaterial({ color: 0xd8cbb8, roughness: 0.9, metalness: 0.0 }),
+  roofRed: new THREE.MeshStandardMaterial({ color: 0x8b3a2a, roughness: 0.82, metalness: 0.05 }),
+  roofBlue: new THREE.MeshStandardMaterial({ color: 0x3a4a6a, roughness: 0.8, metalness: 0.08 }),
+  roofGreen: new THREE.MeshStandardMaterial({ color: 0x3a5a3a, roughness: 0.82, metalness: 0.05 }),
+  roofSlate: new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.75, metalness: 0.1 }),
+  ground: new THREE.MeshStandardMaterial({ color: 0x4a6a3a, roughness: 1, metalness: 0 }),
+  cobble: new THREE.MeshStandardMaterial({ color: 0x6a6460, roughness: 0.95, metalness: 0.02 }),
+  water: new THREE.MeshStandardMaterial({ color: 0x3a6a8a, roughness: 0.15, metalness: 0.4, transparent: true, opacity: 0.75 }),
+  flag: new THREE.MeshStandardMaterial({ color: 0xc03030, roughness: 0.7, side: THREE.DoubleSide }),
+  torch: new THREE.MeshStandardMaterial({ color: 0xff8830, emissive: 0xff5500, emissiveIntensity: 2 }),
+  leaf: new THREE.MeshStandardMaterial({ color: 0x3a6a2a, roughness: 0.9 }),
+  trunk: new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.95 }),
+  person: new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.85 }),
+};
+
+const roofMats = [mats.roofRed, mats.roofBlue, mats.roofGreen, mats.roofSlate];
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+const cityGroup = new THREE.Group();
+scene.add(cityGroup);
+
+const animated = [];
+const torches = [];
+const flags = [];
+const villagers = [];
+const birds = [];
+const smokeParticles = [];
+
+function box(w, h, d, mat, x, y, z, parent = cityGroup, castShadow = true) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y + h / 2, z);
+  m.castShadow = castShadow;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function cyl(rTop, rBot, h, seg, mat, x, y, z, parent = cityGroup) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg), mat);
+  m.position.set(x, y + h / 2, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function cone(r, h, mat, x, y, z, parent = cityGroup) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 4), mat);
+  m.position.set(x, y + h / 2, z);
+  m.rotation.y = Math.PI / 4;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+// ── Ground & moat ─────────────────────────────────────────────────────────────
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(120, 64),
+  mats.ground
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+cityGroup.add(ground);
+
+const moat = new THREE.Mesh(
+  new THREE.RingGeometry(52, 58, 64),
+  mats.water
+);
+moat.rotation.x = -Math.PI / 2;
+moat.position.y = 0.05;
+cityGroup.add(moat);
+
+// ── Procedural building generators ──────────────────────────────────────────
+function buildHouse(x, z, w, d, floors, style) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  cityGroup.add(g);
+
+  const wallMat = style === 'timber' ? mats.plaster : mats.stone;
+  const h = floors * 3.2 + 1;
+  box(w, h, d, wallMat, 0, 0, 0, g);
+
+  if (style === 'timber') {
+    const tw = 0.25;
+    for (let i = 0; i <= Math.floor(w); i++) {
+      box(tw, h, d + 0.1, mats.timber, -w / 2 + i * (w / Math.floor(w)), 0, 0, g);
+    }
+    for (let j = 1; j < floors; j++) {
+      box(w + 0.1, tw, d + 0.1, mats.timberLight, 0, j * 3.2, 0, g);
+    }
+  }
+
+  const roofMat = pick(roofMats);
+  const roofH = w * 0.55;
+  cone(w * 0.72, roofH, roofMat, 0, h, 0, g);
+
+  if (rng() > 0.5) {
+    const ch = new THREE.Group();
+    ch.position.set(rand(-w * 0.2, w * 0.2), h + roofH * 0.3, rand(-d * 0.2, d * 0.2));
+    g.add(ch);
+    box(0.6, 2.5, 0.6, mats.stoneDark, 0, 0, 0, ch);
+    box(0.9, 0.3, 0.9, mats.stoneDark, 0, 2.5, 0, ch);
+    animated.push({ type: 'smoke', obj: ch, phase: rand(0, Math.PI * 2) });
+  }
+
+  if (rng() > 0.6) {
+    const torchG = new THREE.Group();
+    torchG.position.set(w / 2 + 0.3, h * 0.4, d / 2);
+    g.add(torchG);
+    cyl(0.05, 0.05, 0.8, 6, mats.timber, 0, 0, 0, torchG);
+    const flame = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 6), mats.torch);
+    flame.position.set(0, 0.9, 0);
+    torchG.add(flame);
+    const light = new THREE.PointLight(0xff8830, 0.8, 8);
+    light.position.set(0, 0.9, 0);
+    torchG.add(light);
+    torches.push({ flame, light, phase: rand(0, Math.PI * 2) });
+  }
+}
+
+function buildTower(x, z, r, h, crenellations = true) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  cityGroup.add(g);
+  cyl(r, r * 1.05, h, 12, mats.stone, 0, 0, 0, g);
+  cone(r * 1.3, r * 1.1, mats.roofSlate, 0, h, 0, g);
+  if (crenellations) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      box(0.8, 1.2, 0.8, mats.stoneDark, Math.cos(a) * r, h - 0.5, Math.sin(a) * r, g);
+    }
+  }
+  if (rng() > 0.3) {
+    const banner = new THREE.Group();
+    banner.position.set(0, h * 0.7, r + 0.5);
+    g.add(banner);
+    cyl(0.06, 0.06, 3, 6, mats.timber, 0, 1.5, 0, banner);
+    const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.2, 6, 4), mats.flag.clone());
+    cloth.position.set(0.9, 2.2, 0);
+    banner.add(cloth);
+    flags.push({ cloth, phase: rand(0, Math.PI * 2) });
+  }
+  return g;
+}
+
+function buildChurch(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  cityGroup.add(g);
+  box(14, 12, 22, mats.stone, 0, 0, 0, g);
+  box(6, 18, 8, mats.stoneDark, 0, 12, -4, g);
+  cone(5, 8, mats.roofSlate, 0, 18, -4, g);
+  box(4, 6, 4, mats.stoneDark, -7, 6, 8, g);
+  box(4, 6, 4, mats.stoneDark, 7, 6, 8, g);
+  cone(3.5, 5, mats.roofSlate, -7, 6, 8, g);
+  cone(3.5, 5, mats.roofSlate, 7, 6, 8, g);
+  const steeple = cyl(1.2, 1.5, 28, 8, mats.stoneDark, 0, 12, 5, g);
+  cone(2, 6, mats.roofRed, 0, 40, 5, g);
+  const winLight = new THREE.PointLight(0xffcc88, 1.2, 20);
+  winLight.position.set(0, 8, 0);
+  g.add(winLight);
+  animated.push({ type: 'churchGlow', light: winLight, phase: rand(0, Math.PI * 2) });
+}
+
+function buildMarket(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  cityGroup.add(g);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    const px = Math.cos(a) * 5;
+    const pz = Math.sin(a) * 5;
+    cyl(0.12, 0.12, 4, 6, mats.timber, px, 0, pz, g);
+  }
+  const canopy = new THREE.Mesh(
+    new THREE.CylinderGeometry(6, 6, 0.2, 16, 1, true),
+    mats.roofRed
+  );
+  canopy.position.set(0, 4, 0);
+  g.add(canopy);
+  box(1.2, 0.8, 1.2, mats.timberLight, 2, 0.4, 1, g, false);
+  box(0.8, 0.6, 0.8, mats.plaster, -2, 0.3, -1.5, g, false);
+}
+
+function buildTree(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rand(0, Math.PI * 2);
+  cityGroup.add(g);
+  cyl(0.3, 0.5, 3, 6, mats.trunk, 0, 0, 0, g);
+  const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(1.5, 2.5), 0), mats.leaf);
+  crown.position.set(0, 3.5, 0);
+  crown.castShadow = true;
+  g.add(crown);
+  animated.push({ type: 'treeSway', obj: g, phase: rand(0, Math.PI * 2), speed: rand(0.3, 0.8) });
+}
+
+function buildWallSegment(x, z, len, rotY) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rotY;
+  cityGroup.add(g);
+  box(len, 6, 2.5, mats.stoneDark, 0, 0, 0, g);
+  for (let i = 0; i < Math.floor(len / 2); i++) {
+    box(1.2, 1.5, 1.2, mats.stone, -len / 2 + i * 2 + 1, 6, 0, g);
+  }
+  return g;
+}
+
+function buildGate(x, z, rotY) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rotY;
+  cityGroup.add(g);
+  box(3, 10, 3, mats.stoneDark, -5, 0, 0, g);
+  box(3, 10, 3, mats.stoneDark, 5, 0, 0, g);
+  box(13, 2, 3.5, mats.stoneDark, 0, 10, 0, g);
+  const portcullis = box(8, 7, 0.3, mats.timber, 0, 3.5, 0, g);
+  animated.push({ type: 'gate', obj: portcullis, phase: rand(0, Math.PI * 2) });
+  const banner = new THREE.Group();
+  banner.position.set(0, 11, 2);
+  g.add(banner);
+  cyl(0.08, 0.08, 3, 6, mats.timber, 0, 1.5, 0, banner);
+  const cloth = new THREE.Mesh(new THREE.PlaneGeometry(2, 1.4, 8, 4), mats.flag.clone());
+  cloth.material.color.setHex(0x2040a0);
+  cloth.position.set(1, 2.5, 0);
+  banner.add(cloth);
+  flags.push({ cloth, phase: rand(0, Math.PI * 2) });
+}
+
+function spawnVillager(x, z) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  cityGroup.add(g);
+  cyl(0.25, 0.3, 0.9, 6, mats.person, 0, 0, 0, g);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), mats.plaster);
+  head.position.set(0, 1.05, 0);
+  head.castShadow = true;
+  g.add(head);
+  villagers.push({
+    obj: g,
+    homeX: x, homeZ: z,
+    targetX: x, targetZ: z,
+    speed: rand(0.8, 1.8),
+    wait: rand(0, 3),
+    phase: rand(0, Math.PI * 2)
+  });
+}
+
+function spawnBird() {
+  const g = new THREE.Group();
+  const wingGeo = new THREE.PlaneGeometry(0.8, 0.3);
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, side: THREE.DoubleSide });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 6), wingMat);
+  g.add(body);
+  const w1 = new THREE.Mesh(wingGeo, wingMat);
+  w1.position.set(-0.4, 0, 0);
+  g.add(w1);
+  const w2 = new THREE.Mesh(wingGeo, wingMat);
+  w2.position.set(0.4, 0, 0);
+  w2.rotation.y = Math.PI;
+  g.add(w2);
+  scene.add(g);
+  birds.push({
+    obj: g, w1, w2,
+    angle: rand(0, Math.PI * 2),
+    radius: rand(30, 70),
+    height: rand(25, 45),
+    speed: rand(0.15, 0.35),
+    wingPhase: rand(0, Math.PI * 2)
+  });
+}
+
+// ── City layout ───────────────────────────────────────────────────────────────
+const CITY_R = 48;
+const placed = [];
+
+function canPlace(x, z, r) {
+  if (Math.hypot(x, z) > CITY_R - r) return false;
+  for (const p of placed) {
+    if (Math.hypot(x - p.x, z - p.z) < p.r + r + 1.5) return false;
+  }
+  return true;
+}
+
+function place(x, z, r) { placed.push({ x, z, r }); }
+
+// Outer wall ring
+const wallSegs = 24;
+for (let i = 0; i < wallSegs; i++) {
+  const a1 = (i / wallSegs) * Math.PI * 2;
+  const a2 = ((i + 1) / wallSegs) * Math.PI * 2;
+  const mid = (a1 + a2) / 2;
+  const r = 46;
+  const x = Math.cos(mid) * r;
+  const z = Math.sin(mid) * r;
+  if (i % 6 === 0) {
+    buildGate(x, z, -mid + Math.PI / 2);
+  } else if (i % 4 === 0) {
+    buildTower(x, z, 2.8, rand(14, 18));
+  } else {
+    const len = 2 * r * Math.sin(Math.PI / wallSegs) * 0.95;
+    buildWallSegment(x, z, len, -mid + Math.PI / 2);
+  }
+}
+
+// Central castle keep
+buildTower(0, 0, 5, 22, true);
+box(16, 14, 16, mats.stoneDark, 0, 0, 0);
+box(10, 8, 10, mats.stone, 0, 14, 0);
+cone(9, 6, mats.roofSlate, 0, 14, 0);
+for (let i = 0; i < 4; i++) {
+  const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+  buildTower(Math.cos(a) * 10, Math.sin(a) * 10, 2.5, rand(12, 15));
+}
+place(0, 0, 12);
+
+// Church & market at fixed landmarks
+buildChurch(-18, 12);
+place(-18, 12, 12);
+buildMarket(16, -10);
+place(16, -10, 7);
+
+// Radial streets + procedural houses
+const rings = [10, 18, 26, 34];
+for (const ring of rings) {
+  const count = Math.floor(ring * 1.2);
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + rand(-0.1, 0.1);
+    const x = Math.cos(a) * ring + rand(-2, 2);
+    const z = Math.sin(a) * ring + rand(-2, 2);
+    const w = rand(3.5, 6);
+    const d = rand(3.5, 6);
+    const r = Math.max(w, d);
+    if (!canPlace(x, z, r)) continue;
+    const floors = Math.floor(rand(1, 4));
+    const style = rng() > 0.45 ? 'timber' : 'stone';
+    buildHouse(x, z, w, d, floors, style);
+    place(x, z, r);
+    if (rng() > 0.7) spawnVillager(x + rand(-2, 2), z + rand(-2, 2));
+  }
+}
+
+// Cobblestone plaza
+const plaza = new THREE.Mesh(
+  new THREE.CircleGeometry(8, 32),
+  mats.cobble
+);
+plaza.rotation.x = -Math.PI / 2;
+plaza.position.y = 0.06;
+cityGroup.add(plaza);
+
+// Radial roads
+for (let i = 0; i < 8; i++) {
+  const a = (i / 8) * Math.PI * 2;
+  const road = new THREE.Mesh(
+    new THREE.PlaneGeometry(5, CITY_R * 1.6),
+    mats.cobble
+  );
+  road.rotation.x = -Math.PI / 2;
+  road.rotation.z = -a;
+  road.position.y = 0.04;
+  cityGroup.add(road);
+}
+
+// Trees along outer paths
+for (let i = 0; i < 40; i++) {
+  const a = rand(0, Math.PI * 2);
+  const r = rand(38, 44);
+  buildTree(Math.cos(a) * r, Math.sin(a) * r);
+}
+
+// More villagers in plaza
+for (let i = 0; i < 12; i++) {
+  spawnVillager(rand(-6, 6), rand(-6, 6));
+}
+
+// Birds
+for (let i = 0; i < 8; i++) spawnBird();
+
+// Smoke particle system
+const smokeGeo = new THREE.BufferGeometry();
+const smokeCount = 60;
+const smokePos = new Float32Array(smokeCount * 3);
+const smokeVel = [];
+for (let i = 0; i < smokeCount; i++) {
+  smokePos[i * 3] = 0; smokePos[i * 3 + 1] = -100; smokePos[i * 3 + 2] = 0;
+  smokeVel.push({ life: 0, ox: 0, oy: 0, oz: 0 });
+}
+smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
+const smokeMat = new THREE.PointsMaterial({ color: 0xaaaaaa, size: 0.8, transparent: true, opacity: 0.4, depthWrite: false });
+const smokeSystem = new THREE.Points(smokeGeo, smokeMat);
+scene.add(smokeSystem);
+let smokeIdx = 0;
+
+function emitSmoke(x, y, z) {
+  const i = smokeIdx % smokeCount;
+  smokeIdx++;
+  smokePos[i * 3] = x + rand(-0.2, 0.2);
+  smokePos[i * 3 + 1] = y;
+  smokePos[i * 3 + 2] = z + rand(-0.2, 0.2);
+  smokeVel[i] = { life: 1, ox: x, oy: y, oz: z, vx: rand(-0.02, 0.02), vy: rand(0.03, 0.06) };
+  smokeGeo.attributes.position.needsUpdate = true;
+}
+
+// ── Animation loop ──────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+
+function updateVillagers(dt) {
+  for (const v of villagers) {
+    v.wait -= dt;
+    const dx = v.targetX - v.obj.position.x;
+    const dz = v.targetZ - v.obj.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.3 || v.wait <= 0) {
+      if (dist < 0.3 || v.wait <= 0) {
+        v.targetX = v.homeX + rand(-12, 12);
+        v.targetZ = v.homeZ + rand(-12, 12);
+        if (Math.hypot(v.targetX, v.targetZ) > CITY_R - 5) {
+          v.targetX = v.homeX + rand(-6, 6);
+          v.targetZ = v.homeZ + rand(-6, 6);
+        }
+        v.wait = rand(1, 4);
+      }
+    }
+    if (dist > 0.3) {
+      v.obj.position.x += (dx / dist) * v.speed * dt;
+      v.obj.position.z += (dz / dist) * v.speed * dt;
+      v.obj.rotation.y = Math.atan2(dx, dz);
+      v.obj.position.y = Math.sin(clock.elapsedTime * 8 + v.phase) * 0.05;
+    }
+  }
+}
+
+function updateBirds(dt, t) {
+  for (const b of birds) {
+    b.angle += b.speed * dt;
+    b.obj.position.set(
+      Math.cos(b.angle) * b.radius,
+      b.height + Math.sin(t * 0.5 + b.wingPhase) * 3,
+      Math.sin(b.angle) * b.radius
+    );
+    b.obj.rotation.y = -b.angle + Math.PI / 2;
+    const flap = Math.sin(t * 12 + b.wingPhase) * 0.6;
+    b.w1.rotation.z = flap;
+    b.w2.rotation.z = -flap;
+  }
+}
+
+function updateSmoke(dt) {
+  for (let i = 0; i < smokeCount; i++) {
+    const s = smokeVel[i];
+    if (s.life > 0) {
+      smokePos[i * 3] += s.vx;
+      smokePos[i * 3 + 1] += s.vy;
+      smokePos[i * 3 + 2] += rand(-0.005, 0.005);
+      s.life -= dt * 0.4;
+      if (s.life <= 0) smokePos[i * 3 + 1] = -100;
+    }
+  }
+  smokeGeo.attributes.position.needsUpdate = true;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  controls.update();
+
+  // Day/night cycle
+  const dayPhase = (Math.sin(t * 0.08) + 1) / 2;
+  const skyColor = new THREE.Color().lerpColors(
+    new THREE.Color(0x1a2040),
+    new THREE.Color(0x7aa8d8),
+    dayPhase
+  );
+  scene.background = skyColor;
+  scene.fog.color.copy(skyColor);
+  sun.intensity = 0.4 + dayPhase * 1.8;
+  ambient.intensity = 0.25 + dayPhase * 0.35;
+  sun.position.x = Math.cos(t * 0.08) * 80;
+  sun.position.y = Math.sin(t * 0.08) * 60 + 30;
+
+  for (const fl of flags) {
+    const pos = fl.cloth.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const wave = Math.sin(x * 3 + t * 6 + fl.phase) * 0.15;
+      pos.setZ(i, wave);
+    }
+    pos.needsUpdate = true;
+  }
+
+  for (const tor of torches) {
+    const flicker = 0.7 + Math.sin(t * 15 + tor.phase) * 0.15 + Math.sin(t * 23 + tor.phase) * 0.1;
+    tor.flame.scale.setScalar(flicker);
+    tor.light.intensity = flicker * 0.9;
+  }
+
+  for (const a of animated) {
+    if (a.type === 'smoke' && Math.random() < 0.08) {
+      const wp = new THREE.Vector3();
+      a.obj.getWorldPosition(wp);
+      emitSmoke(wp.x, wp.y + 2, wp.z);
+    }
+    if (a.type === 'treeSway') {
+      a.obj.rotation.z = Math.sin(t * a.speed + a.phase) * 0.04;
+    }
+    if (a.type === 'gate') {
+      a.obj.position.y = 3.5 + Math.sin(t * 0.3 + a.phase) * 0.4;
+    }
+    if (a.type === 'churchGlow') {
+      a.light.intensity = 0.8 + Math.sin(t * 1.5 + a.phase) * 0.4;
+    }
+  }
+
+  updateVillagers(dt);
+  updateBirds(dt, t);
+  updateSmoke(dt);
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>

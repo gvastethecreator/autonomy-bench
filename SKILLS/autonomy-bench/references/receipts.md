@@ -6,7 +6,11 @@ Receipts separate what **happened** from what an evaluator later **thought about
 
 Required identity: run id, cell id, benchmark id, prompt level, attempt, requested model, prompt SHA-256.
 
-Execution facts: status, timestamps, adapter, effective model when independently visible, reasoning setting when visible, isolation evidence, tools/tokens when visible, output paths and hashes, limitations, errors, external receipt links.
+Execution facts: status, timestamps, duration, adapter, harness (the program that ran the cell: Cursor, Codex, Claude Code, ChatGPT, and similar), effective model when independently visible, reasoning setting when visible, isolation evidence, tools/tokens when visible, output paths and hashes, limitations, errors, external receipt links.
+
+`harness` is not `adapter`. Adapter is how the coordinator dispatched the cell (`manual`, `agent`, `prototype-lab`). Harness is the program the worker used.
+
+Copy wall-clock times and token counts from the harness UI when they are visible. If they are not visible, use `not captured`. Never invent usage numbers.
 
 Never infer hidden routing or usage. Use `not captured`.
 

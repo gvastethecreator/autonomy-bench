@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skyline Rush — First Person Coaster</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; font-family: 'Segoe UI', system-ui, sans-serif; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    #overlay {
+      position: fixed; inset: 0; pointer-events: none;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: 24px 32px;
+    }
+
+    #title {
+      align-self: flex-start;
+      color: rgba(255,255,255,0.92);
+      text-shadow: 0 2px 20px rgba(0,0,0,0.6);
+    }
+    #title h1 {
+      font-size: clamp(1.4rem, 3vw, 2.2rem);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #title p {
+      font-size: 0.85rem;
+      opacity: 0.65;
+      margin-top: 4px;
+      letter-spacing: 0.15em;
+    }
+
+    #hud {
+      align-self: flex-end;
+      display: flex; gap: 24px; align-items: flex-end;
+    }
+
+    .gauge {
+      background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 12px 18px;
+      color: #fff;
+      min-width: 100px;
+    }
+    .gauge label {
+      display: block;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      opacity: 0.55;
+      margin-bottom: 4px;
+    }
+    .gauge .value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .gauge .unit { font-size: 0.75rem; opacity: 0.6; margin-left: 2px; }
+
+    #progress-bar {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 3px;
+      background: rgba(255,255,255,0.08);
+    }
+    #progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #ff6b35, #f7c948);
+      box-shadow: 0 0 12px rgba(255,107,53,0.6);
+      transition: width 0.05s linear;
+    }
+
+    #loading {
+      position: fixed; inset: 0; z-index: 100;
+      background: radial-gradient(ellipse at 50% 30%, #1a2040 0%, #0a0e1a 70%);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      transition: opacity 0.8s ease, visibility 0.8s;
+    }
+    #loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    #loading h2 {
+      color: #fff; font-size: 1.8rem; letter-spacing: 0.2em;
+      text-transform: uppercase; margin-bottom: 32px;
+    }
+    .loader-track {
+      width: 200px; height: 4px; background: rgba(255,255,255,0.1);
+      border-radius: 2px; overflow: hidden;
+    }
+    .loader-car {
+      width: 40%; height: 100%;
+      background: linear-gradient(90deg, #ff6b35, #f7c948);
+      border-radius: 2px;
+      animation: loadSlide 1.2s ease-in-out infinite;
+    }
+    @keyframes loadSlide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
+    #vignette {
+      position: fixed; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.45) 100%);
+    }
+
+    #speed-lines {
+      position: fixed; inset: 0; pointer-events: none; opacity: 0;
+      background: repeating-linear-gradient(
+        90deg,
+        transparent 0px, transparent 80px,
+        rgba(255,255,255,0.03) 80px, rgba(255,255,255,0.06) 82px
+      );
+      transition: opacity 0.3s;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <h2>Skyline Rush</h2>
+    <div class="loader-track"><div class="loader-car"></div></div>
+  </div>
+  <div id="vignette"></div>
+  <div id="speed-lines"></div>
+  <div id="overlay">
+    <div id="title">
+      <h1>Skyline Rush</h1>
+      <p>Continuous ride · Hold on tight</p>
+    </div>
+    <div id="hud">
+      <div class="gauge">
+        <label>Speed</label>
+        <span class="value" id="speed-val">0</span><span class="unit">km/h</span>
+      </div>
+      <div class="gauge">
+        <label>Altitude</label>
+        <span class="value" id="alt-val">0</span><span class="unit">m</span>
+      </div>
+      <div class="gauge">
+        <label>Lap</label>
+        <span class="value" id="lap-val">1</span>
+      </div>
+    </div>
+  </div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { Sky } from 'three/addons/objects/Sky.js';
+
+    // ── Track path ──────────────────────────────────────────────
+    function buildTrackPoints() {
+      const pts = [];
+      const segments = 360;
+      for (let i = 0; i <= segments; i++) {
+        const t = (i / segments) * Math.PI * 2;
+        const r = 55 + Math.sin(t * 3) * 18 + Math.cos(t * 5) * 8;
+        const x = Math.cos(t) * r;
+        const z = Math.sin(t) * r;
+        const y = 8
+          + Math.sin(t * 2) * 22
+          + Math.sin(t * 4 + 1) * 12
+          + Math.cos(t * 6) * 6
+          + (Math.sin(t * 1.5) > 0.7 ? Math.sin(t * 8) * 8 : 0);
+        pts.push(new THREE.Vector3(x, Math.max(3, y), z));
+      }
+      // Lift hill section
+      pts.splice(20, 0,
+        new THREE.Vector3(70, 2, 5),
+        new THREE.Vector3(72, 8, 8),
+        new THREE.Vector3(73, 18, 10),
+        new THREE.Vector3(72, 32, 12),
+        new THREE.Vector3(68, 42, 14)
+      );
+      return pts;
+    }
+
+    const trackPoints = buildTrackPoints();
+    const curve = new THREE.CatmullRomCurve3(trackPoints, true, 'centripetal', 0.5);
+
+    // ── Scene setup ─────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x8eb4d4, 0.004);
+
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 800);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // Sky
+    const sky = new Sky();
+    sky.scale.setScalar(450000);
+    scene.add(sky);
+    const skyUniforms = sky.material.uniforms;
+    skyUniforms['turbidity'].value = 8;
+    skyUniforms['rayleigh'].value = 2.5;
+    skyUniforms['mieCoefficient'].value = 0.004;
+    skyUniforms['mieDirectionalG'].value = 0.85;
+    skyUniforms['sunPosition'].value.set(-80, 25, -120);
+
+    const sunLight = new THREE.DirectionalLight(0xffeedd, 2.2);
+    sunLight.position.set(-80, 60, -100);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.camera.near = 10;
+    sunLight.shadow.camera.far = 300;
+    sunLight.shadow.camera.left = -120;
+    sunLight.shadow.camera.right = 120;
+    sunLight.shadow.camera.top = 120;
+    sunLight.shadow.camera.bottom = -120;
+    scene.add(sunLight);
+    scene.add(new THREE.AmbientLight(0x6688bb, 0.45));
+    scene.add(new THREE.HemisphereLight(0x88bbff, 0x334422, 0.35));
+
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(600, 600, 80, 80);
+    const pos = groundGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      pos.setZ(i, Math.sin(x * 0.04) * 2 + Math.cos(y * 0.03) * 1.5 + Math.sin(x * 0.08 + y * 0.06) * 0.8);
+    }
+    groundGeo.computeVertexNormals();
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a6b3a, roughness: 0.92, metalness: 0.05 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Water pond
+    const pond = new THREE.Mesh(
+      new THREE.CircleGeometry(28, 48),
+      new THREE.MeshStandardMaterial({ color: 0x2266aa, roughness: 0.15, metalness: 0.6, transparent: true, opacity: 0.85 })
+    );
+    pond.rotation.x = -Math.PI / 2;
+    pond.position.set(-40, 0.3, 30);
+    scene.add(pond);
+
+    // ── Track geometry ──────────────────────────────────────────
+    const TRACK_SAMPLES = 1200;
+    const trackFrame = { tangents: [], normals: [], binormals: [], positions: [] };
+
+    function computeFrames() {
+      trackFrame.tangents = [];
+      trackFrame.normals = [];
+      trackFrame.binormals = [];
+      trackFrame.positions = [];
+      const up = new THREE.Vector3(0, 1, 0);
+      let prevNormal = new THREE.Vector3(0, 1, 0);
+
+      for (let i = 0; i <= TRACK_SAMPLES; i++) {
+        const t = i / TRACK_SAMPLES;
+        const pos = curve.getPointAt(t);
+        const tangent = curve.getTangentAt(t).normalize();
+        trackFrame.positions.push(pos.clone());
+        trackFrame.tangents.push(tangent.clone());
+
+        let normal = new THREE.Vector3().crossVectors(up, tangent);
+        if (normal.lengthSq() < 0.001) normal.crossVectors(new THREE.Vector3(1, 0, 0), tangent);
+        normal.normalize();
+
+        // Smooth normal transition
+        if (i > 0) {
+          const dot = prevNormal.dot(normal);
+          if (dot < 0) normal.negate();
+          normal.lerp(prevNormal, 0.15).normalize();
+        }
+        prevNormal = normal.clone();
+
+        const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+        // Banking on horizontal curves
+        const horizSpeed = Math.sqrt(tangent.x * tangent.x + tangent.z * tangent.z);
+        const bankAngle = horizSpeed * 0.55;
+        const bankedNormal = normal.clone();
+        bankedNormal.applyAxisAngle(tangent, bankAngle);
+        const bankedBinormal = new THREE.Vector3().crossVectors(tangent, bankedNormal).normalize();
+
+        trackFrame.normals.push(bankedNormal);
+        trackFrame.binormals.push(bankedBinormal);
+      }
+    }
+    computeFrames();
+
+    function getFrameAt(t) {
+      const idx = t * TRACK_SAMPLES;
+      const i0 = Math.floor(idx) % (TRACK_SAMPLES + 1);
+      const i1 = (i0 + 1) % (TRACK_SAMPLES + 1);
+      const f = idx - Math.floor(idx);
+      const lerp = (a, b) => a.clone().lerp(b, f);
+      return {
+        position: lerp(trackFrame.positions[i0], trackFrame.positions[i1]),
+        tangent: lerp(trackFrame.tangents[i0], trackFrame.tangents[i1]).normalize(),
+        normal: lerp(trackFrame.normals[i0], trackFrame.normals[i1]).normalize(),
+        binormal: lerp(trackFrame.binormals[i0], trackFrame.binormals[i1]).normalize()
+      };
+    }
+
+    const trackGroup = new THREE.Group();
+    scene.add(trackGroup);
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.85, roughness: 0.25 });
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.85 });
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x888899, metalness: 0.5, roughness: 0.5 });
+
+    const railRadius = 0.18;
+    const railOffset = 1.05;
+    const railGeo = new THREE.CylinderGeometry(railRadius, railRadius, 1, 8);
+
+    for (let i = 0; i < TRACK_SAMPLES; i += 2) {
+      const t0 = i / TRACK_SAMPLES;
+      const t1 = (i + 1) / TRACK_SAMPLES;
+      const f0 = getFrameAt(t0);
+      const f1 = getFrameAt(t1);
+      const mid = f0.position.clone().lerp(f1.position, 0.5);
+      const segLen = f0.position.distanceTo(f1.position);
+
+      // Ties
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.35), tieMat);
+      tie.position.copy(f0.position);
+      const m = new THREE.Matrix4();
+      m.makeBasis(f0.binormal, f0.normal, f0.tangent);
+      tie.setRotationFromMatrix(m);
+      tie.position.add(f0.normal.clone().multiplyScalar(-0.15));
+      tie.castShadow = true;
+      trackGroup.add(tie);
+
+      // Rails left & right
+      [-1, 1].forEach(side => {
+        const rail = new THREE.Mesh(railGeo, railMat);
+        rail.scale.y = segLen;
+        const offset = f0.binormal.clone().multiplyScalar(side * railOffset);
+        rail.position.copy(f0.position).add(offset).add(f0.normal.clone().multiplyScalar(0.05));
+        rail.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), f0.tangent);
+        rail.castShadow = true;
+        trackGroup.add(rail);
+      });
+
+      // Support pillars every N segments
+      if (i % 24 === 0 && f0.position.y > 6) {
+        const pillarH = f0.position.y;
+        const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, pillarH, 8), supportMat);
+        pillar.position.set(f0.position.x, pillarH / 2, f0.position.z);
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        trackGroup.add(pillar);
+
+        // Cross bracing
+        if (i % 48 === 0) {
+          const brace = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, segLen * 12), supportMat);
+          brace.position.copy(mid);
+          brace.position.y -= 2;
+          brace.lookAt(f1.position);
+          trackGroup.add(brace);
+        }
+      }
+    }
+
+    // Station platform
+    const stationT = 20 / (trackPoints.length);
+    const stFrame = getFrameAt(stationT * 0.02);
+    const platform = new THREE.Mesh(
+      new THREE.BoxGeometry(8, 0.4, 4),
+      new THREE.MeshStandardMaterial({ color: 0x665544, roughness: 0.8 })
+    );
+    platform.position.copy(stFrame.position);
+    platform.position.add(stFrame.normal.clone().multiplyScalar(-1.5));
+    platform.castShadow = true;
+    scene.add(platform);
+
+    // Trees
+    const treeGeo = new THREE.ConeGeometry(2.5, 7, 7);
+    const treeMat = new THREE.MeshStandardMaterial({ color: 0x2d5a2d, roughness: 0.9 });
+    const trunkGeo = new THREE.CylinderGeometry(0.3, 0.45, 2, 6);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.95 });
+    const treePositions = [];
+    for (let i = 0; i < 180; i++) {
+      const x = (Math.random() - 0.5) * 400;
+      const z = (Math.random() - 0.5) * 400;
+      if (Math.sqrt(x * x + z * z) < 25) continue;
+      treePositions.push({ x, z, s: 0.6 + Math.random() * 1.2 });
+    }
+    treePositions.forEach(({ x, z, s }) => {
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(x, 1 * s, z);
+      trunk.scale.setScalar(s);
+      trunk.castShadow = true;
+      scene.add(trunk);
+      const foliage = new THREE.Mesh(treeGeo, treeMat);
+      foliage.position.set(x, (5 * s) + 0.5, z);
+      foliage.scale.setScalar(s);
+      foliage.castShadow = true;
+      scene.add(foliage);
+    });
+
+    // Distant mountains
+    for (let m = 0; m < 12; m++) {
+      const angle = (m / 12) * Math.PI * 2;
+      const dist = 180 + Math.random() * 60;
+      const mtn = new THREE.Mesh(
+        new THREE.ConeGeometry(30 + Math.random() * 40, 50 + Math.random() * 60, 4),
+        new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(0.58, 0.25, 0.35 + Math.random() * 0.15), roughness: 0.95 })
+      );
+      mtn.position.set(Math.cos(angle) * dist, 15, Math.sin(angle) * dist);
+      scene.add(mtn);
+    }
+
+    // Coaster car (visible front bar)
+    const carGroup = new THREE.Group();
+    scene.add(carGroup);
+    const barMat = new THREE.MeshStandardMaterial({ color: 0xff4422, metalness: 0.7, roughness: 0.3 });
+    const frontBar = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.08, 0.08), barMat);
+    frontBar.position.set(0, -0.3, -1.2);
+    carGroup.add(frontBar);
+    const sideBars = [
+      [-1.05, -0.5, -0.8], [1.05, -0.5, -0.8]
+    ];
+    sideBars.forEach(([x, y, z]) => {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), barMat);
+      bar.position.set(x, y, z);
+      carGroup.add(bar);
+    });
+
+    // Speed particles
+    const particleCount = 200;
+    const particleGeo = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
+    particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    const particleMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.15, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
+    const particles = new THREE.Points(particleGeo, particleMat);
+    scene.add(particles);
+
+    // ── Ride physics ────────────────────────────────────────────
+    let rideT = 0;
+    let rideSpeed = 0.00008;
+    const baseSpeed = 0.00012;
+    const maxSpeed = 0.00055;
+    const minSpeed = 0.00004;
+    let lapCount = 1;
+    let prevT = 0;
+    let shakeIntensity = 0;
+    let targetFov = 75;
+
+    const speedEl = document.getElementById('speed-val');
+    const altEl = document.getElementById('alt-val');
+    const lapEl = document.getElementById('lap-val');
+    const progressFill = document.getElementById('progress-fill');
+    const speedLines = document.getElementById('speed-lines');
+
+    function updateRide(dt) {
+      const frame = getFrameAt(rideT);
+      const nextFrame = getFrameAt((rideT + 0.001) % 1);
+
+      // Gravity-based speed: faster downhill, slower uphill
+      const dy = nextFrame.position.y - frame.position.y;
+      const gravityBoost = -dy * 0.0008;
+      rideSpeed += gravityBoost * dt;
+      rideSpeed += (baseSpeed - rideSpeed) * 0.002 * dt;
+      rideSpeed = THREE.MathUtils.clamp(rideSpeed, minSpeed, maxSpeed);
+
+      prevT = rideT;
+      rideT = (rideT + rideSpeed * dt) % 1;
+      if (rideT < prevT) lapCount++;
+
+      const currentFrame = getFrameAt(rideT);
+      const lookAhead = getFrameAt((rideT + 0.008) % 1);
+
+      // Camera on track with eye height
+      const eyeHeight = 1.6;
+      const camPos = currentFrame.position.clone().add(currentFrame.normal.clone().multiplyScalar(eyeHeight));
+      const lookTarget = lookAhead.position.clone().add(lookAhead.normal.clone().multiplyScalar(eyeHeight));
+
+      // Shake on rapid changes
+      const accel = Math.abs(gravityBoost) * 800;
+      shakeIntensity = THREE.MathUtils.lerp(shakeIntensity, accel, 0.1);
+      const shakeX = (Math.random() - 0.5) * shakeIntensity * 0.04;
+      const shakeY = (Math.random() - 0.5) * shakeIntensity * 0.03;
+
+      camera.position.copy(camPos);
+      camera.position.x += shakeX;
+      camera.position.y += shakeY;
+
+      const lookMat = new THREE.Matrix4();
+      lookMat.lookAt(camPos, lookTarget, currentFrame.normal);
+      camera.quaternion.setFromRotationMatrix(lookMat);
+
+      // Car follows camera
+      carGroup.position.copy(camPos);
+      carGroup.quaternion.copy(camera.quaternion);
+
+      // HUD
+      const speedKmh = Math.round(rideSpeed / maxSpeed * 120 + 15);
+      speedEl.textContent = speedKmh;
+      altEl.textContent = Math.round(currentFrame.position.y);
+      lapEl.textContent = lapCount;
+      progressFill.style.width = (rideT * 100) + '%';
+
+      // FOV & speed lines
+      targetFov = 75 + (rideSpeed / maxSpeed) * 18;
+      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.05);
+      camera.updateProjectionMatrix();
+      speedLines.style.opacity = Math.min(0.7, (rideSpeed / maxSpeed) * 0.8);
+
+      // Particles
+      const arr = particleGeo.attributes.position.array;
+      for (let i = 0; i < particleCount; i++) {
+        if (Math.random() < 0.1 || arr[i * 3] === 0) {
+          arr[i * 3] = camPos.x + (Math.random() - 0.5) * 4;
+          arr[i * 3 + 1] = camPos.y + (Math.random() - 0.5) * 3;
+          arr[i * 3 + 2] = camPos.z + (Math.random() - 0.5) * 4;
+        } else {
+          arr[i * 3] += currentFrame.tangent.x * -speedKmh * 0.002;
+          arr[i * 3 + 1] += currentFrame.tangent.y * -speedKmh * 0.002;
+          arr[i * 3 + 2] += currentFrame.tangent.z * -speedKmh * 0.002;
+        }
+      }
+      particleGeo.attributes.position.needsUpdate = true;
+      particleMat.opacity = Math.min(0.5, speedKmh / 200);
+    }
+
+    // ── Render loop ─────────────────────────────────────────────
+    let lastTime = performance.now();
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.min((now - lastTime) / 16.67, 3);
+      lastTime = now;
+
+      updateRide(dt);
+
+      // Gentle sun movement
+      const elapsed = clock.getElapsedTime();
+      skyUniforms['sunPosition'].value.x = -80 + Math.sin(elapsed * 0.01) * 10;
+
+      renderer.render(scene, camera);
+    }
+
+    // ── Init ────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    setTimeout(() => {
+      document.getElementById('loading').classList.add('hidden');
+      animate();
+    }, 1800);
+  </script>
+</body>
+</html>

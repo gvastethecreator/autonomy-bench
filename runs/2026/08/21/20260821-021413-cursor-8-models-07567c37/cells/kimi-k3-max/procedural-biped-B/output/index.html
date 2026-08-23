@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Procedural Biped — Three.js</title>
+<style>
+  :root { --accent: #ff8c42; --ink: #e8ecf4; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0b0e17; color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  #app { position: fixed; inset: 0; }
+  #hud {
+    position: fixed; top: 18px; left: 18px; width: 282px;
+    padding: 16px 18px 14px;
+    background: rgba(13, 17, 28, .72);
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 14px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, .45);
+    user-select: none;
+  }
+  #hud h1 { margin: 0 0 2px; font-size: 17px; font-weight: 650; letter-spacing: .4px; }
+  #hud h1 em { color: var(--accent); font-style: normal; }
+  #hud .sub { margin: 0 0 6px; font-size: 11.5px; color: #93a0b8; letter-spacing: .3px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; }
+  .row label { color: #93a0b8; width: 44px; }
+  .row output { min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 3px; cursor: pointer; }
+  button {
+    background: var(--accent); border: 0; color: #1a1206;
+    font-weight: 650; font-size: 12px; letter-spacing: .3px;
+    padding: 7px 16px; border-radius: 9px; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  .hint { font-size: 11px; color: #66738c; }
+  #err {
+    position: fixed; inset: 0; display: none; place-items: center;
+    background: #0b0e17; color: #ff9a9a; font-size: 14px;
+    padding: 40px; text-align: center; z-index: 10; line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <h1>Procedural <em>Biped</em></h1>
+  <p class="sub">Three.js &middot; phase-driven gait &middot; zero keyframes</p>
+  <div class="row">
+    <label for="speed">speed</label>
+    <input id="speed" type="range" min="0.4" max="3" step="0.05" value="1.4">
+    <output id="speedVal">1.40 m/s</output>
+  </div>
+  <div class="row">
+    <button id="pause">Pause</button>
+    <span class="hint">drag to orbit &middot; scroll to zoom</span>
+  </div>
+</div>
+
+<div id="err">Could not load Three.js from the CDN.<br>Check your connection and reload.</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const showErr = () => { document.getElementById('err').style.display = 'grid'; };
+window.addEventListener('error', showErr);
+window.addEventListener('unhandledrejection', showErr);
+
+// ---------- renderer / scene / camera ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e17);
+scene.fog = new THREE.Fog(0x0b0e17, 22, 80);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(4.4, 2.7, 6.8);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.25, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 3;
+controls.maxDistance = 18;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+// ---------- lights ----------
+scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x2a2118, 0.85));
+
+const key = new THREE.DirectionalLight(0xfff1dd, 2.2);
+key.position.set(6, 9, 4);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = key.shadow.camera.bottom = -10;
+key.shadow.camera.right = key.shadow.camera.top = 10;
+key.shadow.camera.far = 30;
+key.shadow.bias = -0.0004;
+scene.add(key);
+
+const rim = new THREE.DirectionalLight(0x6fd6ff, 0.9);
+rim.position.set(-6, 4, -7);
+scene.add(rim);
+
+// ---------- ground / scenery ----------
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(90, 64),
+  new THREE.MeshStandardMaterial({ color: 0x11151f, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const GRID_CELL = 2;
+const grid = new THREE.GridHelper(180, 90, 0x35446e, 0x1e2740);
+grid.position.y = 0.01;
+grid.material.transparent = true;
+grid.material.opacity = 0.55;
+scene.add(grid);
+
+const rockGeo = new THREE.DodecahedronGeometry(0.5, 0);
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x2a3247, roughness: 0.95, flatShading: true });
+const gemGeo = new THREE.IcosahedronGeometry(0.32, 0);
+const gemMat = new THREE.MeshStandardMaterial({
+  color: 0x0d2b2e, emissive: 0x2fe8d2, emissiveIntensity: 0.9, roughness: 0.3, flatShading: true
+});
+
+function resetProp(m, anywhere) {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  m.position.set(
+    side * (2.2 + Math.random() * 14),
+    0,
+    anywhere ? -78 + Math.random() * 94 : 12 + Math.random() * 6
+  );
+  const s = 0.4 + Math.random() * (m.userData.gem ? 0.7 : 1.6);
+  m.scale.setScalar(s);
+  m.position.y = s * 0.28;
+  m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+}
+
+const props = [];
+for (let i = 0; i < 42; i++) {
+  const gem = i % 6 === 0;
+  const m = new THREE.Mesh(gem ? gemGeo : rockGeo, gem ? gemMat : rockMat);
+  m.userData.gem = gem;
+  m.castShadow = true;
+  resetProp(m, true);
+  scene.add(m);
+  props.push(m);
+}
+
+const starGeo = new THREE.BufferGeometry();
+{
+  const pts = [];
+  for (let i = 0; i < 350; i++) {
+    const v = new THREE.Vector3().randomDirection();
+    if (v.y < 0.08) v.y = 0.08 + Math.random() * 0.5;
+    pts.push(v.multiplyScalar(70 + Math.random() * 15));
+  }
+  starGeo.setFromPoints(pts);
+}
+scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0x8fa8d8, size: 0.14, fog: false })));
+
+// ---------- creature ----------
+const MAT = {
+  body:   new THREE.MeshStandardMaterial({ color: 0xff8c42, roughness: 0.55, metalness: 0.15, flatShading: true }),
+  joint:  new THREE.MeshStandardMaterial({ color: 0x2b2d42, roughness: 0.7,  metalness: 0.3,  flatShading: true }),
+  accent: new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.4,  metalness: 0.2,  flatShading: true }),
+  eye:    new THREE.MeshStandardMaterial({ color: 0x061014, emissive: 0x7ef9ff, emissiveIntensity: 1.6, roughness: 0.25 }),
+  tip:    new THREE.MeshStandardMaterial({ color: 0x2b2d42, emissive: 0xff8c42, emissiveIntensity: 1.2, roughness: 0.4 })
+};
+
+function box(w, h, d, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.castShadow = true;
+  return m;
+}
+
+const THIGH = 0.5, SHIN = 0.45, HIP_Y = 1.04, HIP_W = 0.15;
+
+function buildLeg(side) {
+  const hip = new THREE.Group();
+  hip.position.set(side * HIP_W, 0, 0);
+
+  const thigh = box(0.17, THIGH + 0.08, 0.2, MAT.body);
+  thigh.position.y = -THIGH / 2;
+  hip.add(thigh);
+
+  const knee = new THREE.Group();
+  knee.position.y = -THIGH;
+  hip.add(knee);
+
+  const kneeCap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), MAT.joint);
+  kneeCap.castShadow = true;
+  knee.add(kneeCap);
+
+  const shin = box(0.13, SHIN + 0.06, 0.15, MAT.joint);
+  shin.position.y = -SHIN / 2;
+  knee.add(shin);
+
+  const ankle = new THREE.Group();
+  ankle.position.y = -SHIN;
+  knee.add(ankle);
+
+  const foot = box(0.16, 0.09, 0.32, MAT.accent);
+  foot.position.set(0, -0.045, 0.07);
+  ankle.add(foot);
+
+  return { hip, knee, ankle };
+}
+
+function buildArm(side) {
+  const shoulder = new THREE.Group();
+  shoulder.position.set(side * 0.33, 0.52, 0);
+  shoulder.rotation.z = -side * 0.12;
+
+  const pad = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), MAT.accent);
+  pad.castShadow = true;
+  shoulder.add(pad);
+
+  const upper = box(0.11, 0.36, 0.13, MAT.body);
+  upper.position.y = -0.18;
+  shoulder.add(upper);
+
+  const elbow = new THREE.Group();
+  elbow.position.y = -0.34;
+  shoulder.add(elbow);
+
+  const fore = box(0.09, 0.32, 0.11, MAT.joint);
+  fore.position.y = -0.16;
+  elbow.add(fore);
+
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), MAT.accent);
+  hand.position.y = -0.34;
+  hand.castShadow = true;
+  elbow.add(hand);
+
+  return { shoulder, elbow };
+}
+
+const creature = new THREE.Group();
+scene.add(creature);
+
+const hips = new THREE.Group();
+hips.position.y = HIP_Y;
+creature.add(hips);
+
+const pelvis = box(0.42, 0.2, 0.26, MAT.joint);
+pelvis.position.y = 0.02;
+hips.add(pelvis);
+
+const torso = new THREE.Group();
+torso.position.y = 0.08;
+hips.add(torso);
+
+const chest = box(0.48, 0.52, 0.3, MAT.body);
+chest.position.y = 0.32;
+torso.add(chest);
+
+const plate = box(0.3, 0.26, 0.05, MAT.accent);
+plate.position.set(0, 0.34, 0.16);
+torso.add(plate);
+
+const pack = box(0.3, 0.34, 0.12, MAT.joint);
+pack.position.set(0, 0.34, -0.21);
+torso.add(pack);
+
+const head = new THREE.Group();
+head.position.y = 0.72;
+torso.add(head);
+
+const skull = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 18), MAT.body);
+skull.scale.set(1, 0.92, 0.95);
+skull.castShadow = true;
+head.add(skull);
+
+for (const s of [-1, 1]) {
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), MAT.eye);
+  eye.position.set(s * 0.085, 0.02, 0.185);
+  head.add(eye);
+}
+const visor = box(0.24, 0.05, 0.06, MAT.joint);
+visor.position.set(0, 0.1, 0.17);
+head.add(visor);
+
+const antennae = [];
+for (const s of [-1, 1]) {
+  const base = new THREE.Group();
+  base.position.set(s * 0.09, 0.17, 0);
+  base.rotation.z = -s * 0.28;
+  head.add(base);
+
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.24, 8), MAT.joint);
+  rod.position.y = 0.12;
+  rod.castShadow = true;
+  base.add(rod);
+
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), MAT.tip);
+  tip.position.y = 0.26;
+  base.add(tip);
+
+  antennae.push({ base, ang: 0, vel: 0, stiff: 55 + s * 7 });
+}
+
+const legL = buildLeg(-1), legR = buildLeg(1);
+hips.add(legL.hip, legR.hip);
+const armL = buildArm(-1), armR = buildArm(1);
+torso.add(armL.shoulder, armR.shoulder);
+
+// ---------- gait ----------
+const P = { hipAmp: 0.42, kneeAmp: 1.0, armAmp: 0.4, bob: 0.06, lean: 0.09 };
+const STRIDE = 2 * (THIGH + SHIN) * Math.sin(P.hipAmp); // metres covered per step
+
+let phase = 0, dist = 0, running = true, speed = 1.4;
+let prevPitch = P.lean, prevBob = 0;
+
+function pose(dt) {
+  const p = phase;
+  const sL = Math.sin(p), sR = Math.sin(p + Math.PI);
+
+  legL.hip.rotation.x = -P.hipAmp * sL;
+  legR.hip.rotation.x = -P.hipAmp * sR;
+
+  // knees fold mid-swing, stay near-straight through stance
+  const kL = 0.08 + P.kneeAmp * Math.max(0, Math.cos(p));
+  const kR = 0.08 + P.kneeAmp * Math.max(0, Math.cos(p + Math.PI));
+  legL.knee.rotation.x = kL;
+  legR.knee.rotation.x = kR;
+
+  // ankles level the foot, with a toe push-off at the end of stance
+  legL.ankle.rotation.x = -(legL.hip.rotation.x + kL) * 0.72 + 0.3 * Math.max(0, -sL);
+  legR.ankle.rotation.x = -(legR.hip.rotation.x + kR) * 0.72 + 0.3 * Math.max(0, -sR);
+
+  // arms counter-swing the same-side leg; elbows fold on the forward swing
+  armL.shoulder.rotation.x = P.armAmp * sL;
+  armR.shoulder.rotation.x = P.armAmp * sR;
+  armL.elbow.rotation.x = -(0.3 + 0.35 * Math.max(0, -sL));
+  armR.elbow.rotation.x = -(0.3 + 0.35 * Math.max(0, -sR));
+
+  const bob = -P.bob * (0.5 - 0.5 * Math.cos(2 * p));
+  hips.position.y = HIP_Y + bob;
+  hips.rotation.z = 0.05 * sL;
+
+  const pitch = P.lean + 0.03 * Math.sin(2 * p);
+  torso.rotation.x = pitch;
+  torso.rotation.y = -0.14 * sL;
+  head.rotation.x = -P.lean * 0.8 + 0.04 * Math.sin(2 * p + 0.6);
+  head.rotation.y = 0.08 * sL;
+
+  // antennae trail the torso through a damped spring
+  const drive = dt > 0 ? (pitch - prevPitch) / dt * 0.09 + (bob - prevBob) / dt * 0.16 : 0;
+  for (const a of antennae) {
+    a.vel += ((-drive - a.ang) * a.stiff - a.vel * 7) * dt;
+    a.ang += a.vel * dt;
+    a.base.rotation.x = THREE.MathUtils.clamp(a.ang, -0.6, 0.6);
+  }
+  prevPitch = pitch;
+  prevBob = bob;
+}
+
+// ---------- UI ----------
+const speedEl = document.getElementById('speed');
+const speedVal = document.getElementById('speedVal');
+speedEl.addEventListener('input', () => {
+  speed = parseFloat(speedEl.value);
+  speedVal.textContent = speed.toFixed(2) + ' m/s';
+});
+const pauseBtn = document.getElementById('pause');
+pauseBtn.addEventListener('click', () => {
+  running = !running;
+  pauseBtn.textContent = running ? 'Pause' : 'Walk';
+});
+
+// ---------- main loop ----------
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (running) {
+    phase += dt * speed * Math.PI / STRIDE;
+    dist += speed * dt;
+  }
+  pose(running ? dt : 0);
+
+  // world scrolls past the creature to sell forward locomotion
+  grid.position.z = -(dist % GRID_CELL);
+  for (const m of props) {
+    m.position.z -= running ? speed * dt : 0;
+    if (m.position.z < -80) resetProp(m, false);
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

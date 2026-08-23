@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Endless Maze</title>
+<style>
+  :root{ --amber:#e0a458; --ink:#cfd6e4; --dim:#7c8698; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:#05070f;font-family:ui-monospace,'Cascadia Mono','JetBrains Mono',Menlo,Consolas,monospace;color:var(--ink)}
+  #app,#app canvas{position:fixed;inset:0;display:block}
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:3;background:radial-gradient(ellipse at center,transparent 52%,rgba(2,3,8,.42) 82%,rgba(0,0,0,.72) 100%)}
+  #crosshair{position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(230,236,248,.85);box-shadow:0 0 6px rgba(0,0,0,.8);z-index:4;pointer-events:none;mix-blend-mode:difference}
+  #minimap{position:fixed;top:18px;right:18px;z-index:5;border:1px solid rgba(224,164,88,.35);border-radius:6px;background:rgba(4,6,12,.72);box-shadow:0 4px 24px rgba(0,0,0,.5)}
+  #hud{position:fixed;left:18px;bottom:16px;z-index:5;font-size:11px;letter-spacing:.08em;color:var(--dim);background:rgba(4,6,12,.55);padding:8px 12px;border:1px solid rgba(255,255,255,.06);border-radius:6px;line-height:1.7;white-space:nowrap}
+  #hud b{color:var(--ink);font-weight:600}
+  #hint{position:fixed;right:18px;bottom:16px;z-index:5;font-size:10px;letter-spacing:.14em;color:#5b6478;text-align:right;line-height:1.8;pointer-events:none}
+  #overlay{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;background:rgba(3,5,10,.62);backdrop-filter:blur(3px);cursor:pointer;transition:opacity .45s ease;text-align:center;padding:20px}
+  #overlay.hidden{opacity:0;pointer-events:none}
+  .rule{width:120px;height:1px;background:linear-gradient(90deg,transparent,var(--amber),transparent)}
+  h1{font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:clamp(32px,6vw,62px);letter-spacing:.32em;text-indent:.32em;color:#e8ecf4;text-shadow:0 2px 30px rgba(224,164,88,.25);line-height:1.35}
+  .sub{font-size:12px;letter-spacing:.3em;color:var(--dim);text-transform:uppercase}
+  #seedline{font-size:11px;letter-spacing:.22em;color:var(--amber)}
+  .cta{margin-top:4px;font-size:13px;letter-spacing:.26em;color:#0b0d14;background:var(--amber);padding:13px 34px;border-radius:3px;text-transform:uppercase;box-shadow:0 0 34px rgba(224,164,88,.35)}
+  .controls{display:flex;gap:34px;flex-wrap:wrap;justify-content:center;font-size:10px;letter-spacing:.18em;color:#66708a;text-transform:uppercase}
+  .controls span b{color:#aeb8cc;font-weight:600}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="crosshair"></div>
+<canvas id="minimap" width="200" height="200"></canvas>
+<div id="hud"></div>
+<div id="hint">WASD — MOVE<br>MOUSE — LOOK<br>SHIFT — RUN · ESC — PAUSE</div>
+<div id="overlay">
+  <div class="sub" id="oversub">an infinite labyrinth</div>
+  <h1>THE ENDLESS<br>MAZE</h1>
+  <div class="rule"></div>
+  <div id="seedline"></div>
+  <div class="cta" id="cta">Click to enter</div>
+  <div class="controls"><span><b>WASD</b> move</span><span><b>Mouse</b> look</span><span><b>Shift</b> run</span><span><b>Esc</b> pause</span></div>
+</div>
+<script type="module">
+let THREE;
+try {
+  THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+} catch (e1) {
+  try {
+    THREE = await import('https://unpkg.com/three@0.160.0/build/three.module.js');
+  } catch (e2) {
+    document.getElementById('cta').textContent = 'Could not load Three.js — check connection';
+    throw e2;
+  }
+}
+
+// ---------- deterministic hashing / rng (maze layout must be reproducible per seed) ----------
+function xmur3(str){
+  let h=1779033703^str.length;
+  for(let i=0;i<str.length;i++){ h=Math.imul(h^str.charCodeAt(i),3432918353); h=(h<<13)|(h>>>19); }
+  return function(){ h=Math.imul(h^(h>>>16),2246822507); h=Math.imul(h^(h>>>13),3266489909); return (h^=(h>>>16))>>>0; };
+}
+function mulberry32(a){return function(){let t=(a+=0x6D2B79F5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296;};}
+function hash2(x,y,s){let h=(s^Math.imul(x,0x27d4eb2d)^Math.imul(y,0x165667b1))|0;h=Math.imul(h^(h>>>15),h|1);h^=h+Math.imul(h^(h>>>7),h|61);return (h^(h>>>14))>>>0;}
+
+// ---------- config ----------
+const params=new URLSearchParams(location.search);
+const SEED=(params.get('seed')||Math.random().toString(36).slice(2,8)).toLowerCase();
+const SEEDH=xmur3(SEED)();
+const N=16;                 // cells per chunk side
+const CELL=4;               // world units per cell
+const WALL_H=3.2, WALL_T=0.4, HALFT=WALL_T/2;
+const R_LOAD=2, R_DROP=3;   // chunk streaming radii
+const EYE=1.7, RADIUS=0.35;
+const DX=[0,1,0,-1], DY=[-1,0,1,0], BIT=[1,2,4,8], OPP=[4,8,1,2]; // N,E,S,W
+
+// ---------- infinite maze: per-chunk recursive backtracker + deterministic border openings ----------
+const wallCache=new Map();
+function getWalls(cx,cy){
+  const key=cx+','+cy;
+  let w=wallCache.get(key);
+  if(w) return w;
+  const rng=mulberry32(hash2(cx,cy,SEEDH));
+  w=new Uint8Array(N*N).fill(15);
+  const seen=new Uint8Array(N*N);
+  const stack=[0]; seen[0]=1;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    const x=cur%N, y=(cur/N)|0;
+    let count=0, chosen=-1;
+    for(let d=0;d<4;d++){
+      const nx=x+DX[d], ny=y+DY[d];
+      if(nx<0||ny<0||nx>=N||ny>=N||seen[ny*N+nx]) continue;
+      count++; if(rng()*count<1) chosen=d;
+    }
+    if(chosen<0){ stack.pop(); continue; }
+    const nx=x+DX[chosen], ny=y+DY[chosen], ni=ny*N+nx;
+    w[cur]&=~BIT[chosen]; w[ni]&=~OPP[chosen];
+    seen[ni]=1; stack.push(ni);
+  }
+  // braid: open some dead ends so the maze has loops, not just one solution
+  for(let i=0;i<N*N;i++){
+    let walls=0; for(let d=0;d<4;d++) if(w[i]&BIT[d]) walls++;
+    if(walls!==3 || rng()>=0.35) continue;
+    const x=i%N, y=(i/N)|0;
+    let count=0, chosen=-1;
+    for(let d=0;d<4;d++){
+      const nx=x+DX[d], ny=y+DY[d];
+      if(nx<0||ny<0||nx>=N||ny>=N||!(w[i]&BIT[d])) continue;
+      count++; if(rng()*count<1) chosen=d;
+    }
+    if(chosen<0) continue;
+    const nx=x+DX[chosen], ny=y+DY[chosen], ni=ny*N+nx;
+    w[i]&=~BIT[chosen]; w[ni]&=~OPP[chosen];
+  }
+  wallCache.set(key,w);
+  return w;
+}
+
+// openings along a shared chunk edge; pure function of the edge so both sides always agree
+const edgeCache=new Map();
+function edgeOpenings(ax,ay,bx,by){
+  const key=ax+','+ay+'|'+bx+','+by;
+  let s=edgeCache.get(key);
+  if(s) return s;
+  const rng=mulberry32(hash2(bx,by,hash2(ax,ay,SEEDH)));
+  const count=2+((rng()*2)|0);
+  s=new Set();
+  let guard=0;
+  while(s.size<count && guard++<64) s.add(1+((rng()*(N-2))|0));
+  edgeCache.set(key,s);
+  return s;
+}
+
+// true when there is NO wall between cell (gx,gy) and its neighbour in direction d
+function isOpen(gx,gy,d){
+  const cx=Math.floor(gx/N), cy=Math.floor(gy/N);
+  const lx=gx-cx*N, ly=gy-cy*N;
+  if(d===1){ if(lx<N-1) return !(getWalls(cx,cy)[ly*N+lx]&2); return edgeOpenings(cx,cy,cx+1,cy).has(ly); }
+  if(d===3){ return isOpen(gx-1,gy,1); }
+  if(d===2){ if(ly<N-1) return !(getWalls(cx,cy)[ly*N+lx]&4); return edgeOpenings(cx,cy,cx,cy+1).has(lx); }
+  return isOpen(gx,gy-1,2);
+}
+
+// ---------- renderer / scene ----------
+const app=document.getElementById('app');
+let renderer;
+try{
+  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+}catch(e){
+  document.getElementById('cta').textContent='WebGL is not available in this browser';
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.12;
+app.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x070a14);
+scene.fog=new THREE.FogExp2(0x070a14,0.045);
+
+const camera=new THREE.PerspectiveCamera(74,innerWidth/innerHeight,0.08,700);
+camera.rotation.order='YXZ';
+
+// ---------- procedural textures (canvas, no external assets) ----------
+function canvasTex(size,draw){
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  draw(c.getContext('2d'),size);
+  const t=new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  t.anisotropy=renderer.capabilities.getMaxAnisotropy();
+  t.colorSpace=THREE.SRGBColorSpace;
+  return t;
+}
+// one wall face spans ~4.5 x 3.2 m, so bricks are drawn to that scale
+const wallTex=canvasTex(256,(g,s)=>{
+  g.fillStyle='#17140f'; g.fillRect(0,0,s,s);
+  const rows=6, cols=8, bh=s/rows, bw=s/cols;
+  for(let r=0;r<rows;r++){
+    const off=(r%2)*bw/2;
+    for(let c=-1;c<cols;c++){
+      const x=c*bw+off, y=r*bh;
+      g.fillStyle=`hsl(${24+Math.random()*10},${10+Math.random()*8}%,${26+Math.random()*14}%)`;
+      g.fillRect(x+2,y+2,bw-4,bh-4);
+      g.fillStyle='rgba(255,255,255,0.05)'; g.fillRect(x+2,y+2,bw-4,3);
+      g.fillStyle='rgba(0,0,0,0.22)'; g.fillRect(x+2,y+bh-5,bw-4,3);
+    }
+  }
+  for(let i=0;i<1400;i++){
+    g.fillStyle=`rgba(${Math.random()<0.5?'0,0,0':'255,240,220'},${Math.random()*0.06})`;
+    g.fillRect(Math.random()*s,Math.random()*s,1.5,1.5);
+  }
+  for(let i=0;i<30;i++){
+    const x=Math.random()*s, y=s*0.55+Math.random()*s*0.45, r=6+Math.random()*22;
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,'rgba(54,78,38,0.20)'); gr.addColorStop(1,'rgba(54,78,38,0)');
+    g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+  g.strokeStyle='rgba(0,0,0,0.28)'; g.lineWidth=1;
+  for(let i=0;i<5;i++){
+    let x=Math.random()*s, y=Math.random()*s*0.4;
+    g.beginPath(); g.moveTo(x,y);
+    for(let k=0;k<6;k++){ x+=(Math.random()-0.5)*26; y+=Math.random()*30; g.lineTo(x,y); }
+    g.stroke();
+  }
+});
+const floorTex=canvasTex(256,(g,s)=>{
+  g.fillStyle='#100e0b'; g.fillRect(0,0,s,s);
+  const n=2, w=s/n;
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+    g.fillStyle=`hsl(${30+Math.random()*12},${7+Math.random()*6}%,${15+Math.random()*9}%)`;
+    g.fillRect(i*w+3,j*w+3,w-6,w-6);
+    g.fillStyle='rgba(255,255,255,0.04)'; g.fillRect(i*w+3,j*w+3,w-6,4);
+    for(let k=0;k<40;k++){
+      g.fillStyle=`rgba(0,0,0,${Math.random()*0.12})`;
+      g.beginPath(); g.arc(i*w+Math.random()*w,j*w+Math.random()*w,1+Math.random()*4,0,7); g.fill();
+    }
+  }
+  for(let i=0;i<900;i++){
+    g.fillStyle=`rgba(255,235,200,${Math.random()*0.03})`;
+    g.fillRect(Math.random()*s,Math.random()*s,1.4,1.4);
+  }
+});
+floorTex.repeat.set(N,N);
+function radialTex(size,stops){
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const g=c.getContext('2d');
+  const gr=g.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+  for(const [o,col] of stops) gr.addColorStop(o,col);
+  g.fillStyle=gr; g.fillRect(0,0,size,size);
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace;
+  return t;
+}
+const flameTex=radialTex(64,[[0,'rgba(255,244,214,1)'],[0.25,'rgba(255,196,110,0.9)'],[0.55,'rgba(255,120,40,0.35)'],[1,'rgba(255,80,20,0)']]);
+const glowTex=radialTex(128,[[0,'rgba(255,170,90,0.55)'],[0.4,'rgba(255,130,50,0.18)'],[1,'rgba(255,110,40,0)']]);
+const moonTex=radialTex(128,[[0,'rgba(228,236,255,1)'],[0.35,'rgba(200,214,248,0.95)'],[0.42,'rgba(170,190,235,0.35)'],[1,'rgba(150,170,220,0)']]);
+
+// ---------- shared geometry / materials ----------
+const wallGeo=new THREE.BoxGeometry(1,1,1); wallGeo.translate(0,0.5,0);
+const wallMat=new THREE.MeshStandardMaterial({map:wallTex,bumpMap:wallTex,bumpScale:0.6,roughness:0.95});
+const capMat=new THREE.MeshStandardMaterial({map:wallTex,color:0x8f8a80,roughness:0.9});
+const floorGeo=new THREE.PlaneGeometry(N*CELL,N*CELL); floorGeo.rotateX(-Math.PI/2);
+const floorMat=new THREE.MeshStandardMaterial({map:floorTex,bumpMap:floorTex,bumpScale:0.35,roughness:0.97});
+const pedestalGeo=new THREE.CylinderGeometry(0.16,0.24,1.0,7); pedestalGeo.translate(0,0.5,0);
+const bowlGeo=new THREE.CylinderGeometry(0.34,0.2,0.22,8); bowlGeo.translate(0,1.06,0);
+const stoneMat=new THREE.MeshStandardMaterial({color:0x4a443c,roughness:0.92});
+const flameMat=new THREE.SpriteMaterial({map:flameTex,blending:THREE.AdditiveBlending,depthWrite:false,transparent:true});
+const glowMat=new THREE.SpriteMaterial({map:glowTex,blending:THREE.AdditiveBlending,depthWrite:false,transparent:true,opacity:0.8});
+
+// ---------- chunk streaming ----------
+// wall ownership: interior walls belong to their chunk; a border wall is rendered only by the
+// west/north chunk of the pair, so segments are never duplicated across chunks
+const chunks=new Map();
+const flames=[];
+const braziers=[];
+function buildChunk(cx,cy){
+  const key=cx+','+cy;
+  if(chunks.has(key)) return;
+  const group=new THREE.Group();
+  const w=getWalls(cx,cy);
+  const openE=edgeOpenings(cx,cy,cx+1,cy);
+  const openS=edgeOpenings(cx,cy,cx,cy+1);
+  const segs=[];
+  for(let ly=0;ly<N;ly++)for(let lx=0;lx<N;lx++){
+    const cell=w[ly*N+lx];
+    if(lx<N-1){ if(cell&2) segs.push([cx*N+lx+1,cy*N+ly,true]); }
+    else if(!openE.has(ly)) segs.push([(cx+1)*N,cy*N+ly,true]);
+    if(ly<N-1){ if(cell&4) segs.push([cx*N+lx,cy*N+ly+1,false]); }
+    else if(!openS.has(lx)) segs.push([cx*N+lx,(cy+1)*N,false]);
+  }
+  const walls=new THREE.InstancedMesh(wallGeo,wallMat,segs.length);
+  const caps=new THREE.InstancedMesh(wallGeo,capMat,segs.length);
+  walls.frustumCulled=false; caps.frustumCulled=false;
+  const m=new THREE.Matrix4(), q=new THREE.Quaternion(), p=new THREE.Vector3(), sc=new THREE.Vector3();
+  const col=new THREE.Color();
+  const rng=mulberry32(hash2(cx,cy,SEEDH^0x51ab));
+  segs.forEach((s,i)=>{
+    const [gx,gz,vert]=s;
+    if(vert){ p.set(gx*CELL,0,gz*CELL+CELL/2); sc.set(WALL_T,WALL_H,CELL+WALL_T); }
+    else{ p.set(gx*CELL+CELL/2,0,gz*CELL); sc.set(CELL+WALL_T,WALL_H,WALL_T); }
+    m.compose(p,q,sc); walls.setMatrixAt(i,m);
+    const v=0.86+rng()*0.22, moss=rng()<0.18;
+    col.setRGB(v*(moss?0.75:1),v*(moss?1.02:1),v*(moss?0.7:1));
+    walls.setColorAt(i,col);
+    const cp=new THREE.Vector3(p.x,WALL_H,p.z);
+    m.compose(cp,q,new THREE.Vector3(sc.x+0.14,0.16,sc.z+0.14)); caps.setMatrixAt(i,m);
+  });
+  walls.instanceMatrix.needsUpdate=true;
+  if(walls.instanceColor) walls.instanceColor.needsUpdate=true;
+  caps.instanceMatrix.needsUpdate=true;
+  group.add(walls); group.add(caps);
+  const floor=new THREE.Mesh(floorGeo,floorMat);
+  floor.position.set((cx*N+N/2)*CELL,0,(cy*N+N/2)*CELL);
+  group.add(floor);
+  // braziers: deterministic per chunk, always hugging a real wall
+  const brng=mulberry32(hash2(cx,cy,SEEDH^0xbeef));
+  for(let i=0;i<2;i++){
+    const lx=1+((brng()*(N-2))|0), ly=1+((brng()*(N-2))|0);
+    const cell=w[ly*N+lx];
+    const dirs=[];
+    for(let d=0;d<4;d++) if(cell&BIT[d]) dirs.push(d);
+    if(!dirs.length) continue;
+    const d=dirs[(brng()*dirs.length)|0];
+    const bx=(cx*N+lx+0.5)*CELL+DX[d]*(CELL/2-HALFT-0.42);
+    const bz=(cy*N+ly+0.5)*CELL+DY[d]*(CELL/2-HALFT-0.42);
+    const ped=new THREE.Mesh(pedestalGeo,stoneMat); ped.position.set(bx,0,bz); group.add(ped);
+    const bowl=new THREE.Mesh(bowlGeo,stoneMat); bowl.position.set(bx,0,bz); group.add(bowl);
+    const fl=new THREE.Sprite(flameMat); fl.position.set(bx,1.5,bz); fl.scale.set(0.55,0.8,1); group.add(fl);
+    const gl=new THREE.Sprite(glowMat); gl.position.set(bx,1.55,bz); gl.scale.set(3.4,3.4,1); group.add(gl);
+    flames.push({fl,gl,phase:brng()*10,group});
+    braziers.push({x:bx,z:bz,group});
+  }
+  scene.add(group);
+  chunks.set(key,group);
+}
+function dropChunk(key){
+  const g=chunks.get(key);
+  if(!g) return;
+  scene.remove(g);
+  g.traverse(o=>{ if(o.isInstancedMesh) o.dispose(); }); // frees instance buffers; shared geo/mat stay
+  chunks.delete(key);
+  for(let i=flames.length-1;i>=0;i--) if(flames[i].group===g) flames.splice(i,1);
+  for(let i=braziers.length-1;i>=0;i--) if(braziers[i].group===g) braziers.splice(i,1);
+}
+
+// ---------- sky, lights, atmosphere ----------
+const starGeo=new THREE.BufferGeometry();
+{
+  const n=900, pos=new Float32Array(n*3);
+  const srng=mulberry32(1234);
+  for(let i=0;i<n;i++){
+    const t=srng()*Math.PI*2, u=0.08+srng()*0.9, r=420;
+    pos[i*3]=Math.cos(t)*Math.cos(u*Math.PI/2)*r;
+    pos[i*3+1]=Math.sin(u*Math.PI/2)*r*0.9+10;
+    pos[i*3+2]=Math.sin(t)*Math.cos(u*Math.PI/2)*r;
+  }
+  starGeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+}
+const starMat=new THREE.PointsMaterial({color:0xbccbee,size:1.7,sizeAttenuation:false,transparent:true,opacity:0.85,fog:false,depthWrite:false});
+const stars=new THREE.Points(starGeo,starMat); scene.add(stars);
+const moon=new THREE.Sprite(new THREE.SpriteMaterial({map:moonTex,fog:false,depthWrite:false,transparent:true}));
+moon.scale.set(70,70,1); scene.add(moon);
+
+scene.add(new THREE.HemisphereLight(0x2c3c58,0x0a0c07,0.5));
+const moonLight=new THREE.DirectionalLight(0x8ea2cf,0.22);
+scene.add(moonLight); scene.add(moonLight.target);
+const lamp=new THREE.PointLight(0xffa257,22,30,2); scene.add(lamp);
+
+const DUST=260;
+const dustGeo=new THREE.BufferGeometry();
+{
+  const dp=new Float32Array(DUST*3);
+  for(let i=0;i<DUST;i++){ dp[i*3]=(Math.random()-0.5)*26; dp[i*3+1]=0.1+Math.random()*2.5; dp[i*3+2]=(Math.random()-0.5)*26; }
+  dustGeo.setAttribute('position',new THREE.BufferAttribute(dp,3));
+}
+const dust=new THREE.Points(dustGeo,new THREE.PointsMaterial({color:0xd8c9a8,size:0.05,transparent:true,opacity:0.5,blending:THREE.AdditiveBlending,depthWrite:false}));
+dust.frustumCulled=false; scene.add(dust);
+
+// ---------- player ----------
+const player={x:CELL/2,z:CELL/2,yaw:0,pitch:0,vx:0,vz:0,bob:0,step:0,dist:0};
+for(let d=0;d<4;d++){ if(isOpen(0,0,d)){ player.yaw=[0,-Math.PI/2,Math.PI,Math.PI/2][d]; break; } }
+
+const keys={};
+addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+});
+addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+const overlay=document.getElementById('overlay');
+const cta=document.getElementById('cta');
+const oversub=document.getElementById('oversub');
+let locked=false, started=false, startTime=0;
+overlay.addEventListener('click',()=>{
+  const r=renderer.domElement.requestPointerLock();
+  if(r&&r.catch) r.catch(()=>{});
+});
+document.addEventListener('pointerlockchange',()=>{
+  locked=document.pointerLockElement===renderer.domElement;
+  overlay.classList.toggle('hidden',locked);
+  if(locked){
+    initAudio();
+    if(!started){ started=true; startTime=performance.now(); }
+    cta.textContent='Click to resume';
+    oversub.textContent='an infinite labyrinth';
+  }else if(started){
+    oversub.textContent='paused — the maze waits';
+  }
+});
+document.addEventListener('mousemove',e=>{
+  if(!locked) return;
+  player.yaw-=e.movementX*0.0021;
+  player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch-e.movementY*0.0021));
+});
+
+// ---------- collision: circle vs nearby wall segments + braziers ----------
+function collide(){
+  const pgx=Math.floor(player.x/CELL), pgz=Math.floor(player.z/CELL);
+  const minD=RADIUS+HALFT;
+  for(let iter=0;iter<3;iter++){
+    let pushed=false;
+    for(let gy=pgz-1;gy<=pgz+1;gy++)for(let gx=pgx-1;gx<=pgx+1;gx++){
+      for(let d=0;d<4;d++){
+        if(isOpen(gx,gy,d)) continue;
+        let x1,z1,x2,z2;
+        if(d===1){ x1=x2=(gx+1)*CELL; z1=gy*CELL; z2=(gy+1)*CELL; }
+        else if(d===3){ x1=x2=gx*CELL; z1=gy*CELL; z2=(gy+1)*CELL; }
+        else if(d===2){ z1=z2=(gy+1)*CELL; x1=gx*CELL; x2=(gx+1)*CELL; }
+        else{ z1=z2=gy*CELL; x1=gx*CELL; x2=(gx+1)*CELL; }
+        const dx=x2-x1, dz=z2-z1;
+        let t=((player.x-x1)*dx+(player.z-z1)*dz)/(dx*dx+dz*dz);
+        t=Math.max(0,Math.min(1,t));
+        const cx=x1+dx*t, cz=z1+dz*t;
+        const ox=player.x-cx, oz=player.z-cz;
+        const d2=ox*ox+oz*oz;
+        if(d2<minD*minD){
+          const dd=Math.sqrt(d2)||1e-6;
+          const push=(minD-dd)/dd;
+          player.x+=ox*push; player.z+=oz*push; pushed=true;
+        }
+      }
+    }
+    for(const b of braziers){
+      const ox=player.x-b.x, oz=player.z-b.z;
+      const d2=ox*ox+oz*oz, m=0.72;
+      if(d2<m*m&&d2>1e-9){
+        const dd=Math.sqrt(d2), push=(m-dd)/dd;
+        player.x+=ox*push; player.z+=oz*push;
+      }
+    }
+    if(!pushed) break;
+  }
+}
+
+// ---------- procedural audio: wind, drone, footsteps (no assets) ----------
+let AC=null, noiseBuf=null, masterGain=null;
+function initAudio(){
+  if(AC){ if(AC.state==='suspended') AC.resume(); return; }
+  try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    masterGain=AC.createGain(); masterGain.gain.value=0.42; masterGain.connect(AC.destination);
+    const len=AC.sampleRate*2;
+    noiseBuf=AC.createBuffer(1,len,AC.sampleRate);
+    const data=noiseBuf.getChannelData(0);
+    let last=0;
+    for(let i=0;i<len;i++){ const w=Math.random()*2-1; last=(last+0.02*w)/1.02; data[i]=last*3.2; }
+    const src=AC.createBufferSource(); src.buffer=noiseBuf; src.loop=true;
+    const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=320;
+    const ng=AC.createGain(); ng.gain.value=0.16;
+    src.connect(lp); lp.connect(ng); ng.connect(masterGain); src.start();
+    const lfo=AC.createOscillator(); lfo.frequency.value=0.07;
+    const lfoG=AC.createGain(); lfoG.gain.value=0.07;
+    lfo.connect(lfoG); lfoG.connect(ng.gain); lfo.start();
+    const o1=AC.createOscillator(); o1.type='sine'; o1.frequency.value=55;
+    const o2=AC.createOscillator(); o2.type='sine'; o2.frequency.value=55.6;
+    const dg=AC.createGain(); dg.gain.value=0.022;
+    o1.connect(dg); o2.connect(dg); dg.connect(masterGain);
+    o1.start(); o2.start();
+  }catch(e){ AC=null; }
+}
+function footstep(sprint){
+  if(!AC) return;
+  try{
+    const src=AC.createBufferSource(); src.buffer=noiseBuf;
+    src.playbackRate.value=0.8+Math.random()*0.4;
+    const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=240+Math.random()*380; bp.Q.value=1.1;
+    const g=AC.createGain();
+    const v=(sprint?0.20:0.13)*(0.85+Math.random()*0.3);
+    g.gain.setValueAtTime(v,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+0.10);
+    src.connect(bp); bp.connect(g); g.connect(masterGain);
+    src.start(AC.currentTime,Math.random()*1.5,0.12);
+  }catch(e){}
+}
+
+// ---------- minimap with fog of war ----------
+const mm=document.getElementById('minimap'), mmc=mm.getContext('2d');
+const visited=new Set();
+let lastCell='';
+function markVisited(){
+  const gx=Math.floor(player.x/CELL), gz=Math.floor(player.z/CELL);
+  const key=gx+','+gz;
+  if(key===lastCell) return;
+  lastCell=key;
+  for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++) visited.add((gx+dx)+','+(gz+dy));
+}
+function drawMinimap(){
+  const S=mm.width, R=11, px=S/2, cs=S/(R*2+1);
+  const gx=Math.floor(player.x/CELL), gz=Math.floor(player.z/CELL);
+  mmc.clearRect(0,0,S,S);
+  mmc.fillStyle='rgba(38,46,66,0.85)';
+  for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    if(!visited.has((gx+dx)+','+(gz+dy))) continue;
+    mmc.fillRect(px+dx*cs-cs/2,px+dy*cs-cs/2,cs,cs);
+  }
+  mmc.strokeStyle='rgba(148,163,196,0.9)'; mmc.lineWidth=1.2;
+  mmc.beginPath();
+  for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    const cx=gx+dx, cz=gz+dy;
+    if(!visited.has(cx+','+cz)) continue;
+    const x0=px+dx*cs-cs/2, y0=px+dy*cs-cs/2;
+    if(!isOpen(cx,cz,0)){ mmc.moveTo(x0,y0); mmc.lineTo(x0+cs,y0); }
+    if(!isOpen(cx,cz,2)){ mmc.moveTo(x0,y0+cs); mmc.lineTo(x0+cs,y0+cs); }
+    if(!isOpen(cx,cz,3)){ mmc.moveTo(x0,y0); mmc.lineTo(x0,y0+cs); }
+    if(!isOpen(cx,cz,1)){ mmc.moveTo(x0+cs,y0); mmc.lineTo(x0+cs,y0+cs); }
+  }
+  mmc.stroke();
+  mmc.save();
+  mmc.translate(px,px); mmc.rotate(-player.yaw);
+  mmc.fillStyle='#e0a458';
+  mmc.beginPath(); mmc.moveTo(0,-6); mmc.lineTo(4.4,5); mmc.lineTo(0,2.6); mmc.lineTo(-4.4,5); mmc.closePath(); mmc.fill();
+  mmc.restore();
+}
+
+// ---------- HUD ----------
+const hud=document.getElementById('hud');
+function fmtTime(ms){ const s=Math.floor(ms/1000); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function drawHUD(fps){
+  const gx=Math.floor(player.x/CELL), gz=Math.floor(player.z/CELL);
+  hud.innerHTML='SEED <b>'+SEED+'</b> · CELL <b>'+gx+','+gz+'</b> · CHUNK <b>'+Math.floor(gx/N)+','+Math.floor(gz/N)+'</b><br>'+
+    'DIST <b>'+player.dist.toFixed(0)+'m</b> · TIME <b>'+(started?fmtTime(performance.now()-startTime):'00:00')+'</b> · FPS <b>'+fps.toFixed(0)+'</b>';
+}
+
+document.getElementById('seedline').textContent='SEED · '+SEED.toUpperCase();
+document.title='The Endless Maze — '+SEED;
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ---------- main loop ----------
+const clock=new THREE.Clock();
+let fpsEMA=60, mmTimer=1, hudTimer=1;
+function tick(){
+  requestAnimationFrame(tick);
+  const dt=Math.min(clock.getDelta(),0.05);
+  const t=clock.elapsedTime;
+  fpsEMA=fpsEMA*0.95+(1/Math.max(dt,1e-4))*0.05;
+
+  const pcx=Math.floor(player.x/(N*CELL)), pcy=Math.floor(player.z/(N*CELL));
+  for(let dy=-R_LOAD;dy<=R_LOAD;dy++)for(let dx=-R_LOAD;dx<=R_LOAD;dx++) buildChunk(pcx+dx,pcy+dy);
+  for(const key of [...chunks.keys()]){
+    const [cx,cy]=key.split(',').map(Number);
+    if(Math.max(Math.abs(cx-pcx),Math.abs(cy-pcy))>R_DROP) dropChunk(key);
+  }
+
+  let ix=0, iz=0;
+  if(locked){
+    if(keys.KeyW||keys.ArrowUp) iz-=1;
+    if(keys.KeyS||keys.ArrowDown) iz+=1;
+    if(keys.KeyA||keys.ArrowLeft) ix-=1;
+    if(keys.KeyD||keys.ArrowRight) ix+=1;
+  }
+  const sprint=(keys.ShiftLeft||keys.ShiftRight)?1:0;
+  const speed=sprint?7.2:4.3;
+  let tx=0, tz=0;
+  if(ix||iz){
+    const l=Math.hypot(ix,iz); ix/=l; iz/=l;
+    const f=-iz, s=Math.sin(player.yaw), c=Math.cos(player.yaw);
+    tx=(ix*c-f*s)*speed;
+    tz=(-ix*s-f*c)*speed;
+  }
+  const k=1-Math.exp(-11*dt);
+  player.vx+=(tx-player.vx)*k;
+  player.vz+=(tz-player.vz)*k;
+  const ox=player.x, oz=player.z;
+  player.x+=player.vx*dt;
+  player.z+=player.vz*dt;
+  collide();
+  const movedD=Math.hypot(player.x-ox,player.z-oz);
+  player.dist+=movedD;
+
+  const hSpeed=Math.hypot(player.vx,player.vz);
+  player.bob+=hSpeed*dt*1.9;
+  const bobA=Math.min(hSpeed/7,1)*0.055;
+  const bobY=Math.sin(player.bob*2)*bobA;
+  const bobX=Math.cos(player.bob)*bobA*0.6;
+  player.step+=movedD;
+  const stride=sprint?2.6:2.0;
+  if(player.step>stride&&locked){ player.step=0; footstep(sprint); }
+
+  camera.position.set(
+    player.x+Math.cos(player.yaw)*bobX,
+    EYE+bobY,
+    player.z-Math.sin(player.yaw)*bobX
+  );
+  camera.rotation.set(player.pitch,player.yaw,Math.sin(player.bob)*0.006*Math.min(hSpeed/5,1));
+
+  const targetFov=sprint&&hSpeed>4?82:74;
+  if(Math.abs(camera.fov-targetFov)>0.05){
+    camera.fov+=(targetFov-camera.fov)*Math.min(1,dt*6);
+    camera.updateProjectionMatrix();
+  }
+
+  const fl=Math.sin(t*11.3)*0.16+Math.sin(t*23.7+1.7)*0.11+Math.sin(t*41.9+0.4)*0.06;
+  lamp.intensity=22+fl*6;
+  lamp.position.set(player.x-Math.sin(player.yaw)*0.25,EYE+0.25+bobY*0.5,player.z-Math.cos(player.yaw)*0.25);
+
+  for(const f of flames){
+    const fs=0.5+0.1*Math.sin(t*13+f.phase)+0.05*Math.sin(t*29+f.phase*2.3);
+    f.fl.scale.set(fs,fs*1.45,1);
+    const gs=3.2+0.3*Math.sin(t*9+f.phase);
+    f.gl.scale.set(gs,gs,1);
+  }
+
+  stars.position.set(camera.position.x,0,camera.position.z);
+  starMat.opacity=0.75+0.15*Math.sin(t*0.8);
+  moon.position.set(camera.position.x+160,150,camera.position.z-260);
+  moonLight.position.set(camera.position.x+120,180,camera.position.z+60);
+  moonLight.target.position.set(camera.position.x,0,camera.position.z);
+
+  const dp=dustGeo.attributes.position;
+  const arr=dp.array;
+  for(let i=0;i<DUST;i++){
+    arr[i*3]+=Math.sin(t*0.4+i*1.7)*dt*0.05;
+    arr[i*3+1]-=dt*0.11;
+    arr[i*3+2]+=Math.cos(t*0.33+i*2.1)*dt*0.05;
+    if(arr[i*3+1]<0.05) arr[i*3+1]=2.6;
+    const rx=arr[i*3]-camera.position.x;
+    if(rx>13) arr[i*3]-=26; else if(rx<-13) arr[i*3]+=26;
+    const rz=arr[i*3+2]-camera.position.z;
+    if(rz>13) arr[i*3+2]-=26; else if(rz<-13) arr[i*3+2]+=26;
+  }
+  dp.needsUpdate=true;
+
+  markVisited();
+  mmTimer+=dt; hudTimer+=dt;
+  if(mmTimer>0.12){ mmTimer=0; drawMinimap(); }
+  if(hudTimer>0.25){ hudTimer=0; drawHUD(fpsEMA); }
+
+  renderer.render(scene,camera);
+}
+markVisited();
+drawMinimap();
+drawHUD(60);
+tick();
+</script>
+</body>
+</html>
