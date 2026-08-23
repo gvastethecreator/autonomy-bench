@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 — 2026-08-23
+
+- Browser Autonomy Suite v2.0.0 keeps all 33 benchmark concepts and restores Terrain Explorer to the active suite after the v1.6.0 experiment; the gallery take removed in v1.6.0 remains removed and frozen historical runs stay untouched.
+- Refactor Raw A prompts around controlled under-specification. Remove unnecessary interaction-first and quality-pressure wording while preserving benchmark identity. Rollercoaster A remains byte-for-byte unchanged; Cursor Experiment remains explicitly interactive; Infinite Maze remains explicitly self-navigating.
+- Activate the full frozen A/B/C ladder. B appends one universal 20-word autonomy suffix to A; C appends one universal 20-word showcase suffix to B. Tests lock the exact strings, constructions, and +20/+20 word deltas across all 33 benchmarks.
+- Adopt showcase-first, interaction-optional evaluation as a review lens rather than a hidden worker requirement.
+- Add `judgment` and `showcaseQuality` to the default evaluation profile, separating decision quality from autonomy and presentation quality from general UX/visual finish.
+- Publish and index A/B/C gallery takes while preserving the v1.6 retired-benchmark cleanup and live-suite filtering.
+- Update methodology, contribution rules, CLI docs, coordinator skill, suite README, and evaluation guidance for the live prompt ladder.
+
 ## 0.7.0 — 2026-08-23
 
 - Remove Terrain Explorer (`terrain-explorer`) from the Browser Autonomy Suite.
@@ -28,7 +38,7 @@
 
 - Cell receipts record the GitHub contributor (login + avatar). The gallery stamps missing contributors as `gvastethecreator`. Imported Qwen 3.8 27B and Ornith 1.5 35B rollercoaster A takes are `franky47`.
 - Published C and Infinite Maze takes keep a single prompt revision (v1). The current showcase C prompts and the current autonomous maze prompts are v1. Stub folders without `promptSha256` are not a second revision.
-- Add `SECURITY.md`, slim the README, and split CLI plus gallery viewer detail into `docs/`.
+- Add `SECURITY.md`, slim the README, and split the CLI plus gallery viewer detail into `docs/`.
 - Browser Autonomy Suite v1.2.0: prompt C is a finished automatic showcase instead of a polished interactive experience. Published C takes and ledger C cells were removed and must be re-run.
 - Gallery title follows the selected benchmark (`Rollercoaster Bench`).
 - Catalog indexes every published take: prompt revisions from `promptSha256`, execution dates, defaulting to the latest of each.
