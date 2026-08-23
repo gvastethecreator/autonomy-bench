@@ -1,5 +1,7 @@
 # Contributing
 
+Read [docs/METHODOLOGY.md](docs/METHODOLOGY.md) and [docs/commands.md](docs/commands.md) first.
+
 Benchmark changes are methodology changes. Do not silently edit prompts in a released suite version.
 
 - Fix typos only with an explicit version bump and changelog note when prompt bytes change.

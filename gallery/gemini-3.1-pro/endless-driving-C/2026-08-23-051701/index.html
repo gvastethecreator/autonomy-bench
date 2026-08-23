@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Endless Cyber Drive (Level C)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    #ui { position: absolute; bottom: 30px; left: 30px; display: flex; gap: 20px; }
+    .panel { background: rgba(0, 20, 40, 0.8); border: 1px solid #0ff; border-radius: 8px; padding: 15px 25px; color: #0ff; text-shadow: 0 0 5px #0ff; backdrop-filter: blur(10px); box-shadow: 0 0 15px rgba(0, 255, 255, 0.2); }
+    .title { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; opacity: 0.8; margin-bottom: 5px; }
+    .value { font-size: 32px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="panel">
+      <div class="title">Speed</div>
+      <div class="value" id="speed-val">120 mph</div>
+    </div>
+    <div class="panel">
+      <div class="title">Distance</div>
+      <div class="value" id="dist-val">0.0 km</div>
+    </div>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000510);
+    scene.fog = new THREE.FogExp2(0x000510, 0.005);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
+    camera.position.set(0, 3, -8);
+    camera.lookAt(0, 1, 20);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.0, 0.4, 0.2));
+
+    // Dynamic Road Generation
+    const roadGroup = new THREE.Group();
+    scene.add(roadGroup);
+
+    const segmentLength = 20;
+    const roadWidth = 24;
+    const segments = [];
+    let trackCurve = 0; // Curve factor
+    
+    function createSegment(zOffset, curve) {
+        const seg = new THREE.Group();
+        
+        // Road surface
+        const roadGeo = new THREE.PlaneGeometry(roadWidth, segmentLength);
+        const roadMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+        const road = new THREE.Mesh(roadGeo, roadMat);
+        road.rotation.x = -Math.PI / 2;
+        seg.add(road);
+        
+        // Neon lines
+        const lineGeo = new THREE.PlaneGeometry(0.5, segmentLength);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+        
+        const lineL = new THREE.Mesh(lineGeo, lineMat);
+        lineL.rotation.x = -Math.PI / 2;
+        lineL.position.x = -roadWidth/2;
+        lineL.position.y = 0.01;
+        seg.add(lineL);
+        
+        const lineR = new THREE.Mesh(lineGeo, lineMat);
+        lineR.rotation.x = -Math.PI / 2;
+        lineR.position.x = roadWidth/2;
+        lineR.position.y = 0.01;
+        seg.add(lineR);
+        
+        // Dotted center line
+        if (Math.random() > 0.5) {
+            const centerGeo = new THREE.PlaneGeometry(0.3, segmentLength * 0.5);
+            const centerLine = new THREE.Mesh(centerGeo, lineMat);
+            centerLine.rotation.x = -Math.PI / 2;
+            centerLine.position.y = 0.01;
+            seg.add(centerLine);
+        }
+
+        // Buildings on side
+        const addBuilding = (side) => {
+            if(Math.random() > 0.3) {
+                const w = Math.random() * 5 + 5;
+                const d = Math.random() * 10 + 5;
+                const h = Math.random() * 50 + 10;
+                const bGeo = new THREE.BoxGeometry(w, h, d);
+                const bMat = new THREE.MeshBasicMaterial({ 
+                    color: new THREE.Color().setHSL(Math.random(), 1, 0.2), 
+                    wireframe: Math.random() > 0.8 
+                });
+                const bldg = new THREE.Mesh(bGeo, bMat);
+                bldg.position.set(side * (roadWidth/2 + w/2 + 2), h/2, 0);
+                seg.add(bldg);
+            }
+        };
+        addBuilding(1);
+        addBuilding(-1);
+
+        seg.position.z = zOffset;
+        seg.position.x = curve;
+        return seg;
+    }
+
+    let currentZ = 0;
+    let currentX = 0;
+    for(let i=0; i<40; i++) {
+        trackCurve += (Math.random() - 0.5) * 1.5;
+        currentX += trackCurve;
+        const seg = createSegment(currentZ, currentX);
+        segments.push({ mesh: seg, x: currentX, curve: trackCurve });
+        roadGroup.add(seg);
+        currentZ += segmentLength;
+    }
+
+    // High fidelity car model (using primitives for isolation)
+    const carGroup = new THREE.Group();
+    
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(3, 1, 6);
+    const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0x000000, metalness: 0.9, roughness: 0.1, clearcoat: 1.0 });
+    const carBody = new THREE.Mesh(bodyGeo, bodyMat);
+    carBody.position.y = 0.7;
+    carGroup.add(carBody);
+
+    // Taillights
+    const tailLightGeo = new THREE.BoxGeometry(1.2, 0.3, 0.1);
+    const tailLightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const tlL = new THREE.Mesh(tailLightGeo, tailLightMat);
+    tlL.position.set(-0.8, 0.8, -3);
+    carGroup.add(tlL);
+    const tlR = new THREE.Mesh(tailLightGeo, tailLightMat);
+    tlR.position.set(0.8, 0.8, -3);
+    carGroup.add(tlR);
+
+    scene.add(carGroup);
+    
+    // Car headlights
+    const hlL = new THREE.SpotLight(0xffffff, 5, 100, Math.PI/6, 0.5, 1);
+    hlL.position.set(-1, 0.8, 3);
+    hlL.target.position.set(-1, 0.8, 20);
+    carGroup.add(hlL);
+    carGroup.add(hlL.target);
+    
+    const hlR = new THREE.SpotLight(0xffffff, 5, 100, Math.PI/6, 0.5, 1);
+    hlR.position.set(1, 0.8, 3);
+    hlR.target.position.set(1, 0.8, 20);
+    carGroup.add(hlR);
+    carGroup.add(hlR.target);
+
+    let keys = { ArrowLeft: false, ArrowRight: false, w: false, s: false };
+    window.addEventListener('keydown', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = true; });
+    window.addEventListener('keyup', e => { if (keys.hasOwnProperty(e.key)) keys[e.key] = false; });
+
+    let speed = 2.0;
+    let distance = 0;
+    
+    const speedEl = document.getElementById('speed-val');
+    const distEl = document.getElementById('dist-val');
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // Car Controls
+        if (keys.w) speed += 0.05;
+        if (keys.s) speed -= 0.05;
+        speed = Math.max(0.5, Math.min(speed, 5.0));
+        
+        if (keys.ArrowLeft) carGroup.position.x += 0.3;
+        if (keys.ArrowRight) carGroup.position.x -= 0.3;
+        
+        // Banking effect
+        const targetBank = keys.ArrowLeft ? 0.15 : (keys.ArrowRight ? -0.15 : 0);
+        carGroup.rotation.z += (targetBank - carGroup.rotation.z) * 0.1;
+
+        distance += speed * 0.01;
+        speedEl.innerText = `${(speed * 60).toFixed(0)} mph`;
+        distEl.innerText = `${distance.toFixed(1)} km`;
+
+        // Move road segments to simulate forward movement
+        roadGroup.position.z -= speed;
+
+        // Infinite road recycling
+        if (roadGroup.position.z < -segmentLength) {
+            roadGroup.position.z += segmentLength;
+            const oldSeg = segments.shift();
+            roadGroup.remove(oldSeg.mesh);
+            
+            trackCurve += (Math.random() - 0.5) * 1.5;
+            // Guide curve back towards 0 if it goes too far
+            if(currentX > 50) trackCurve -= 0.5;
+            if(currentX < -50) trackCurve += 0.5;
+            
+            currentX += trackCurve;
+            
+            const newSeg = createSegment(currentZ, currentX);
+            segments.push({ mesh: newSeg, x: currentX, curve: trackCurve });
+            roadGroup.add(newSeg);
+            currentZ += segmentLength;
+        }
+
+        // Camera follow (smooth)
+        const currentSegment = segments[Math.floor(Math.abs(roadGroup.position.z) / segmentLength)];
+        if(currentSegment) {
+            // Apply track curvature to car so it follows the road
+            carGroup.position.x -= currentSegment.curve * (speed / segmentLength);
+            
+            camera.position.x += (carGroup.position.x - camera.position.x) * 0.1;
+            camera.lookAt(carGroup.position.x, 1, 20);
+        }
+
+        composer.render();
+    }
+    animate();
+  </script>
+</body>
+</html>

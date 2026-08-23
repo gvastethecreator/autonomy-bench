@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Loop the Loop — First-Person Coaster</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a1420; touch-action: none; }
+  canvas { display: block; }
+  #title {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    font: 600 13px/1 system-ui, sans-serif; letter-spacing: 0.35em;
+    color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+    pointer-events: none; user-select: none;
+  }
+  #hud {
+    position: fixed; top: 14px; left: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #fff; background: rgba(8, 14, 24, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 10px 14px; border-radius: 12px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    user-select: none;
+  }
+  #speed { font-size: 26px; font-weight: 700; }
+  #laps  { font-size: 12px; opacity: 0.75; margin-top: 2px; }
+  #tip {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    font: 500 13px/1.4 system-ui, sans-serif; color: #fff;
+    background: rgba(8, 14, 24, 0.55); border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 8px 14px; border-radius: 999px; pointer-events: none;
+    transition: opacity 0.8s; user-select: none;
+  }
+  #tip.hidden { opacity: 0; }
+  #sound {
+    position: fixed; top: 14px; right: 14px;
+    font: 600 13px/1 system-ui, sans-serif; color: #fff;
+    background: rgba(8, 14, 24, 0.55); border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 9px 14px; border-radius: 999px; cursor: pointer;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  #sound:hover { background: rgba(20, 32, 50, 0.75); }
+</style>
+</head>
+<body>
+<div id="title">LOOP&nbsp;THE&nbsp;LOOP</div>
+<div id="hud"><div id="speed">0 km/h</div><div id="laps">Lap 1</div></div>
+<button id="sound">sound: off</button>
+<div id="tip">Click once to enable wind sound</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------------- renderer / scene ---------------- */
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xd6e9f7, 140, 640);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1500);
+scene.add(camera);
+
+/* ---------------- sky ---------------- */
+
+{
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      top:     { value: new THREE.Color(0x2f7fd0) },
+      mid:     { value: new THREE.Color(0x8ec4ee) },
+      horizon: { value: new THREE.Color(0xd6e9f7) },
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec3 vDir;
+      uniform vec3 top; uniform vec3 mid; uniform vec3 horizon;
+      void main() {
+        float h = normalize(vDir).y;
+        vec3 col = mix(horizon, mid, smoothstep(0.0, 0.18, h));
+        col = mix(col, top, smoothstep(0.15, 0.65, h));
+        col = mix(col, horizon * 0.92, smoothstep(0.0, -0.12, h));
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(750, 32, 16), mat);
+  sky.position.set(0, 0, 70);
+  scene.add(sky);
+}
+
+/* ---------------- lights ---------------- */
+
+const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
+sun.position.set(120, 180, -40);
+sun.target.position.set(0, 0, 70);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -220;
+sun.shadow.camera.right = 220;
+sun.shadow.camera.top = 220;
+sun.shadow.camera.bottom = -220;
+sun.shadow.camera.near = 40;
+sun.shadow.camera.far = 560;
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xbfdcff, 0x3e5a34, 1.0));
+scene.add(new THREE.AmbientLight(0x8899bb, 0.45));
+
+/* ---------------- ground ---------------- */
+
+function grassTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const img = g.createImageData(128, 128);
+  for (let i = 0; i < 128 * 128; i++) {
+    const v = 0.8 + Math.random() * 0.4;
+    img.data[i * 4]     = 92 * v;
+    img.data[i * 4 + 1] = 152 * v;
+    img.data[i * 4 + 2] = 78 * v;
+    img.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(90, 90);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(900, 900),
+  new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.set(0, 0, 70);
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ---------------- track path ----------------
+   A closed centripetal Catmull-Rom spline:
+   station -> lift hill -> vertical loop -> corkscrew
+   -> airtime hills -> long return to station. */
+
+const P = (x, y, z) => new THREE.Vector3(x, y, z);
+const pts = [];
+
+// station + lift hill (west leg, travelling north)
+pts.push(
+  P(-40, 1.2, -6), P(-40, 1.2, 14), P(-40, 1.4, 36), P(-42, 7, 50),
+  P(-44, 18, 63), P(-45, 28, 74), P(-44, 32, 82), P(-43, 25, 91),
+  P(-40, 11, 101), P(-34, 2.5, 110), P(-24, 1.5, 116), P(-12, 1.5, 119)
+);
+
+// first vertical loop (centre (0, 14.5, 119.5), radius 13)
+{
+  const cx = 0, cy = 14.5, cz = 119.5, r = 13;
+  pts.push(P(cx, cy - r, cz)); // bottom
+  for (let i = 1; i < 24; i++) { // 15 degrees..345 degrees
+    const a = i * Math.PI / 12;
+    pts.push(P(cx + r * Math.sin(a), cy - r * Math.cos(a), cz));
+  }
+}
+
+// exit the loop, head to the corkscrew
+pts.push(P(10, 2, 121), P(20, 3, 125));
+
+// corkscrew: one full twist of a helix (centre (34, -, 136), radius 9, drift 8)
+{
+  const cx = 34, cz = 136, r = 9;
+  for (let i = 0; i <= 8; i++) {
+    const a = Math.PI - i * Math.PI / 4;
+    pts.push(P(cx + r * Math.cos(a), 3.5, cz + r * Math.sin(a) + i));
+  }
+}
+
+// east leg with airtime hills
+pts.push(
+  P(30, 3.5, 149), P(42, 3, 150), P(54, 2.5, 145), P(58, 2, 138), P(60, 2, 130),
+  P(62, 4, 120), P(63, 8, 112), P(63, 8, 102), P(62, 3, 94), P(60, 2, 84),
+  P(62, 5, 76), P(63, 8, 68), P(62, 3, 60), P(60, 2, 52), P(61, 6, 44),
+  P(62, 8, 36), P(60, 2, 28), P(58, 2, 20)
+);
+
+// south leg, back to the station
+pts.push(
+  P(48, 2, 14), P(36, 2.5, 11), P(24, 3, 9), P(12, 4, 7), P(0, 3, 5),
+  P(-12, 2.5, 5), P(-24, 2, 7), P(-32, 1.5, 9), P(-38, 1.2, 3)
+);
+
+const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+const LENGTH = curve.getLength();
+
+/* ---------------- track reference frame ----------------
+   Parallel-transported frames (no Frenet twist): the normal starts
+   as world-up and slides along the path, so it always points the way
+   the rider's head points. That is correct at the top of the loop too. */
+
+const SEG = 1600;
+const F = { pos: [], tan: [], nrm: [], bin: [] };
+{
+  let n = new THREE.Vector3(0, 1, 0);
+  const t0 = curve.getTangentAt(0);
+  if (Math.abs(n.dot(t0)) > 0.99) n.set(1, 0, 0);
+  n.addScaledVector(t0, -n.dot(t0)).normalize();
+  for (let i = 0; i < SEG; i++) {
+    const u = i / SEG;
+    F.pos.push(curve.getPointAt(u));
+    F.tan.push(curve.getTangentAt(u));
+    F.nrm.push(n.clone());
+    F.bin.push(new THREE.Vector3().crossVectors(F.tan[i], n).normalize());
+    const tn = curve.getTangentAt((i + 1) / SEG);
+    n = n.clone().addScaledVector(tn, -n.dot(tn));
+    if (n.lengthSq() < 1e-10) {
+      n = new THREE.Vector3().crossVectors(F.tan[i], tn).normalize();
+    }
+    n.normalize();
+  }
+}
+
+function frameAt(u) {
+  const x = (((u % 1) + 1) % 1) * SEG;
+  const i = Math.floor(x) % SEG;
+  const f = x - Math.floor(x);
+  const j = (i + 1) % SEG;
+  return {
+    p:   new THREE.Vector3().lerpVectors(F.pos[i], F.pos[j], f),
+    tan: new THREE.Vector3().lerpVectors(F.tan[i], F.tan[j], f).normalize(),
+    nrm: new THREE.Vector3().lerpVectors(F.nrm[i], F.nrm[j], f).normalize(),
+    bin: new THREE.Vector3().lerpVectors(F.bin[i], F.bin[j], f).normalize(),
+  };
+}
+
+/* ---------------- track geometry ---------------- */
+
+const track = new THREE.Group();
+scene.add(track);
+
+const GAUGE = 0.72;
+
+function offsetPath(dNormal, dBin) {
+  const N = 480;
+  const out = [];
+  for (let i = 0; i < N; i++) {
+    const f = frameAt(i / N);
+    out.push(f.p.clone()
+      .addScaledVector(f.nrm, dNormal)
+      .addScaledVector(f.bin, dBin));
+  }
+  return new THREE.CatmullRomCurve3(out, true, 'centripetal');
+}
+
+const railMat    = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.75, roughness: 0.32 });
+const sleeperMat = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.95 });
+const beamMat    = new THREE.MeshStandardMaterial({ color: 0x5c6672, metalness: 0.4, roughness: 0.7 });
+const supportMat = new THREE.MeshStandardMaterial({ color: 0xc3c9d2, metalness: 0.3, roughness: 0.6 });
+
+for (const side of [-1, 1]) {
+  const rail = new THREE.Mesh(
+    new THREE.TubeGeometry(offsetPath(0.10, side * GAUGE), 1400, 0.075, 6, true),
+    railMat
+  );
+  rail.castShadow = true;
+  track.add(rail);
+}
+
+const beam = new THREE.Mesh(
+  new THREE.TubeGeometry(offsetPath(-0.18, 0), 1200, 0.09, 6, true),
+  beamMat
+);
+track.add(beam);
+
+// sleepers
+{
+  const count = Math.floor(LENGTH / 1.4);
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(2.1, 0.09, 0.32), sleeperMat, count);
+  const m = new THREE.Matrix4();
+  const zAxis = new THREE.Vector3();
+  for (let i = 0; i < count; i++) {
+    const f = frameAt(i / count);
+    zAxis.copy(f.tan).negate();
+    m.makeBasis(f.bin, f.nrm, zAxis);
+    m.setPosition(f.p.x - f.nrm.x * 0.045, f.p.y - f.nrm.y * 0.045, f.p.z - f.nrm.z * 0.045);
+    mesh.setMatrixAt(i, m);
+  }
+  mesh.castShadow = true;
+  track.add(mesh);
+}
+
+// support columns down to the ground
+{
+  const count = Math.floor(LENGTH / 9);
+  const geo = new THREE.CylinderGeometry(0.22, 0.3, 1, 6);
+  const mesh = new THREE.InstancedMesh(geo, supportMat, count);
+  const m = new THREE.Matrix4();
+  let idx = 0;
+  for (let i = 0; i < count; i++) {
+    const f = frameAt(i / count);
+    const h = f.p.y - 0.25;
+    if (h < 0.6) continue;
+    m.makeScale(1, h, 1);
+    m.setPosition(f.p.x, h / 2, f.p.z);
+    mesh.setMatrixAt(idx++, m);
+  }
+  mesh.count = idx;
+  mesh.castShadow = true;
+  track.add(mesh);
+}
+
+/* ---------------- scenery ---------------- */
+
+const trackSamples = [];
+for (let i = 0; i < 400; i++) trackSamples.push(curve.getPointAt(i / 400));
+
+function clearOfTrack(x, z, r) {
+  const r2 = r * r;
+  for (const p of trackSamples) {
+    const dx = p.x - x, dz = p.z - z;
+    if (dx * dx + dz * dz < r2) return false;
+  }
+  return true;
+}
+
+function inStation(x, z) {
+  return x > -54 && x < -36 && z > -20 && z < 38;
+}
+
+// trees
+{
+  const spots = [];
+  let guard = 0;
+  while (spots.length < 280 && guard++ < 8000) {
+    const x = -100 + Math.random() * 230;
+    const z = -70 + Math.random() * 280;
+    if (inStation(x, z) || !clearOfTrack(x, z, 11)) continue;
+    spots.push([x, z, 0.7 + Math.random() * 0.7]);
+  }
+  const trunkGeo = new THREE.CylinderGeometry(0.22, 0.34, 2.4, 5);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 1 });
+  const leafGeo = new THREE.ConeGeometry(2.3, 5.6, 7);
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true });
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, spots.length);
+  const leaves = new THREE.InstancedMesh(leafGeo, leafMat, spots.length);
+  const m = new THREE.Matrix4();
+  const col = new THREE.Color();
+  spots.forEach(([x, z, s], i) => {
+    m.makeScale(s, s, s);
+    m.setPosition(x, 1.2 * s, z);
+    trunks.setMatrixAt(i, m);
+    m.makeScale(s, s, s);
+    m.setPosition(x, 4.6 * s, z);
+    leaves.setMatrixAt(i, m);
+    leaves.setColorAt(i, col.setHSL(0.33 + (Math.random() - 0.5) * 0.06, 0.5, 0.32 + Math.random() * 0.12));
+  });
+  leaves.instanceColor.needsUpdate = true;
+  trunks.castShadow = true;
+  leaves.castShadow = true;
+  scene.add(trunks, leaves);
+}
+
+// rocks
+{
+  const geo = new THREE.DodecahedronGeometry(0.7, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x9a9a8f, roughness: 1, flatShading: true });
+  const rocks = new THREE.InstancedMesh(geo, mat, 40);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const e = new THREE.Euler();
+  const v = new THREE.Vector3();
+  const s3 = new THREE.Vector3();
+  let i = 0, guard = 0;
+  while (i < 40 && guard++ < 2000) {
+    const x = -90 + Math.random() * 210;
+    const z = -60 + Math.random() * 260;
+    if (inStation(x, z) || !clearOfTrack(x, z, 8)) continue;
+    const s = 0.4 + Math.random() * 1.3;
+    e.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    q.setFromEuler(e);
+    v.set(x, 0.3 * s, z);
+    s3.set(s, s * 0.7, s);
+    m.compose(v, q, s3);
+    rocks.setMatrixAt(i++, m);
+  }
+  rocks.count = i;
+  rocks.castShadow = true;
+  scene.add(rocks);
+}
+
+// clouds
+const clouds = [];
+{
+  const mat = new THREE.MeshBasicMaterial({ color: 0xf4f8ff });
+  const geo = new THREE.SphereGeometry(1, 10, 8);
+  for (let i = 0; i < 12; i++) {
+    const g = new THREE.Group();
+    const n = 3 + (i % 3);
+    for (let j = 0; j < n; j++) {
+      const s = new THREE.Mesh(geo, mat);
+      const sc = 4 + Math.random() * 5;
+      s.scale.set(sc, sc * 0.42, sc * 0.7);
+      s.position.set((j - n / 2) * sc * 0.9, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 3);
+      g.add(s);
+    }
+    g.position.set(-220 + Math.random() * 440, 55 + Math.random() * 40, -60 + Math.random() * 300);
+    scene.add(g);
+    clouds.push(g);
+  }
+}
+
+// station
+{
+  const platMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.9 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x2e4a6b, roughness: 0.7 });
+
+  const plat = new THREE.Mesh(new THREE.BoxGeometry(6, 0.8, 40), platMat);
+  plat.position.set(-45.5, 0.4, 8);
+  plat.castShadow = plat.receiveShadow = true;
+  scene.add(plat);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(7, 0.25, 42), roofMat);
+  roof.position.set(-45.5, 4.7, 8);
+  roof.castShadow = true;
+  scene.add(roof);
+
+  const pillarGeo = new THREE.CylinderGeometry(0.14, 0.14, 3.9, 8);
+  for (const z of [-13, 8, 29]) {
+    for (const x of [-48, -43]) {
+      const pl = new THREE.Mesh(pillarGeo, platMat);
+      pl.position.set(x, 2.75, z);
+      pl.castShadow = true;
+      scene.add(pl);
+    }
+  }
+
+  const bench = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.5, 2.6),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9 })
+  );
+  bench.position.set(-46.5, 1.05, 12);
+  bench.castShadow = true;
+  scene.add(bench);
+
+  const c = document.createElement('canvas');
+  c.width = 1024;
+  c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#101f33';
+  g.fillRect(0, 0, 1024, 256);
+  g.strokeStyle = '#e8b93c';
+  g.lineWidth = 12;
+  g.strokeRect(12, 12, 1000, 232);
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = '#ffffff';
+  g.font = 'bold 88px sans-serif';
+  g.fillText('LOOP THE LOOP', 512, 100);
+  g.fillStyle = '#9fd0ff';
+  g.font = '44px sans-serif';
+  g.fillText('FIRST-PERSON COASTER · GOOD RIDE', 512, 190);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(12, 3),
+    new THREE.MeshBasicMaterial({ map: tex })
+  );
+  sign.position.set(-49.2, 3.4, 2);
+  sign.rotation.y = Math.PI / 2;
+  scene.add(sign);
+
+  for (const z of [-3.2, 7.2]) {
+    const sp = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.2, 8), platMat);
+    sp.position.set(-49.2, 1.6, z);
+    scene.add(sp);
+  }
+}
+
+/* ---------------- first-person cart ---------------- */
+
+const cartMat = new THREE.MeshStandardMaterial({ color: 0xb02a20, roughness: 0.5, metalness: 0.2 });
+const cart = new THREE.Group();
+{
+  const postGeo = new THREE.BoxGeometry(0.09, 0.8, 0.09);
+  for (const x of [-0.52, 0.52]) {
+    const post = new THREE.Mesh(postGeo, cartMat);
+    post.position.set(x, -0.34, -1.05);
+    cart.add(post);
+  }
+  const topBar = new THREE.Mesh(new THREE.BoxGeometry(1.13, 0.09, 0.09), cartMat);
+  topBar.position.set(0, 0.07, -1.05);
+  cart.add(topBar);
+  const lapBar = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.1, 0.07), cartMat);
+  lapBar.position.set(0, -0.62, -0.62);
+  cart.add(lapBar);
+  camera.add(cart);
+}
+
+/* ---------------- sound (wind) ---------------- */
+
+const soundBtn = document.getElementById('sound');
+let actx = null, windGain = null, windFilter = null, soundOn = false;
+
+function ensureAudio() {
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  const len = actx.sampleRate * 2;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  src.loop = true;
+  windFilter = actx.createBiquadFilter();
+  windFilter.type = 'lowpass';
+  windFilter.frequency.value = 300;
+  windGain = actx.createGain();
+  windGain.gain.value = 0;
+  src.connect(windFilter);
+  windFilter.connect(windGain);
+  windGain.connect(actx.destination);
+  src.start();
+}
+
+function setSound(on) {
+  soundOn = on;
+  soundBtn.textContent = soundOn ? 'sound: on' : 'sound: off';
+  if (soundOn) ensureAudio();
+}
+
+const tipEl = document.getElementById('tip');
+window.addEventListener('pointerdown', (e) => {
+  if (e.target === soundBtn) return;
+  if (!soundOn) setSound(true);
+  if (actx && actx.state === 'suspended') actx.resume();
+  tipEl.classList.add('hidden');
+});
+soundBtn.addEventListener('click', () => {
+  setSound(!soundOn);
+  if (actx && actx.state === 'suspended') actx.resume();
+  tipEl.classList.add('hidden');
+});
+setTimeout(() => tipEl.classList.add('hidden'), 12000);
+
+/* ---------------- ride loop ---------------- */
+
+const speedEl = document.getElementById('speed');
+const lapsEl = document.getElementById('laps');
+
+const G = 36;        // effective gravity for the speed model
+const VMIN = 6;      // m/s (chain-lift creep)
+const VMAX = 56;     // m/s
+const LAUNCH = 28;   // metres of booster out of the station
+
+const clock = new THREE.Clock();
+let t = 0;           // arc-length position along the loop, 0..1
+let v = 12;          // m/s
+let lap = 1;
+let elapsed = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  // speed: gravity along the slope, drag, station booster
+  const f0 = frameAt(t);
+  let a = -f0.tan.y * G - 0.6 - 0.0035 * v * v;
+  if (t * LENGTH < LAUNCH) a += 9;
+  v = THREE.MathUtils.clamp(v + a * dt, VMIN, VMAX);
+
+  const prev = t;
+  t = (t + (v * dt) / LENGTH) % 1;
+  if (t < prev) {
+    lap++;
+    lapsEl.textContent = 'Lap ' + lap;
+  }
+
+  // camera: ride the track with a little sway and bob
+  const f = frameAt(t);
+  const sway = Math.sin(elapsed * 2.9) * 0.035 * (v / 45);
+  const bob = Math.sin(elapsed * 5.7) * 0.02;
+  camera.position.copy(f.p)
+    .addScaledVector(f.nrm, 1.15 + bob)
+    .addScaledVector(f.bin, sway)
+    .addScaledVector(f.tan, 0.4);
+  const ahead = frameAt(t + 0.004 + v * 0.00011);
+  camera.up.copy(f.nrm);
+  camera.lookAt(
+    ahead.p.x + ahead.nrm.x,
+    ahead.p.y + ahead.nrm.y,
+    ahead.p.z + ahead.nrm.z
+  );
+  camera.rotateZ(Math.sin(elapsed * 2.1) * 0.008);
+
+  // fov widens with speed
+  const fovT = 68 + 15 * ((v - VMIN) / (VMAX - VMIN));
+  camera.fov += (fovT - camera.fov) * Math.min(1, dt * 4);
+  camera.updateProjectionMatrix();
+
+  speedEl.textContent = Math.round(v * 3.6) + ' km/h';
+
+  if (actx && windGain) {
+    const g = soundOn ? 0.035 + 0.16 * (v / VMAX) : 0;
+    windGain.gain.setTargetAtTime(g, actx.currentTime, 0.15);
+    windFilter.frequency.setTargetAtTime(220 + 26 * v, actx.currentTime, 0.2);
+  }
+
+  for (const c of clouds) {
+    c.position.x += dt * 1.3;
+    if (c.position.x > 240) c.position.x = -240;
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

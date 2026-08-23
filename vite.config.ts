@@ -23,7 +23,7 @@ export default defineConfig({
     },
   },
   fmt: {
-    ignorePatterns: [...generated, '**/*.html'],
+    ignorePatterns: [...generated, '**/*.html', 'docs/codemap/**'],
     singleQuote: true,
   },
 });

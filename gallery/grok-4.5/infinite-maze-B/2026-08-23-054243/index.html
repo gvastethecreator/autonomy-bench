@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Infinite Maze</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0c10; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const CELL = 4;
+const WALL_H = 3.2;
+const GEN_AHEAD = 14;
+const KEEP_BEHIND = 8;
+const SPEED = 3.6;
+const TURN_SPEED = 2.4;
+
+const dirs = [
+  { dx: 0, dz: -1, yaw: Math.PI },
+  { dx: 1, dz: 0, yaw: Math.PI / 2 },
+  { dx: 0, dz: 1, yaw: 0 },
+  { dx: -1, dz: 0, yaw: -Math.PI / 2 },
+];
+
+function key(x, z) { return `${x},${z}`; }
+
+const open = new Map();
+const meshes = new Map();
+let frontier = [];
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1018);
+scene.fog = new THREE.FogExp2(0x0b1018, 0.055);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 120);
+camera.position.set(0, 1.55, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0x6a7a95, 0.55));
+const hemi = new THREE.HemisphereLight(0x9eb6d8, 0x1a1510, 0.45);
+scene.add(hemi);
+const lamp = new THREE.PointLight(0xffd6a0, 1.35, 28, 1.6);
+lamp.position.set(0, 2.2, 0);
+scene.add(lamp);
+
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x2a3344, roughness: 0.92, metalness: 0.05
+});
+const wallMat = new THREE.MeshStandardMaterial({
+  color: 0x4a5568, roughness: 0.85, metalness: 0.08
+});
+const accentMat = new THREE.MeshStandardMaterial({
+  color: 0x6b8cae, roughness: 0.7, metalness: 0.15, emissive: 0x1a2838, emissiveIntensity: 0.35
+});
+
+const floorGeo = new THREE.PlaneGeometry(CELL * 0.98, CELL * 0.98);
+floorGeo.rotateX(-Math.PI / 2);
+const wallGeo = new THREE.BoxGeometry(CELL * 0.98, WALL_H, 0.28);
+const pillarGeo = new THREE.BoxGeometry(0.35, WALL_H, 0.35);
+
+function hash(x, z) {
+  let h = (x * 374761393 + z * 668265263) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function carveCell(cx, cz, fromDir) {
+  const k = key(cx, cz);
+  if (open.has(k)) return open.get(k);
+
+  const exits = new Set();
+  if (fromDir !== null) exits.add((fromDir + 2) % 4);
+
+  const candidates = [0, 1, 2, 3].filter(d => !exits.has(d));
+  const r = hash(cx, cz);
+  const branchCount = r < 0.18 ? 2 : r < 0.72 ? 1 : 0;
+  const shuffled = candidates
+    .map(d => ({ d, s: hash(cx * 17 + d, cz * 31 + d) }))
+    .sort((a, b) => a.s - b.s);
+
+  for (let i = 0; i < branchCount && i < shuffled.length; i++) {
+    exits.add(shuffled[i].d);
+  }
+  if (exits.size === 1 && shuffled.length) {
+    exits.add(shuffled[0].d);
+  }
+
+  const cell = { x: cx, z: cz, exits };
+  open.set(k, cell);
+  buildMeshes(cell);
+  frontier.push(cell);
+  return cell;
+}
+
+function ensureLink(a, b, dirFromA) {
+  a.exits.add(dirFromA);
+  b.exits.add((dirFromA + 2) % 4);
+}
+
+function buildMeshes(cell) {
+  const k = key(cell.x, cell.z);
+  if (meshes.has(k)) return;
+  const group = new THREE.Group();
+  const wx = cell.x * CELL;
+  const wz = cell.z * CELL;
+
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.position.set(wx, 0, wz);
+  group.add(floor);
+
+  const useAccent = hash(cell.x, cell.z + 99) > 0.82;
+  for (let d = 0; d < 4; d++) {
+    if (cell.exits.has(d)) continue;
+    const wall = new THREE.Mesh(wallGeo, useAccent ? accentMat : wallMat);
+    const dir = dirs[d];
+    wall.position.set(
+      wx + dir.dx * (CELL * 0.5 - 0.14),
+      WALL_H * 0.5,
+      wz + dir.dz * (CELL * 0.5 - 0.14)
+    );
+    wall.rotation.y = dir.yaw;
+    group.add(wall);
+  }
+
+  for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const pillar = new THREE.Mesh(pillarGeo, wallMat);
+    pillar.position.set(wx + ox * CELL * 0.48, WALL_H * 0.5, wz + oz * CELL * 0.48);
+    group.add(pillar);
+  }
+
+  scene.add(group);
+  meshes.set(k, group);
+}
+
+function expandFrom(cell) {
+  for (const d of cell.exits) {
+    const nx = cell.x + dirs[d].dx;
+    const nz = cell.z + dirs[d].dz;
+    const nk = key(nx, nz);
+    let next = open.get(nk);
+    if (!next) {
+      next = carveCell(nx, nz, d);
+      ensureLink(cell, next, d);
+      rebuildWalls(cell);
+      rebuildWalls(next);
+    } else {
+      ensureLink(cell, next, d);
+      rebuildWalls(cell);
+      rebuildWalls(next);
+    }
+  }
+}
+
+function rebuildWalls(cell) {
+  const k = key(cell.x, cell.z);
+  const old = meshes.get(k);
+  if (old) {
+    scene.remove(old);
+    old.traverse(o => {
+      if (o.isMesh && o.geometry !== floorGeo && o.geometry !== wallGeo && o.geometry !== pillarGeo) {
+        o.geometry.dispose();
+      }
+    });
+    meshes.delete(k);
+  }
+  buildMeshes(cell);
+}
+
+function pruneFar(cx, cz) {
+  for (const [k, cell] of [...open.entries()]) {
+    const dx = cell.x - cx;
+    const dz = cell.z - cz;
+    if (Math.abs(dx) + Math.abs(dz) > KEEP_BEHIND + GEN_AHEAD) {
+      open.delete(k);
+      const m = meshes.get(k);
+      if (m) {
+        scene.remove(m);
+        meshes.delete(k);
+      }
+    }
+  }
+  frontier = frontier.filter(c => open.has(key(c.x, c.z)));
+}
+
+function generateAhead(cx, cz, facing) {
+  let cur = open.get(key(cx, cz)) || carveCell(cx, cz, null);
+  let fx = cx, fz = cz, fd = facing;
+  for (let i = 0; i < GEN_AHEAD; i++) {
+    expandFrom(cur);
+    const options = [...cur.exits];
+    let pick = options.find(d => d === fd);
+    if (pick === undefined) {
+      const prefs = options
+        .map(d => ({ d, score: d === fd ? 3 : (d === (fd + 2) % 4 ? -2 : 1) + hash(fx + d, fz + i) }))
+        .sort((a, b) => b.score - a.score);
+      pick = prefs[0]?.d ?? fd;
+    } else if (options.length > 1 && hash(fx, fz + i * 7) < 0.28) {
+      const turns = options.filter(d => d !== fd && d !== (fd + 2) % 4);
+      if (turns.length) pick = turns[Math.floor(hash(fx * 3, fz) * turns.length)];
+    }
+    fx += dirs[pick].dx;
+    fz += dirs[pick].dz;
+    fd = pick;
+    cur = open.get(key(fx, fz)) || carveCell(fx, fz, pick);
+    expandFrom(cur);
+  }
+}
+
+let cellX = 0, cellZ = 0;
+let facing = 2;
+let yaw = dirs[facing].yaw;
+let targetYaw = yaw;
+let posX = 0, posZ = 0;
+let moving = true;
+let turnQueue = null;
+let pathPlan = [];
+
+carveCell(0, 0, null);
+const start = open.get(key(0, 0));
+start.exits.add(2);
+expandFrom(start);
+generateAhead(0, 0, facing);
+posX = 0;
+posZ = 0;
+camera.position.set(posX, 1.55, posZ);
+camera.rotation.order = 'YXZ';
+camera.rotation.y = yaw;
+
+function planRoute() {
+  const cell = open.get(key(cellX, cellZ));
+  if (!cell) return;
+  expandFrom(cell);
+  const options = [...cell.exits];
+  let nextDir = options.includes(facing) ? facing : null;
+  if (options.length > 1) {
+    const turns = options.filter(d => d !== facing && d !== (facing + 2) % 4);
+    const forward = options.includes(facing);
+    const h = hash(cellX + Date.now() % 1000, cellZ);
+    if (turns.length && (!forward || h < 0.35)) {
+      nextDir = turns[Math.floor(h * turns.length) % turns.length];
+    } else if (forward) {
+      nextDir = facing;
+    } else {
+      nextDir = options[0];
+    }
+  } else if (options.length === 1) {
+    nextDir = options[0];
+  } else {
+    nextDir = facing;
+  }
+  pathPlan = [nextDir];
+}
+
+function cellCenter(cx, cz) {
+  return { x: cx * CELL, z: cz * CELL };
+}
+
+planRoute();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  generateAhead(cellX, cellZ, facing);
+  pruneFar(cellX, cellZ);
+
+  if (turnQueue !== null) {
+    const diff = ((turnQueue - yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const step = Math.sign(diff) * Math.min(Math.abs(diff), TURN_SPEED * dt);
+    yaw += step;
+    if (Math.abs(diff) < 0.01) {
+      yaw = turnQueue;
+      facing = pathPlan[0];
+      turnQueue = null;
+      pathPlan = [];
+      planRoute();
+    }
+  } else if (moving) {
+    if (!pathPlan.length) planRoute();
+    const nd = pathPlan[0];
+    if (nd !== facing) {
+      turnQueue = dirs[nd].yaw;
+      targetYaw = turnQueue;
+    } else {
+      const dest = cellCenter(cellX + dirs[nd].dx, cellZ + dirs[nd].dz);
+      const dx = dest.x - posX;
+      const dz = dest.z - posZ;
+      const dist = Math.hypot(dx, dz);
+      const step = SPEED * dt;
+      if (dist <= step) {
+        posX = dest.x;
+        posZ = dest.z;
+        cellX += dirs[nd].dx;
+        cellZ += dirs[nd].dz;
+        pathPlan = [];
+        planRoute();
+      } else {
+        posX += (dx / dist) * step;
+        posZ += (dz / dist) * step;
+      }
+    }
+  }
+
+  camera.position.x = posX;
+  camera.position.z = posZ;
+  camera.position.y = 1.55 + Math.sin(now * 0.004) * 0.02;
+  camera.rotation.y = yaw;
+  lamp.position.set(posX, 2.2, posZ);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

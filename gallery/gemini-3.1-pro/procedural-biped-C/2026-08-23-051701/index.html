@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Procedural Biped C - Gemini 3.1 Pro</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #1a1a2e; font-family: 'Inter', sans-serif; color: #fff; }
+    #ui { position: absolute; inset: 0; pointer-events: none; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; }
+    .header { font-size: 24px; font-weight: 800; letter-spacing: 1px; color: #e94560; text-shadow: 0 0 10px rgba(233, 69, 96, 0.5); }
+    .controls-panel { pointer-events: auto; background: rgba(22, 33, 62, 0.8); border: 1px solid #0f3460; backdrop-filter: blur(10px); padding: 20px; border-radius: 12px; width: 300px; }
+    .control-group { margin-bottom: 15px; }
+    label { display: flex; justify-content: space-between; font-size: 12px; color: #a1a1aa; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+    input[type=range] { width: 100%; appearance: none; background: #0f3460; height: 6px; border-radius: 3px; outline: none; }
+    input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; background: #e94560; border-radius: 50%; cursor: pointer; }
+    button { background: #e94560; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; text-transform: uppercase; letter-spacing: 1px; margin-top: 10px; }
+    button:hover { background: #ff5773; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div class="header">BIPED KINEMATICS ENGINE V3 (Level C)</div>
+    <div class="controls-panel">
+      <div class="control-group">
+        <label>Animation State <span id="state-val">WALK</span></label>
+        <input type="range" id="state" min="0" max="2" step="1" value="1">
+        <div style="display:flex; justify-content:space-between; font-size:10px; color:#555; margin-top:4px;">
+            <span>IDLE</span><span>WALK</span><span>RUN</span>
+        </div>
+      </div>
+      <div class="control-group">
+        <label>Stiffness <span id="stiffness-val">0.5</span></label>
+        <input type="range" id="stiffness" min="0" max="1" step="0.1" value="0.5">
+      </div>
+      <div class="control-group">
+        <label>Arm Swing <span id="arms-val">1.0</span></label>
+        <input type="range" id="arms" min="0" max="2" step="0.1" value="1.0">
+      </div>
+      <button id="toggle-ik">Toggle IK Targets</button>
+    </div>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+    scene.fog = new THREE.Fog(0x1a1a2e, 10, 50);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(5, 4, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 2.5, 0);
+    controls.enableDamping = true;
+
+    // Lighting
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    hemiLight.position.set(0, 20, 0);
+    scene.add(hemiLight);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.bias = -0.001;
+    scene.add(dirLight);
+    
+    const rimLight = new THREE.SpotLight(0xe94560, 2, 50, Math.PI/4, 0.5, 1);
+    rimLight.position.set(-10, 5, -10);
+    rimLight.lookAt(0, 2.5, 0);
+    scene.add(rimLight);
+
+    // Grid environment
+    const grid = new THREE.GridHelper(40, 40, 0x0f3460, 0x0f3460);
+    grid.position.y = 0.01;
+    scene.add(grid);
+    
+    const floorGeo = new THREE.PlaneGeometry(100, 100);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x16213e, roughness: 0.1, metalness: 0.5 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // Advanced Biped Rig (Robot/Mech style)
+    const bipedGroup = new THREE.Group();
+    scene.add(bipedGroup);
+
+    const materials = {
+        primary: new THREE.MeshStandardMaterial({ color: 0xe94560, metalness: 0.8, roughness: 0.2 }),
+        secondary: new THREE.MeshStandardMaterial({ color: 0x0f3460, metalness: 0.6, roughness: 0.4 }),
+        joint: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 1.0, roughness: 0.1 })
+    };
+
+    function createJoint(size) {
+        const j = new THREE.Mesh(new THREE.SphereGeometry(size, 16, 16), materials.joint);
+        j.castShadow = true;
+        return j;
+    }
+
+    // Pelvis
+    const pelvisGeo = new THREE.BoxGeometry(0.8, 0.4, 0.5);
+    const pelvis = new THREE.Mesh(pelvisGeo, materials.primary);
+    pelvis.position.y = 2.8;
+    pelvis.castShadow = true;
+    bipedGroup.add(pelvis);
+
+    // Spine & Chest
+    const spineGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.8);
+    const spine = new THREE.Mesh(spineGeo, materials.secondary);
+    spine.position.y = 0.4 + 0.2; // relative to pelvis
+    pelvis.add(spine);
+    
+    const chestGeo = new THREE.BoxGeometry(1.2, 0.6, 0.6);
+    const chest = new THREE.Mesh(chestGeo, materials.primary);
+    chest.position.y = 0.4;
+    chest.castShadow = true;
+    spine.add(chest);
+
+    // Head
+    const neck = createJoint(0.1);
+    neck.position.y = 0.4;
+    chest.add(neck);
+    
+    const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.6);
+    const head = new THREE.Mesh(headGeo, materials.secondary);
+    head.position.y = 0.35;
+    head.position.z = 0.1;
+    head.castShadow = true;
+    
+    // Visor
+    const visorGeo = new THREE.BoxGeometry(0.4, 0.15, 0.1);
+    const visorMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+    const visor = new THREE.Mesh(visorGeo, visorMat);
+    visor.position.set(0, 0.1, 0.31);
+    head.add(visor);
+    
+    neck.add(head);
+
+    // Limbs factory
+    function createArm(isLeft) {
+        const sign = isLeft ? -1 : 1;
+        const shoulder = createJoint(0.15);
+        shoulder.position.set(sign * 0.7, 0, 0);
+        chest.add(shoulder);
+        
+        const upperArm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.8, 0.2), materials.secondary);
+        upperArm.position.y = -0.4;
+        upperArm.castShadow = true;
+        shoulder.add(upperArm);
+        
+        const elbow = createJoint(0.12);
+        elbow.position.y = -0.4;
+        upperArm.add(elbow);
+        
+        const lowerArm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.7, 0.15), materials.primary);
+        lowerArm.position.y = -0.35;
+        lowerArm.castShadow = true;
+        elbow.add(lowerArm);
+        
+        return { shoulder, elbow };
+    }
+
+    function createLeg(isLeft) {
+        const sign = isLeft ? -1 : 1;
+        const hip = createJoint(0.18);
+        hip.position.set(sign * 0.3, 0, 0);
+        pelvis.add(hip);
+        
+        const upperLeg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), materials.secondary);
+        upperLeg.position.y = -0.6;
+        upperLeg.castShadow = true;
+        hip.add(upperLeg);
+        
+        const knee = createJoint(0.15);
+        knee.position.y = -0.6;
+        upperLeg.add(knee);
+        
+        const lowerLeg = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.0, 0.25), materials.primary);
+        lowerLeg.position.y = -0.5;
+        lowerLeg.castShadow = true;
+        knee.add(lowerLeg);
+        
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.15, 0.5), materials.secondary);
+        foot.position.set(0, -0.55, 0.1);
+        foot.castShadow = true;
+        lowerLeg.add(foot);
+        
+        return { hip, knee, foot, lowerLeg };
+    }
+
+    const armL = createArm(true);
+    const armR = createArm(false);
+    const legL = createLeg(true);
+    const legR = createLeg(false);
+
+    // Animation Parameters
+    let animState = 1; // 0: Idle, 1: Walk, 2: Run
+    let stiffness = 0.5;
+    let armSwing = 1.0;
+
+    // UI Listeners
+    const states = ["IDLE", "WALK", "RUN"];
+    document.getElementById('state').addEventListener('input', e => {
+        animState = parseInt(e.target.value);
+        document.getElementById('state-val').innerText = states[animState];
+    });
+    document.getElementById('stiffness').addEventListener('input', e => {
+        stiffness = parseFloat(e.target.value);
+        document.getElementById('stiffness-val').innerText = stiffness.toFixed(1);
+    });
+    document.getElementById('arms').addEventListener('input', e => {
+        armSwing = parseFloat(e.target.value);
+        document.getElementById('arms-val').innerText = armSwing.toFixed(1);
+    });
+
+    let time = 0;
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        
+        // Speed multiplier based on state
+        const speedMult = animState === 0 ? 0.5 : (animState === 1 ? 1.5 : 3.0);
+        time += 0.016 * speedMult;
+        
+        const cycleL = time;
+        const cycleR = time + Math.PI;
+
+        // Kinematics calculations blending between states
+        const walkWeight = animState === 1 ? 1 : 0;
+        const runWeight = animState === 2 ? 1 : 0;
+        const moveWeight = Math.min(1, walkWeight + runWeight);
+        const idleWeight = animState === 0 ? 1 : 0;
+        
+        // 1. Pelvis height and bounce
+        const baseHeight = 2.8;
+        const idleBounce = Math.sin(time * 2) * 0.05 * idleWeight;
+        const walkBounce = Math.abs(Math.sin(time * 2)) * 0.15 * walkWeight;
+        const runBounce = Math.abs(Math.sin(time * 2)) * 0.25 * runWeight;
+        pelvis.position.y = baseHeight + idleBounce + walkBounce + runBounce;
+        
+        // Pelvis sway and rotation
+        pelvis.rotation.z = Math.sin(time) * 0.05 * moveWeight;
+        pelvis.rotation.y = Math.sin(time) * 0.1 * moveWeight;
+        
+        // 2. Spine & Chest compensation
+        spine.rotation.z = -pelvis.rotation.z * (0.5 + stiffness * 0.5);
+        spine.rotation.x = runWeight * 0.3; // Lean forward when running
+        chest.rotation.y = -pelvis.rotation.y * 1.5; // Counter rotation
+        
+        // 3. Head stabilization
+        neck.rotation.x = -spine.rotation.x * 0.8 + Math.sin(time*0.5)*0.05*idleWeight;
+        neck.rotation.y = -chest.rotation.y * 0.5;
+
+        // 4. Legs (Procedural FK blending)
+        const stride = (walkWeight * 0.8) + (runWeight * 1.4);
+        const lift = (walkWeight * 0.4) + (runWeight * 0.8);
+        
+        // Hips
+        const hipLx = Math.sin(cycleL) * stride;
+        const hipRx = Math.sin(cycleR) * stride;
+        legL.hip.rotation.x = hipLx;
+        legR.hip.rotation.x = hipRx;
+        
+        // Knees (bend only backwards, more bend when lifting)
+        // Calculate lift phase (0 to 1 when moving forward)
+        const liftPhaseL = Math.max(0, Math.sin(cycleL));
+        const liftPhaseR = Math.max(0, Math.sin(cycleR));
+        
+        // Base bend (standing slightly bent vs straight)
+        const baseBend = lerp(0.1, 0.3, stiffness);
+        
+        legL.knee.rotation.x = -baseBend - (liftPhaseL * lift * 2);
+        legR.knee.rotation.x = -baseBend - (liftPhaseR * lift * 2);
+        
+        // Feet (try to keep parallel to ground)
+        legL.foot.rotation.x = -legL.hip.rotation.x - legL.knee.rotation.x;
+        legR.foot.rotation.x = -legR.hip.rotation.x - legR.knee.rotation.x;
+        
+        // Add ankle flick when pushing off
+        if (runWeight > 0) {
+            legL.foot.rotation.x -= Math.max(0, -Math.sin(cycleL+0.5)) * 0.5 * runWeight;
+            legR.foot.rotation.x -= Math.max(0, -Math.sin(cycleR+0.5)) * 0.5 * runWeight;
+        }
+
+        // 5. Arms
+        const armSwingAmp = ((walkWeight * 0.6) + (runWeight * 1.2)) * armSwing;
+        
+        // Shoulders
+        armL.shoulder.rotation.x = -Math.sin(cycleL) * armSwingAmp;
+        armR.shoulder.rotation.x = -Math.sin(cycleR) * armSwingAmp;
+        armL.shoulder.rotation.z = 0.1 + (stiffness * 0.2); // Hold out slightly
+        armR.shoulder.rotation.z = -0.1 - (stiffness * 0.2);
+        
+        // Elbows (bent naturally, bend more when swinging forward)
+        const elbowBase = runWeight > 0 ? -1.0 : -0.2; // Bent 90deg when running
+        const elbowSwingL = Math.max(0, -Math.sin(cycleL)) * 0.5 * armSwingAmp;
+        const elbowSwingR = Math.max(0, -Math.sin(cycleR)) * 0.5 * armSwingAmp;
+        
+        armL.elbow.rotation.x = elbowBase - elbowSwingL;
+        armR.elbow.rotation.x = elbowBase - elbowSwingR;
+
+        // Move biped in circle
+        if (moveWeight > 0) {
+            const speed = (walkWeight * 0.05) + (runWeight * 0.15);
+            bipedGroup.rotation.y -= speed * 0.02;
+            bipedGroup.position.x = Math.sin(bipedGroup.rotation.y) * 10;
+            bipedGroup.position.z = Math.cos(bipedGroup.rotation.y) * 10;
+        }
+
+        renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>
