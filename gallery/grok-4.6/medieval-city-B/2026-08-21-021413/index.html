@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Living Procedural Medieval City</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1410; }
+    canvas { display: block; }
+    #hud {
+      position: absolute; left: 16px; bottom: 16px; z-index: 2;
+      color: #f4e6c8; font: 13px/1.45 "Palatino Linotype", Palatino, Georgia, serif;
+      text-shadow: 0 1px 4px #000a; pointer-events: none; max-width: 28ch;
+    }
+    #hud b { color: #e8c56a; font-weight: 600; }
+    #hint {
+      position: absolute; right: 16px; top: 16px; z-index: 2;
+      color: #d8c8a8cc; font: 12px/1.4 Georgia, serif; text-align: right;
+      text-shadow: 0 1px 3px #000a; pointer-events: none;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="hud"></div>
+  <div id="hint">drag to orbit · scroll to zoom · click to reseed</div>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const PAL = {
+      grass: new THREE.Color(0x3d6b32),
+      grassDark: new THREE.Color(0x2d5426),
+      dirt: new THREE.Color(0x7a6544),
+      cobble: new THREE.Color(0x6e6860),
+      cobbleLite: new THREE.Color(0x8a8378),
+      stone: new THREE.Color(0x8a7d6e),
+      stoneDark: new THREE.Color(0x5a5248),
+      plaster: new THREE.Color(0xe6d8c0),
+      plasterWarm: new THREE.Color(0xead0a8),
+      timber: new THREE.Color(0x3a2416),
+      wood: new THREE.Color(0x6b4423),
+      thatch: new THREE.Color(0xc4a054),
+      tile: new THREE.Color(0x8b3a28),
+      tileDark: new THREE.Color(0x6a281c),
+      slate: new THREE.Color(0x4a5560),
+      water: new THREE.Color(0x2a5a68),
+      gold: new THREE.Color(0xc9a227),
+      clothR: new THREE.Color(0x8b1e1e),
+      clothB: new THREE.Color(0x2a4a7a),
+      clothG: new THREE.Color(0x2d5a38),
+      clothY: new THREE.Color(0xc4a030),
+      skin: new THREE.Color(0xd4a07a),
+      thatchDark: new THREE.Color(0x9a7838),
+      field: new THREE.Color(0x6b8f3a),
+      hay: new THREE.Color(0xc2a45a)
+    };
+
+    function mulberry32(a) {
+      return function () {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function shade(color, amt, rng) {
+      const c = color.clone();
+      const j = (rng() - 0.5) * amt;
+      c.offsetHSL(j * 0.04, j * 0.15, j);
+      return c;
+    }
+
+    class MeshBuilder {
+      constructor() {
+        this.pos = [];
+        this.nrm = [];
+        this.col = [];
+      }
+      tri(ax, ay, az, bx, by, bz, cx, cy, cz, color) {
+        const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+        const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+        let nx = e1y * e2z - e1z * e2y;
+        let ny = e1z * e2x - e1x * e2z;
+        let nz = e1x * e2y - e1y * e2x;
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len; ny /= len; nz /= len;
+        const r = color.r, g = color.g, b = color.b;
+        this.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+        this.nrm.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+        this.col.push(r, g, b, r, g, b, r, g, b);
+      }
+      quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, color) {
+        this.tri(ax, ay, az, bx, by, bz, cx, cy, cz, color);
+        this.tri(ax, ay, az, cx, cy, cz, dx, dy, dz, color);
+      }
+      xform(x, y, z, rotY) {
+        const c = Math.cos(rotY), s = Math.sin(rotY);
+        return [x * c - z * s, y, x * s + z * c];
+      }
+      box(cx, cy, cz, w, h, d, color, rotY = 0) {
+        const hw = w * 0.5, hh = h * 0.5, hd = d * 0.5;
+        const P = [
+          [-hw, -hh, -hd], [hw, -hh, -hd], [hw, hh, -hd], [-hw, hh, -hd],
+          [-hw, -hh,  hd], [hw, -hh,  hd], [hw, hh,  hd], [-hw, hh,  hd]
+        ].map(([x, y, z]) => {
+          const t = this.xform(x, y, z, rotY);
+          return [t[0] + cx, t[1] + cy, t[2] + cz];
+        });
+        const q = (i, j, k, l) => this.quad(...P[i], ...P[j], ...P[k], ...P[l], color);
+        q(0, 1, 2, 3); q(5, 4, 7, 6); q(4, 0, 3, 7);
+        q(1, 5, 6, 2); q(3, 2, 6, 7); q(4, 5, 1, 0);
+      }
+      roof(cx, cy, cz, w, h, d, color, rotY = 0) {
+        const hw = w * 0.5, hd = d * 0.5;
+        const T = (x, y, z) => {
+          const t = this.xform(x, y, z, rotY);
+          return [t[0] + cx, t[1] + cy, t[2] + cz];
+        };
+        const e0 = T(-hw, 0, -hd), e1 = T(hw, 0, -hd), e2 = T(hw, 0, hd), e3 = T(-hw, 0, hd);
+        const r0 = T(0, h, -hd), r1 = T(0, h, hd);
+        this.quad(...e1, ...e2, ...r1, ...r0, color);
+        this.quad(...e3, ...e0, ...r0, ...r1, color);
+        this.tri(...e0, ...e1, ...r0, color);
+        this.tri(...e2, ...e3, ...r1, color);
+      }
+      cylinder(cx, cy, cz, r, h, segs, color, rotY = 0) {
+        const y0 = cy - h * 0.5, y1 = cy + h * 0.5;
+        for (let i = 0; i < segs; i++) {
+          const a0 = (i / segs) * Math.PI * 2 + rotY;
+          const a1 = ((i + 1) / segs) * Math.PI * 2 + rotY;
+          const x0 = cx + Math.cos(a0) * r, z0 = cz + Math.sin(a0) * r;
+          const x1 = cx + Math.cos(a1) * r, z1 = cz + Math.sin(a1) * r;
+          this.quad(x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y1, z0, color);
+        }
+      }
+      cone(cx, cy, cz, r, h, segs, color) {
+        const tip = [cx, cy + h, cz];
+        for (let i = 0; i < segs; i++) {
+          const a0 = (i / segs) * Math.PI * 2;
+          const a1 = ((i + 1) / segs) * Math.PI * 2;
+          this.tri(
+            cx + Math.cos(a0) * r, cy, cz + Math.sin(a0) * r,
+            cx + Math.cos(a1) * r, cy, cz + Math.sin(a1) * r,
+            ...tip, color
+          );
+        }
+      }
+      disc(cx, cy, cz, r, segs, color, yN = 1) {
+        for (let i = 0; i < segs; i++) {
+          const a0 = (i / segs) * Math.PI * 2;
+          const a1 = ((i + 1) / segs) * Math.PI * 2;
+          if (yN > 0) {
+            this.tri(cx, cy, cz,
+              cx + Math.cos(a0) * r, cy, cz + Math.sin(a0) * r,
+              cx + Math.cos(a1) * r, cy, cz + Math.sin(a1) * r, color);
+          } else {
+            this.tri(cx, cy, cz,
+              cx + Math.cos(a1) * r, cy, cz + Math.sin(a1) * r,
+              cx + Math.cos(a0) * r, cy, cz + Math.sin(a0) * r, color);
+          }
+        }
+      }
+      build() {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(this.pos, 3));
+        g.setAttribute("normal", new THREE.Float32BufferAttribute(this.nrm, 3));
+        g.setAttribute("color", new THREE.Float32BufferAttribute(this.col, 3));
+        return g;
+      }
+    }
+
+    const CITY_R = 46;
+    const WALL_R = 50;
+    const PLAZA_R = 11;
+
+    function occupied(grid, x, z, w, d, pad = 0.6) {
+      const x0 = Math.floor(x - w * 0.5 - pad);
+      const z0 = Math.floor(z - d * 0.5 - pad);
+      const x1 = Math.ceil(x + w * 0.5 + pad);
+      const z1 = Math.ceil(z + d * 0.5 + pad);
+      for (let gz = z0; gz <= z1; gz++) {
+        for (let gx = x0; gx <= x1; gx++) {
+          if (grid.has(gx + "," + gz)) return true;
+        }
+      }
+      return false;
+    }
+    function mark(grid, x, z, w, d, pad = 0.4) {
+      const x0 = Math.floor(x - w * 0.5 - pad);
+      const z0 = Math.floor(z - d * 0.5 - pad);
+      const x1 = Math.ceil(x + w * 0.5 + pad);
+      const z1 = Math.ceil(z + d * 0.5 + pad);
+      for (let gz = z0; gz <= z1; gz++) {
+        for (let gx = x0; gx <= x1; gx++) grid.add(gx + "," + gz);
+      }
+    }
+
+    function addWindows(b, x, y, z, w, d, floors, rotY, rng) {
+      const dark = PAL.timber.clone().multiplyScalar(0.45);
+      const glow = new THREE.Color(0xc9a45a);
+      for (let f = 0; f < floors; f++) {
+        const wy = y + 0.55 + f * 1.15;
+        const count = Math.max(1, Math.floor(w / 1.15));
+        for (let i = 0; i < count; i++) {
+          const lx = -w * 0.35 + (count === 1 ? 0 : (i / (count - 1)) * w * 0.7);
+          const lit = rng() > 0.72;
+          const col = lit ? glow : dark;
+          const t = b.xform(lx, wy - y, d * 0.51, rotY);
+          b.box(x + t[0], y + t[1], z + t[2], 0.32, 0.42, 0.08, col, rotY);
+          const t2 = b.xform(lx, wy - y, -d * 0.51, rotY);
+          b.box(x + t2[0], y + t2[1], z + t2[2], 0.32, 0.42, 0.08, rng() > 0.8 ? glow : dark, rotY);
+        }
+      }
+    }
+
+    function addHouse(b, x, z, w, d, floors, rotY, rng, type) {
+      const h = floors * 1.25 + 0.35;
+      const plaster = shade(rng() > 0.45 ? PAL.plaster : PAL.plasterWarm, 0.08, rng);
+      const stone = shade(PAL.stone, 0.06, rng);
+      const timber = PAL.timber;
+      b.box(x, 0.45, z, w + 0.15, 0.9, d + 0.15, stone, rotY);
+      if (floors >= 2) {
+        b.box(x, 0.9 + (h - 0.9) * 0.5, z, w * (type === "jetty" ? 1.12 : 1), h - 0.9, d * (type === "jetty" ? 1.08 : 1), plaster, rotY);
+        const beamW = 0.12;
+        const tL = b.xform(-w * 0.48, 0, 0, rotY);
+        const tR = b.xform(w * 0.48, 0, 0, rotY);
+        b.box(x + tL[0], 1.4, z + tL[2], beamW, h - 1.0, d * 0.98, timber, rotY);
+        b.box(x + tR[0], 1.4, z + tR[2], beamW, h - 1.0, d * 0.98, timber, rotY);
+        for (let i = 0; i < 2; i++) {
+          const ly = 1.3 + i * (h - 1.4) * 0.55;
+          b.box(x, ly, z, w * 0.98, 0.1, d * 0.98, timber, rotY);
+        }
+        if (rng() > 0.4) {
+          const cross = b.xform(0, 0, d * 0.48, rotY);
+          b.box(x + cross[0], 1.6, z + cross[2], w * 0.9, h - 1.3, 0.1, timber, rotY);
+        }
+      } else {
+        b.box(x, 0.9 + (h - 0.9) * 0.5, z, w, h - 0.9, d, plaster, rotY);
+      }
+      addWindows(b, x, 0.9, z, w, d, floors, rotY, rng);
+      const roofH = 1.1 + rng() * 0.5;
+      const roofCol = type === "thatch" || floors === 1
+        ? shade(PAL.thatch, 0.05, rng)
+        : (rng() > 0.55 ? shade(PAL.tile, 0.05, rng) : shade(PAL.slate, 0.04, rng));
+      b.roof(x, 0.9 + (h - 0.9), z, w * 1.18, roofH, d * 1.12, roofCol, rotY);
+      if (rng() > 0.35) {
+        const ch = b.xform(w * 0.28, 0, d * 0.2, rotY);
+        b.box(x + ch[0], h + 0.55, z + ch[2], 0.38, 1.1, 0.38, shade(PAL.stoneDark, 0.04, rng), rotY);
+      }
+      if (type === "shop") {
+        const awn = shade(pick(rng, [PAL.clothR, PAL.clothB, PAL.clothG, PAL.clothY]), 0.04, rng);
+        const f = b.xform(0, 0, d * 0.55, rotY);
+        b.box(x + f[0], 1.35, z + f[2], w * 0.9, 0.08, 0.9, awn, rotY);
+        b.box(x + f[0], 0.7, z + f[2], 0.08, 1.2, 0.08, PAL.timber, rotY);
+      }
+      if (type === "tavern") {
+        const sign = b.xform(0, 0, d * 0.58, rotY);
+        b.box(x + sign[0], 2.1, z + sign[2], 0.7, 0.5, 0.08, PAL.wood, rotY);
+        b.box(x + sign[0], 2.1, z + sign[2], 0.45, 0.32, 0.1, PAL.clothR, rotY);
+      }
+    }
+
+    function addCathedral(b, rng) {
+      const stone = shade(PAL.stone, 0.03, rng);
+      const dark = PAL.stoneDark;
+      const roof = PAL.slate;
+      b.box(0, 3.2, -1.2, 7.2, 6.4, 14, stone, 0);
+      b.roof(0, 6.4, -1.2, 8.2, 2.8, 15, roof, 0);
+      b.box(0, 2.4, 6.6, 8.5, 4.8, 6.2, stone, 0);
+      b.box(-2.4, 7.5, 6.6, 2.4, 8.2, 2.4, stone, 0);
+      b.box(2.4, 6.2, 6.6, 2.1, 5.6, 2.1, stone, 0);
+      b.cone(-2.4, 11.5, 6.6, 1.5, 5.5, 8, roof);
+      b.cone(2.4, 9.0, 6.6, 1.3, 3.8, 8, roof);
+      b.box(-2.4, 17.2, 6.6, 0.18, 0.9, 0.18, PAL.gold, 0);
+      for (let i = -2; i <= 2; i++) {
+        b.box(i * 1.2, 3.4, 5.55, 0.7, 2.4, 0.2, dark, 0);
+      }
+      b.box(0, 1.6, 9.7, 1.8, 3.2, 0.4, dark, 0);
+      b.box(0, 4.4, 9.7, 2.6, 1.6, 0.3, dark, 0);
+      for (const s of [-1, 1]) {
+        b.box(s * 4.4, 2.0, -1, 1.4, 4.0, 10, stone, 0);
+        b.roof(s * 4.4, 4.0, -1, 1.8, 1.2, 10.5, roof, 0);
+      }
+      b.disc(0, 0.06, 0, 9.5, 24, PAL.cobble);
+    }
+
+    function addKeep(b, kx, kz, rng) {
+      const stone = shade(PAL.stoneDark, 0.04, rng);
+      b.box(kx, 4.2, kz, 9, 8.4, 9, stone, 0.12);
+      b.box(kx, 8.6, kz, 9.6, 0.7, 9.6, shade(PAL.stone, 0.03, rng), 0.12);
+      const corners = [[-4, -4], [4, -4], [-4, 4], [4, 4]];
+      for (const [dx, dz] of corners) {
+        const t = b.xform(dx, 0, dz, 0.12);
+        b.cylinder(kx + t[0], 6.5, kz + t[2], 1.35, 13, 8, stone);
+        b.cone(kx + t[0], 13, kz + t[2], 1.6, 2.2, 8, PAL.tileDark);
+      }
+      b.box(kx, 2.2, kz + 5.1, 2.2, 4.4, 1.2, PAL.timber, 0.12);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        b.box(kx + Math.cos(a) * 4.2, 9.3, kz + Math.sin(a) * 4.2, 0.7, 1.1, 0.7, stone, a);
+      }
+    }
+
+    function addWalls(b, rng, gateAngle) {
+      const segs = 48;
+      const thick = 2.4, h = 5.2;
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2;
+        const a1 = ((i + 1) / segs) * Math.PI * 2;
+        const mid = (a0 + a1) * 0.5;
+        let da = Math.abs(((mid - gateAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
+        if (da < 0.18) continue;
+        const x = Math.cos(mid) * WALL_R;
+        const z = Math.sin(mid) * WALL_R;
+        const len = WALL_R * (a1 - a0) * 1.08;
+        b.box(x, h * 0.5, z, thick, h, len, shade(PAL.stone, 0.05, rng), mid + Math.PI * 0.5);
+        b.box(x, h + 0.35, z, thick + 0.5, 0.7, len, shade(PAL.stoneDark, 0.04, rng), mid + Math.PI * 0.5);
+      }
+      const towers = 10;
+      for (let i = 0; i < towers; i++) {
+        const a = (i / towers) * Math.PI * 2 + 0.12;
+        let da = Math.abs(((a - gateAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
+        if (da < 0.22) continue;
+        const x = Math.cos(a) * WALL_R;
+        const z = Math.sin(a) * WALL_R;
+        b.cylinder(x, 4.4, z, 2.15, 8.8, 8, shade(PAL.stone, 0.04, rng));
+        b.cylinder(x, 8.9, z, 2.45, 0.7, 8, PAL.stoneDark);
+        b.cone(x, 9.2, z, 2.0, 2.4, 8, PAL.tileDark);
+        b.box(x, 10.6, z, 0.12, 1.6, 0.12, PAL.timber, a);
+      }
+      const gx = Math.cos(gateAngle) * WALL_R;
+      const gz = Math.sin(gateAngle) * WALL_R;
+      b.box(gx, 4.5, gz, 8.5, 9, 5.5, shade(PAL.stoneDark, 0.03, rng), gateAngle + Math.PI * 0.5);
+      b.box(gx, 3.2, gz, 3.4, 6.4, 1.2, PAL.timber, gateAngle + Math.PI * 0.5);
+      const bx = Math.cos(gateAngle) * (WALL_R + 6);
+      const bz = Math.sin(gateAngle) * (WALL_R + 6);
+      b.box((gx + bx) * 0.5, 0.55, (gz + bz) * 0.5, 4.2, 0.35, 8, PAL.wood, gateAngle + Math.PI * 0.5);
+    }
+
+    function addTree(b, x, z, rng) {
+      const th = 1.2 + rng() * 0.8;
+      b.cylinder(x, th * 0.5, z, 0.22 + rng() * 0.1, th, 5, PAL.wood);
+      const leaf = shade(PAL.grassDark, 0.1, rng);
+      b.cone(x, th * 0.7, z, 1.3 + rng() * 0.6, 2.4 + rng() * 1.2, 6, leaf);
+      b.cone(x, th * 1.15, z, 0.9 + rng() * 0.4, 1.8, 6, shade(PAL.grass, 0.08, rng));
+    }
+
+    function addStall(b, x, z, rotY, rng) {
+      const cloth = pick(rng, [PAL.clothR, PAL.clothB, PAL.clothG, PAL.clothY, PAL.thatch]);
+      b.box(x, 0.35, z, 1.8, 0.7, 1.2, PAL.wood, rotY);
+      b.roof(x, 1.15, z, 2.1, 0.7, 1.5, cloth, rotY);
+      b.box(x, 1.05, z, 0.08, 1.4, 0.08, PAL.timber, rotY);
+    }
+
+    function addBarrel(b, x, z, rng) {
+      b.cylinder(x, 0.4, z, 0.32, 0.8, 6, shade(PAL.wood, 0.06, rng));
+    }
+
+    function buildWorld(seed) {
+      const rng = mulberry32(seed);
+      const b = new MeshBuilder();
+      const grid = new Set();
+      const paths = [];
+      const chimneys = [];
+      const flags = [];
+      const gateAngle = Math.PI * 0.5;
+
+      b.box(0, -0.4, 0, 220, 0.8, 220, PAL.grass, 0);
+      for (let i = 0; i < 40; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = 70 + rng() * 50;
+        b.box(Math.cos(a) * r, 0.02, Math.sin(a) * r, 8 + rng() * 14, 0.08, 4 + rng() * 6,
+          rng() > 0.5 ? PAL.field : PAL.hay, a);
+      }
+
+      const moatR = WALL_R + 4.5;
+      const moatSegs = 64;
+      for (let i = 0; i < moatSegs; i++) {
+        const a = (i / moatSegs) * Math.PI * 2;
+        const da = Math.abs(((a - gateAngle + Math.PI) % (Math.PI * 2)) - Math.PI);
+        if (da < 0.16) continue;
+        b.box(Math.cos(a) * moatR, -0.15, Math.sin(a) * moatR, 3.6, 0.5, 5.2, PAL.dirt, a + Math.PI * 0.5);
+      }
+
+      addCathedral(b, rng);
+      mark(grid, 0, 0, 16, 18, 1);
+
+      const keepA = -0.7;
+      const keepR = 32;
+      const kx = Math.cos(keepA) * keepR, kz = Math.sin(keepA) * keepR;
+      addKeep(b, kx, kz, rng);
+      mark(grid, kx, kz, 14, 14, 1.5);
+
+      const radials = 6;
+      const rings = [16, 27, 38];
+      for (let i = 0; i < radials; i++) {
+        const a = (i / radials) * Math.PI * 2 + 0.18;
+        const pts = [];
+        for (let t = 0; t <= 1.001; t += 0.06) {
+          const r = lerp(PLAZA_R + 1, CITY_R - 1, t);
+          const wobble = Math.sin(t * 7 + i) * 0.8;
+          pts.push(new THREE.Vector3(Math.cos(a + wobble * 0.02) * r, 0, Math.sin(a + wobble * 0.02) * r));
+        }
+        paths.push(pts);
+        for (let p = 0; p < pts.length - 1; p++) {
+          const A = pts[p], B = pts[p + 1];
+          const mx = (A.x + B.x) * 0.5, mz = (A.z + B.z) * 0.5;
+          const dx = B.x - A.x, dz = B.z - A.z;
+          const len = Math.hypot(dx, dz);
+          const ang = Math.atan2(dx, dz);
+          b.box(mx, 0.04, mz, 2.6, 0.1, len + 0.4, shade(PAL.dirt, 0.04, rng), ang);
+        }
+      }
+      for (const ring of rings) {
+        const pts = [];
+        const n = Math.floor(ring * 0.9);
+        for (let i = 0; i <= n; i++) {
+          const a = (i / n) * Math.PI * 2;
+          const rr = ring + Math.sin(i * 0.7) * 0.6;
+          pts.push(new THREE.Vector3(Math.cos(a) * rr, 0, Math.sin(a) * rr));
+        }
+        paths.push(pts);
+        for (let p = 0; p < pts.length - 1; p++) {
+          const A = pts[p], B = pts[p + 1];
+          const mx = (A.x + B.x) * 0.5, mz = (A.z + B.z) * 0.5;
+          const dx = B.x - A.x, dz = B.z - A.z;
+          const len = Math.hypot(dx, dz);
+          const ang = Math.atan2(dx, dz);
+          b.box(mx, 0.04, mz, 2.2, 0.1, len + 0.3, shade(PAL.cobble, 0.05, rng), ang);
+        }
+      }
+
+      const gatePath = [];
+      for (let t = 0; t <= 1.001; t += 0.08) {
+        const r = lerp(CITY_R - 2, WALL_R + 10, t);
+        gatePath.push(new THREE.Vector3(Math.cos(gateAngle) * r, 0, Math.sin(gateAngle) * r));
+      }
+      paths.push(gatePath);
+      b.box(Math.cos(gateAngle) * (WALL_R + 2), 0.05, Math.sin(gateAngle) * (WALL_R + 2),
+        3.4, 0.12, 16, PAL.dirt, gateAngle + Math.PI * 0.5);
+
+      addWalls(b, rng, gateAngle);
+      flags.push({ x: Math.cos(gateAngle) * WALL_R, z: Math.sin(gateAngle) * WALL_R, h: 10.2, a: gateAngle });
+
+      for (let i = 0; i < radials; i++) {
+        const a = (i / radials) * Math.PI * 2 + 0.18;
+        for (const ring of [18, 29, 40]) {
+          for (const side of [-1, 1]) {
+            const tang = a + side * 0.09;
+            const x = Math.cos(tang) * ring;
+            const z = Math.sin(tang) * ring;
+            const distKeep = Math.hypot(x - kx, z - kz);
+            const distC = Math.hypot(x, z);
+            if (distC < 13 || distKeep < 12 || distC > CITY_R - 1.5) continue;
+            const w = 2.4 + rng() * 1.8;
+            const d = 3.0 + rng() * 1.8;
+            const facing = tang + (side > 0 ? 0 : Math.PI);
+            if (occupied(grid, x, z, w, d)) continue;
+            const floors = 1 + Math.floor(rng() * 3);
+            let type = "house";
+            if (floors === 1) type = rng() > 0.4 ? "thatch" : "house";
+            if (ring < 22 && rng() > 0.55) type = "shop";
+            if (rng() > 0.88) type = "tavern";
+            if (rng() > 0.7 && floors >= 2) type = "jetty";
+            addHouse(b, x, z, w, d, floors, facing, rng, type);
+            mark(grid, x, z, w, d);
+            if (rng() > 0.35) chimneys.push(new THREE.Vector3(x, floors * 1.25 + 2.1, z));
+          }
+        }
+      }
+
+      for (let i = 0; i < 28; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = 14 + rng() * 8;
+        const x = Math.cos(a) * r, z = Math.sin(a) * r;
+        if (Math.hypot(x, z) < 8) continue;
+        if (occupied(grid, x, z, 2, 2, 0.2)) continue;
+        addStall(b, x, z, a + Math.PI * 0.5, rng);
+      }
+      b.cylinder(0, 0.7, 2.2, 0.7, 1.4, 8, PAL.stoneDark);
+      b.cylinder(0, 1.45, 2.2, 0.85, 0.2, 8, PAL.stone);
+
+      for (let i = 0; i < 35; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = 12 + rng() * 28;
+        const x = Math.cos(a) * r, z = Math.sin(a) * r;
+        if (!occupied(grid, x, z, 0.6, 0.6, 0.1)) addBarrel(b, x, z, rng);
+      }
+
+      for (let i = 0; i < 55; i++) {
+        const a = rng() * Math.PI * 2;
+        const r = (rng() > 0.35) ? (WALL_R + 8 + rng() * 28) : (20 + rng() * 18);
+        const x = Math.cos(a) * r, z = Math.sin(a) * r;
+        if (Math.hypot(x, z) < WALL_R + 2 && Math.hypot(x, z) > CITY_R - 4) continue;
+        if (Math.hypot(x, z) < 14) continue;
+        addTree(b, x, z, rng);
+      }
+
+      const millX = Math.cos(gateAngle + 0.9) * (WALL_R + 16);
+      const millZ = Math.sin(gateAngle + 0.9) * (WALL_R + 16);
+      b.cylinder(millX, 3.2, millZ, 2.1, 6.4, 8, shade(PAL.stone, 0.04, rng));
+      b.cone(millX, 6.4, millZ, 2.6, 2.8, 8, PAL.thatchDark);
+      chimneys.push(new THREE.Vector3(millX, 8.4, millZ));
+
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        flags.push({
+          x: Math.cos(a) * WALL_R,
+          z: Math.sin(a) * WALL_R,
+          h: 11.5,
+          a
+        });
+      }
+
+      const geo = b.build();
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+      const city = new THREE.Mesh(geo, mat);
+      city.castShadow = true;
+      city.receiveShadow = true;
+
+      return { city, paths, chimneys, flags, mill: { x: millX, z: millZ }, gateAngle, kx, kz };
+    }
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setClearColor(0x87a0b4);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x9eb4c4, 0.0085);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 400);
+    camera.position.set(38, 28, 62);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 3, 0);
+    controls.maxPolarAngle = Math.PI * 0.48;
+    controls.minDistance = 12;
+    controls.maxDistance = 140;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.35;
+
+    const hemi = new THREE.HemisphereLight(0xc8d8ea, 0x4a3a28, 0.55);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffe2b0, 1.15);
+    sun.position.set(40, 55, 20);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 180;
+    sun.shadow.camera.left = -70;
+    sun.shadow.camera.right = 70;
+    sun.shadow.camera.top = 70;
+    sun.shadow.camera.bottom = -70;
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x8899bb, 0.25);
+    fill.position.set(-30, 20, -40);
+    scene.add(fill);
+
+    const waterGeo = new THREE.CircleGeometry(WALL_R + 7.5, 64);
+    waterGeo.rotateX(-Math.PI * 0.5);
+    const waterMat = new THREE.MeshPhongMaterial({
+      color: 0x2c6270, transparent: true, opacity: 0.72, shininess: 90
+    });
+    const water = new THREE.Mesh(waterGeo, waterMat);
+    water.position.y = -0.05;
+    water.receiveShadow = true;
+    scene.add(water);
+    const innerHole = new THREE.Mesh(
+      new THREE.CircleGeometry(WALL_R + 2.4, 64),
+      new THREE.MeshLambertMaterial({ color: 0x3d6b32 })
+    );
+    innerHole.rotation.x = -Math.PI * 0.5;
+    innerHole.position.y = 0.01;
+    scene.add(innerHole);
+
+    const river = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 160, 8, 24),
+      new THREE.MeshPhongMaterial({ color: 0x2a5a68, transparent: true, opacity: 0.8, shininess: 80 })
+    );
+    river.rotation.x = -Math.PI * 0.5;
+    river.position.set(-WALL_R - 18, -0.02, 10);
+    scene.add(river);
+
+    let seed = (Math.random() * 0xffffffff) >>> 0;
+    let worldGroup = new THREE.Group();
+    scene.add(worldGroup);
+
+    const peopleDummy = new THREE.Object3D();
+    const bodyGeo = new THREE.CapsuleGeometry(0.16, 0.55, 3, 6);
+    const headGeo = new THREE.SphereGeometry(0.14, 6, 6);
+    const peopleMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    let peopleMesh, headMesh, people = [];
+
+    const birdGeo = new THREE.ConeGeometry(0.18, 0.5, 4);
+    const birdMat = new THREE.MeshLambertMaterial({ color: 0x2a2420 });
+    const birds = new THREE.InstancedMesh(birdGeo, birdMat, 18);
+    birds.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(birds);
+    const birdDummy = new THREE.Object3D();
+
+    const smokeGeo = new THREE.BufferGeometry();
+    const SMOKE_N = 220;
+    const smokePos = new Float32Array(SMOKE_N * 3);
+    smokeGeo.setAttribute("position", new THREE.BufferAttribute(smokePos, 3));
+    const smokeMat = new THREE.PointsMaterial({
+      color: 0xbbb6ae, size: 0.55, transparent: true, opacity: 0.35, depthWrite: false
+    });
+    const smoke = new THREE.Points(smokeGeo, smokeMat);
+    scene.add(smoke);
+    let smokeOrigins = [];
+
+    const flagGroup = new THREE.Group();
+    scene.add(flagGroup);
+
+    const millArm = new THREE.Group();
+    scene.add(millArm);
+    const sailMat = new THREE.MeshLambertMaterial({ color: 0xe8dcc4 });
+    const poleMat = new THREE.MeshLambertMaterial({ color: 0x3a2416 });
+    for (let i = 0; i < 4; i++) {
+      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 5.2, 1.1), sailMat);
+      sail.position.y = 2.4;
+      const arm = new THREE.Group();
+      arm.rotation.z = (i * Math.PI) * 0.5;
+      arm.add(sail);
+      millArm.add(arm);
+    }
+    millArm.add(new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 1.2, 6), poleMat));
+
+    const torches = [];
+    function addTorch(x, y, z) {
+      const light = new THREE.PointLight(0xff9944, 1.4, 14, 2);
+      light.position.set(x, y, z);
+      scene.add(light);
+      torches.push(light);
+    }
+
+    const cartGeo = new THREE.BoxGeometry(1.6, 0.7, 0.95);
+    const cartMat = new THREE.MeshLambertMaterial({ color: 0x6b4423 });
+    const carts = [];
+
+    function rebuild(newSeed) {
+      seed = newSeed >>> 0;
+      worldGroup.clear();
+      while (flagGroup.children.length) flagGroup.remove(flagGroup.children[0]);
+      people = [];
+      for (const c of carts) scene.remove(c.mesh);
+      carts.length = 0;
+      for (const light of torches) scene.remove(light);
+      torches.length = 0;
+      if (peopleMesh) {
+        scene.remove(peopleMesh);
+        scene.remove(headMesh);
+      }
+
+      const built = buildWorld(seed);
+      worldGroup.add(built.city);
+      smokeOrigins = built.chimneys;
+      millArm.position.set(built.mill.x, 5.6, built.mill.z);
+
+      for (const f of built.flags) {
+        const pole = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 2.2, 0.08),
+          new THREE.MeshLambertMaterial({ color: 0x3a2416 })
+        );
+        pole.position.set(f.x, f.h, f.z);
+        const cloth = new THREE.Mesh(
+          new THREE.BoxGeometry(1.1, 0.55, 0.06),
+          new THREE.MeshLambertMaterial({ color: pick(mulberry32(seed ^ (f.x * 1000 | 0)), [0x8b1e1e, 0x2a4a7a, 0xc4a030]) })
+        );
+        cloth.position.set(0.55, 0.9, 0);
+        pole.add(cloth);
+        pole.userData.cloth = cloth;
+        flagGroup.add(pole);
+      }
+
+      addTorch(Math.cos(built.gateAngle) * WALL_R, 6.2, Math.sin(built.gateAngle) * WALL_R);
+      addTorch(built.kx + 3, 9.5, built.kz + 3);
+      addTorch(-2.4, 8, 8.5);
+
+      const COUNT = 52;
+      const colors = new Float32Array(COUNT * 3);
+      const hcolors = new Float32Array(COUNT * 3);
+      const tunics = [PAL.clothR, PAL.clothB, PAL.clothG, PAL.clothY, PAL.stoneDark, PAL.plaster];
+      for (let i = 0; i < COUNT; i++) {
+        const path = built.paths[i % built.paths.length];
+        const tunic = tunics[i % tunics.length];
+        colors[i * 3] = tunic.r; colors[i * 3 + 1] = tunic.g; colors[i * 3 + 2] = tunic.b;
+        hcolors[i * 3] = PAL.skin.r; hcolors[i * 3 + 1] = PAL.skin.g; hcolors[i * 3 + 2] = PAL.skin.b;
+        people.push({
+          path,
+          t: Math.random(),
+          speed: 0.012 + Math.random() * 0.02,
+          bob: Math.random() * Math.PI * 2
+        });
+      }
+      peopleMesh = new THREE.InstancedMesh(bodyGeo, peopleMat, COUNT);
+      peopleMesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+      peopleMesh.castShadow = true;
+      headMesh = new THREE.InstancedMesh(headGeo, peopleMat, COUNT);
+      headMesh.instanceColor = new THREE.InstancedBufferAttribute(hcolors, 3);
+      scene.add(peopleMesh);
+      scene.add(headMesh);
+
+      for (let i = 0; i < 4; i++) {
+        const mesh = new THREE.Mesh(cartGeo, cartMat);
+        mesh.castShadow = true;
+        scene.add(mesh);
+        carts.push({
+          mesh,
+          path: built.paths[(i * 3) % built.paths.length],
+          t: i * 0.2,
+          speed: 0.006 + i * 0.001
+        });
+      }
+
+      document.getElementById("hud").innerHTML =
+        `<b>Aelwick</b> · living medieval borough<br>seed ${seed.toString(16)} · click to raise a new town`;
+    }
+
+    rebuild(seed);
+
+    renderer.domElement.addEventListener("pointerdown", () => { controls.autoRotate = false; });
+    renderer.domElement.addEventListener("dblclick", () => {
+      rebuild((Math.random() * 0xffffffff) >>> 0);
+    });
+    addEventListener("click", (e) => {
+      if (e.target === renderer.domElement && e.detail === 1) {
+        /* single click reserved for orbit */
+      }
+    });
+    document.getElementById("hint").style.pointerEvents = "none";
+    addEventListener("keydown", (e) => {
+      if (e.key === "r" || e.key === "R") rebuild((Math.random() * 0xffffffff) >>> 0);
+      if (e.key === " ") { controls.autoRotate = !controls.autoRotate; e.preventDefault(); }
+    });
+    document.getElementById("hint").textContent =
+      "drag to orbit · scroll to zoom · R or double-click to reseed · space auto-rotate";
+
+    const clock = new THREE.Clock();
+    let day = 0.22;
+
+    function pathPoint(path, t) {
+      const n = path.length;
+      const u = ((t % 1) + 1) % 1;
+      const f = u * (n - 1);
+      const i = Math.floor(f);
+      const j = Math.min(i + 1, n - 1);
+      const k = f - i;
+      const a = path[i], b = path[j];
+      return {
+        x: lerp(a.x, b.x, k),
+        z: lerp(a.z, b.z, k),
+        yaw: Math.atan2(b.x - a.x, b.z - a.z)
+      };
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+      day = (day + dt * 0.008) % 1;
+      const sunA = day * Math.PI * 2;
+      const elev = Math.sin(sunA) * 0.85;
+      sun.position.set(Math.cos(sunA) * 70, 18 + Math.max(elev, 0.05) * 55, Math.sin(sunA) * 50);
+      const dusk = THREE.MathUtils.smoothstep(elev, -0.15, 0.25);
+      sun.intensity = 0.25 + dusk * 1.0;
+      hemi.intensity = 0.25 + dusk * 0.4;
+      const sky = new THREE.Color().lerpColors(new THREE.Color(0x1a2233), new THREE.Color(0x87a0b4), dusk);
+      scene.fog.color.copy(sky);
+      renderer.setClearColor(sky);
+      sun.color.setHSL(0.09 + dusk * 0.04, 0.45, 0.72 + dusk * 0.1);
+
+      for (const p of people) {
+        p.t += p.speed * dt * 4.2;
+        p.bob += dt * 10;
+      }
+      people.forEach((p, i) => {
+        const pt = pathPoint(p.path, p.t);
+        const bob = Math.abs(Math.sin(p.bob)) * 0.06;
+        peopleDummy.position.set(pt.x, 0.55 + bob, pt.z);
+        peopleDummy.rotation.set(0, pt.yaw, 0);
+        peopleDummy.updateMatrix();
+        peopleMesh.setMatrixAt(i, peopleDummy.matrix);
+        peopleDummy.position.y = 1.05 + bob;
+        peopleDummy.updateMatrix();
+        headMesh.setMatrixAt(i, peopleDummy.matrix);
+      });
+      peopleMesh.instanceMatrix.needsUpdate = true;
+      headMesh.instanceMatrix.needsUpdate = true;
+
+      for (const c of carts) {
+        c.t += c.speed * dt * 3.0;
+        const pt = pathPoint(c.path, c.t);
+        c.mesh.position.set(pt.x, 0.55, pt.z);
+        c.mesh.rotation.y = pt.yaw;
+      }
+
+      millArm.rotation.z = t * 0.7;
+
+      for (const pole of flagGroup.children) {
+        const cloth = pole.userData.cloth;
+        if (cloth) {
+          cloth.rotation.y = Math.sin(t * 2.4 + pole.position.x) * 0.35;
+          cloth.scale.x = 1 + Math.sin(t * 3.1 + pole.position.z) * 0.08;
+        }
+      }
+
+      for (let i = 0; i < birds.count; i++) {
+        const a = t * 0.35 + i * 0.7;
+        const r = 18 + (i % 5) * 4;
+        birdDummy.position.set(Math.cos(a) * r, 16 + Math.sin(a * 2 + i) * 2.5, Math.sin(a) * r);
+        birdDummy.rotation.set(0.4, -a + Math.PI * 0.5, Math.sin(t * 8 + i) * 0.4);
+        birdDummy.updateMatrix();
+        birds.setMatrixAt(i, birdDummy.matrix);
+      }
+      birds.instanceMatrix.needsUpdate = true;
+
+      const pos = smoke.geometry.attributes.position.array;
+      for (let i = 0; i < SMOKE_N; i++) {
+        const origin = smokeOrigins[i % Math.max(smokeOrigins.length, 1)] || new THREE.Vector3();
+        const life = ((t * 0.25 + i * 0.137) % 1);
+        pos[i * 3] = origin.x + Math.sin(t * 0.7 + i) * 0.35;
+        pos[i * 3 + 1] = origin.y + life * 4.5;
+        pos[i * 3 + 2] = origin.z + Math.cos(t * 0.6 + i) * 0.35;
+      }
+      smoke.geometry.attributes.position.needsUpdate = true;
+      smokeMat.opacity = 0.2 + dusk * 0.15;
+
+      water.position.y = -0.05 + Math.sin(t * 0.8) * 0.04;
+      water.material.opacity = 0.65 + Math.sin(t) * 0.05;
+      river.position.y = -0.02 + Math.sin(t * 0.9 + 1) * 0.03;
+
+      for (const light of torches) {
+        light.intensity = (1.1 - dusk * 0.7) * (1.1 + Math.sin(t * 9 + light.position.x) * 0.15);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Maze</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0c10; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(18, 22, 32, 0.92) 0%, rgba(6, 8, 12, 0.97) 100%);
+      z-index: 10; cursor: pointer; user-select: none;
+    }
+    #overlay.hidden { display: none; }
+    .panel {
+      text-align: center; color: #d8dde8; font-family: "Segoe UI", system-ui, sans-serif;
+      max-width: 420px; padding: 2rem;
+    }
+    .panel h1 {
+      font-weight: 300; letter-spacing: 0.35em; text-transform: uppercase;
+      font-size: 1.6rem; color: #e8ecf4; margin-bottom: 0.75rem;
+    }
+    .panel p { font-size: 0.95rem; line-height: 1.55; color: #9aa3b5; margin-bottom: 1.25rem; }
+    .panel .hint {
+      display: inline-block; padding: 0.55rem 1.1rem; border: 1px solid #3d4658;
+      border-radius: 2px; color: #c5cddc; font-size: 0.85rem; letter-spacing: 0.08em;
+    }
+    #hud {
+      position: fixed; left: 0; right: 0; bottom: 0; padding: 1rem 1.25rem;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      pointer-events: none; z-index: 5;
+      font-family: "Segoe UI", system-ui, sans-serif; color: rgba(210, 218, 230, 0.75);
+      font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.45));
+    }
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; width: 10px; height: 10px;
+      margin: -5px 0 0 -5px; pointer-events: none; z-index: 4; opacity: 0.55;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: #cfd6e2;
+    }
+    #crosshair::before { left: 4px; top: 0; width: 2px; height: 10px; }
+    #crosshair::after { left: 0; top: 4px; width: 10px; height: 2px; }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <div class="panel">
+      <h1>Infinite Maze</h1>
+      <p>An endless stone labyrinth. Click to enter. Use WASD to move, mouse to look, Shift to sprint, Space to jump.</p>
+      <span class="hint">Click to start</span>
+    </div>
+  </div>
+  <div id="crosshair"></div>
+  <div id="hud">
+    <span id="posLabel">—</span>
+    <span id="chunkLabel">—</span>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+/* ── Tunables ─────────────────────────────────────────────── */
+const CELL = 4;
+const WALL_H = 3.2;
+const CHUNK = 8;
+const LOAD_R = 2;
+const UNLOAD_R = 3;
+const PLAYER_R = 0.35;
+const EYE = 1.65;
+const WALK = 6.5;
+const SPRINT = 11;
+const GRAVITY = 22;
+const JUMP = 7.5;
+const FOG_NEAR = 8;
+const FOG_FAR = 42;
+
+/* ── Deterministic noise / hashing ─────────────────────────── */
+function hash2(x, z) {
+  let n = (x * 374761393) ^ (z * 668265263);
+  n = (n ^ (n >>> 13)) * 1274126177;
+  return (n ^ (n >>> 16)) >>> 0;
+}
+function rand01(x, z, salt = 0) {
+  return (hash2(x + salt * 97, z + salt * 193) % 10000) / 10000;
+}
+
+/** Perfect maze via recursive backtracker seeded per world-region. */
+function carveMaze(seedX, seedZ, w, h) {
+  const W = w * 2 + 1;
+  const H = h * 2 + 1;
+  const grid = Array.from({ length: H }, () => Array(W).fill(1));
+  const stack = [];
+  const sx = 1, sy = 1;
+  grid[sy][sx] = 0;
+  stack.push([sx, sy]);
+
+  const dirs = [[2, 0], [-2, 0], [0, 2], [0, -2]];
+  while (stack.length) {
+    const [cx, cy] = stack[stack.length - 1];
+    const order = dirs
+      .map((d, i) => ({ d, r: rand01(seedX + cx, seedZ + cy, i + stack.length) }))
+      .sort((a, b) => a.r - b.r);
+    let carved = false;
+    for (const { d } of order) {
+      const nx = cx + d[0], ny = cy + d[1];
+      if (nx > 0 && ny > 0 && nx < W - 1 && ny < H - 1 && grid[ny][nx] === 1) {
+        grid[cy + d[1] / 2][cx + d[0] / 2] = 0;
+        grid[ny][nx] = 0;
+        stack.push([nx, ny]);
+        carved = true;
+        break;
+      }
+    }
+    if (!carved) stack.pop();
+  }
+
+  // Open passages toward neighboring chunks for seamlessness
+  const midX = Math.floor(W / 2);
+  const midY = Math.floor(H / 2);
+  if (rand01(seedX, seedZ, 11) > 0.25) { grid[0][midX] = 0; grid[1][midX] = 0; }
+  if (rand01(seedX, seedZ, 12) > 0.25) { grid[H - 1][midX] = 0; grid[H - 2][midX] = 0; }
+  if (rand01(seedX, seedZ, 13) > 0.25) { grid[midY][0] = 0; grid[midY][1] = 0; }
+  if (rand01(seedX, seedZ, 14) > 0.25) { grid[midY][W - 1] = 0; grid[midY][W - 2] = 0; }
+
+  // Occasional loops for variety
+  for (let i = 0; i < 6; i++) {
+    const rx = 1 + Math.floor(rand01(seedX, seedZ, 50 + i) * (W - 2));
+    const ry = 1 + Math.floor(rand01(seedX, seedZ, 70 + i) * (H - 2));
+    if (rx % 2 === 1 || ry % 2 === 1) grid[ry][rx] = 0;
+  }
+  return grid;
+}
+
+/* ── Procedural textures ───────────────────────────────────── */
+function makeCanvas(size) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  return c;
+}
+
+function stoneTexture(seed, warm = false) {
+  const size = 256;
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  const base = warm ? [92, 78, 64] : [68, 74, 86];
+  ctx.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 1800; i++) {
+    const x = (hash2(seed, i) % size);
+    const y = (hash2(seed + 3, i * 7) % size);
+    const s = 1 + (hash2(seed + 9, i) % 4);
+    const v = (hash2(seed + 17, i) % 40) - 20;
+    ctx.fillStyle = `rgba(${base[0] + v},${base[1] + v},${base[2] + v},${0.15 + (hash2(i, seed) % 30) / 100})`;
+    ctx.fillRect(x, y, s, s);
+  }
+
+  // Mortar lines
+  ctx.strokeStyle = 'rgba(30, 32, 40, 0.45)';
+  ctx.lineWidth = 2;
+  const brickH = 32, brickW = 64;
+  for (let row = 0; row < size / brickH; row++) {
+    const y = row * brickH;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y);
+    ctx.stroke();
+    const off = (row % 2) * (brickW / 2);
+    for (let x = -brickW; x < size + brickW; x += brickW) {
+      ctx.beginPath();
+      ctx.moveTo(x + off, y);
+      ctx.lineTo(x + off, y + brickH);
+      ctx.stroke();
+    }
+  }
+
+  // Subtle moss / wear
+  for (let i = 0; i < 40; i++) {
+    const x = hash2(seed + 100, i) % size;
+    const y = hash2(seed + 200, i) % size;
+    const r = 8 + (hash2(seed, i + 5) % 18);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, warm ? 'rgba(70, 90, 50, 0.25)' : 'rgba(50, 70, 55, 0.22)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function floorTexture() {
+  const size = 256;
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#3a3e48';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 2500; i++) {
+    const x = (Math.random() * size) | 0;
+    const y = (Math.random() * size) | 0;
+    const v = (Math.random() * 30) | 0;
+    ctx.fillStyle = `rgba(${50 + v},${52 + v},${58 + v},0.35)`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+  // Flagstone cracks
+  ctx.strokeStyle = 'rgba(20, 22, 28, 0.5)';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 12; i++) {
+    ctx.beginPath();
+    let x = Math.random() * size, y = Math.random() * size;
+    ctx.moveTo(x, y);
+    for (let j = 0; j < 5; j++) {
+      x += (Math.random() - 0.5) * 60;
+      y += (Math.random() - 0.5) * 60;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  tex.repeat.set(2, 2);
+  return tex;
+}
+
+function ceilingTexture() {
+  const size = 128;
+  const c = makeCanvas(size);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#2a2e38';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 800; i++) {
+    const x = (Math.random() * size) | 0;
+    const y = (Math.random() * size) | 0;
+    const v = (Math.random() * 20) | 0;
+    ctx.fillStyle = `rgba(${35 + v},${38 + v},${45 + v},0.4)`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.repeat.set(3, 3);
+  return tex;
+}
+
+/* ── Scene setup ───────────────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e14);
+scene.fog = new THREE.Fog(0x0b0e14, FOG_NEAR, FOG_FAR);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.08, 80);
+camera.position.set(CELL * 1.5, EYE, CELL * 1.5);
+
+const controls = new PointerLockControls(camera, document.body);
+scene.add(controls.getObject());
+
+const ambient = new THREE.AmbientLight(0x6a7388, 0.35);
+scene.add(ambient);
+const hemi = new THREE.HemisphereLight(0x8890a8, 0x2a2e38, 0.45);
+scene.add(hemi);
+
+const torch = new THREE.PointLight(0xffb070, 1.6, 18, 1.6);
+torch.castShadow = true;
+torch.shadow.mapSize.set(512, 512);
+torch.shadow.bias = -0.002;
+scene.add(torch);
+
+const fillLight = new THREE.PointLight(0x8090c0, 0.35, 14, 2);
+scene.add(fillLight);
+
+/* Shared materials */
+const wallMaps = [stoneTexture(1, false), stoneTexture(2, true), stoneTexture(3, false)];
+const wallMats = wallMaps.map((map) => new THREE.MeshStandardMaterial({
+  map,
+  roughness: 0.88,
+  metalness: 0.04,
+  color: 0xc8cdd8,
+}));
+const floorMat = new THREE.MeshStandardMaterial({
+  map: floorTexture(),
+  roughness: 0.92,
+  metalness: 0.02,
+  color: 0xb0b6c2,
+});
+const ceilMat = new THREE.MeshStandardMaterial({
+  map: ceilingTexture(),
+  roughness: 0.95,
+  metalness: 0.0,
+  color: 0x8a909c,
+});
+
+const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, CELL);
+const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
+const ceilGeo = new THREE.PlaneGeometry(CELL, CELL);
+
+/* Torch fixtures (emissive orbs hanging in corridors) */
+const lampGeo = new THREE.SphereGeometry(0.08, 8, 8);
+const lampMat = new THREE.MeshStandardMaterial({
+  color: 0xffcc88,
+  emissive: 0xff9944,
+  emissiveIntensity: 2.2,
+  roughness: 0.4,
+});
+
+/* ── Chunk system ──────────────────────────────────────────── */
+const chunks = new Map();
+const solid = new Set(); // world cell keys that are walls
+
+function key(cx, cz) { return `${cx},${cz}`; }
+function cellKey(ix, iz) { return `${ix},${iz}`; }
+
+function worldToCell(x, z) {
+  return [Math.floor(x / CELL), Math.floor(z / CELL)];
+}
+
+function isWallAt(wx, wz) {
+  const [ix, iz] = worldToCell(wx, wz);
+  return solid.has(cellKey(ix, iz));
+}
+
+function buildChunk(cx, cz) {
+  const group = new THREE.Group();
+  group.userData = { cx, cz };
+
+  // Maze grid is (CHUNK*2+1) cells; place it so chunks abut
+  const maze = carveMaze(cx * 1009, cz * 917, CHUNK, CHUNK);
+  const W = maze[0].length;
+  const H = maze.length;
+  const originX = cx * CHUNK * 2;
+  const originZ = cz * CHUNK * 2;
+
+  const lamps = [];
+
+  for (let gz = 0; gz < H; gz++) {
+    for (let gx = 0; gx < W; gx++) {
+      const ix = originX + gx;
+      const iz = originZ + gz;
+      const px = ix * CELL + CELL / 2;
+      const pz = iz * CELL + CELL / 2;
+
+      if (maze[gz][gx] === 1) {
+        solid.add(cellKey(ix, iz));
+        const mat = wallMats[(hash2(ix, iz) % wallMats.length)];
+        const wall = new THREE.Mesh(wallGeo, mat);
+        wall.position.set(px, WALL_H / 2, pz);
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        // Slight UV variety via rotation on Y for some walls
+        if (hash2(ix + 1, iz) % 3 === 0) wall.rotation.y = Math.PI / 2;
+        group.add(wall);
+      } else {
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(px, 0, pz);
+        floor.receiveShadow = true;
+        group.add(floor);
+
+        const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set(px, WALL_H, pz);
+        group.add(ceil);
+
+        // Sparse corridor lamps
+        if (rand01(ix, iz, 33) > 0.92) {
+          const lamp = new THREE.Mesh(lampGeo, lampMat);
+          lamp.position.set(px, WALL_H - 0.35, pz);
+          group.add(lamp);
+          const pl = new THREE.PointLight(0xffa060, 0.55, 10, 2);
+          pl.position.copy(lamp.position);
+          group.add(pl);
+          lamps.push(pl);
+        }
+
+        // Occasional pillar detail in open junctions
+        if (rand01(ix, iz, 44) > 0.97) {
+          const pillar = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.18, 0.22, WALL_H * 0.95, 8),
+            wallMats[0]
+          );
+          pillar.position.set(px + 0.9, WALL_H * 0.475, pz + 0.9);
+          pillar.castShadow = true;
+          group.add(pillar);
+        }
+      }
+    }
+  }
+
+  // Soft edge connector floors where openings meet (already carved)
+  scene.add(group);
+  chunks.set(key(cx, cz), { group, originX, originZ, W, H, lamps });
+}
+
+function unloadChunk(cx, cz) {
+  const k = key(cx, cz);
+  const ch = chunks.get(k);
+  if (!ch) return;
+  const { originX, originZ, W, H, group } = ch;
+  for (let gz = 0; gz < H; gz++) {
+    for (let gx = 0; gx < W; gx++) {
+      solid.delete(cellKey(originX + gx, originZ + gz));
+    }
+  }
+  scene.remove(group);
+  group.traverse((o) => {
+    if (o.isLight && o !== torch && o !== fillLight && o !== ambient && o !== hemi) {
+      // disposed with group removal
+    }
+  });
+  chunks.delete(k);
+}
+
+function syncChunks(px, pz) {
+  const [ix, iz] = worldToCell(px, pz);
+  // Maze cells: chunk covers CHUNK*2+1 cells starting at cx*CHUNK*2
+  const pcx = Math.floor(ix / (CHUNK * 2));
+  const pcz = Math.floor(iz / (CHUNK * 2));
+
+  for (let dz = -LOAD_R; dz <= LOAD_R; dz++) {
+    for (let dx = -LOAD_R; dx <= LOAD_R; dx++) {
+      const cx = pcx + dx, cz = pcz + dz;
+      if (!chunks.has(key(cx, cz))) buildChunk(cx, cz);
+    }
+  }
+
+  for (const [k, ch] of [...chunks.entries()]) {
+    const { cx, cz } = ch.group.userData;
+    if (Math.abs(cx - pcx) > UNLOAD_R || Math.abs(cz - pcz) > UNLOAD_R) {
+      unloadChunk(cx, cz);
+    }
+  }
+
+  return { pcx, pcz, ix, iz };
+}
+
+/* Ensure spawn is open */
+buildChunk(0, 0);
+{
+  // Find a nearby open cell near origin
+  let placed = false;
+  for (let r = 0; r < 12 && !placed; r++) {
+    for (let dz = -r; dz <= r && !placed; dz++) {
+      for (let dx = -r; dx <= r && !placed; dx++) {
+        if (!solid.has(cellKey(dx, dz))) {
+          controls.getObject().position.set(dx * CELL + CELL / 2, EYE, dz * CELL + CELL / 2);
+          placed = true;
+        }
+      }
+    }
+  }
+}
+
+/* ── Input / physics ───────────────────────────────────────── */
+const keys = Object.create(null);
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+let canJump = false;
+let bobPhase = 0;
+
+document.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+});
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+const overlay = document.getElementById('overlay');
+overlay.addEventListener('click', () => controls.lock());
+controls.addEventListener('lock', () => overlay.classList.add('hidden'));
+controls.addEventListener('unlock', () => overlay.classList.remove('hidden'));
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function collideAxis(pos, next, axis) {
+  const r = PLAYER_R;
+  const samples = [
+    [next.x - r, next.z - r],
+    [next.x + r, next.z - r],
+    [next.x - r, next.z + r],
+    [next.x + r, next.z + r],
+    [next.x, next.z],
+  ];
+  for (const [sx, sz] of samples) {
+    if (isWallAt(sx, sz)) {
+      if (axis === 'x') next.x = pos.x;
+      else next.z = pos.z;
+      return true;
+    }
+  }
+  return false;
+}
+
+const clock = new THREE.Clock();
+const posLabel = document.getElementById('posLabel');
+const chunkLabel = document.getElementById('chunkLabel');
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const obj = controls.getObject();
+
+  if (controls.isLocked) {
+    const sprint = keys['ShiftLeft'] || keys['ShiftRight'];
+    const speed = sprint ? SPRINT : WALK;
+
+    velocity.x -= velocity.x * 10 * dt;
+    velocity.z -= velocity.z * 10 * dt;
+    velocity.y -= GRAVITY * dt;
+
+    direction.set(0, 0, 0);
+    if (keys['KeyW']) direction.z -= 1;
+    if (keys['KeyS']) direction.z += 1;
+    if (keys['KeyA']) direction.x -= 1;
+    if (keys['KeyD']) direction.x += 1;
+    if (direction.lengthSq() > 0) direction.normalize();
+
+    const forward = new THREE.Vector3();
+    controls.getDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+    const wish = new THREE.Vector3()
+      .addScaledVector(forward, -direction.z)
+      .addScaledVector(right, direction.x);
+
+    if (wish.lengthSq() > 0) {
+      wish.normalize();
+      velocity.x += wish.x * speed * 18 * dt;
+      velocity.z += wish.z * speed * 18 * dt;
+    }
+
+    if (keys['Space'] && canJump) {
+      velocity.y = JUMP;
+      canJump = false;
+    }
+
+    const next = obj.position.clone();
+    next.x += velocity.x * dt;
+    collideAxis(obj.position, next, 'x');
+    next.z += velocity.z * dt;
+    collideAxis(obj.position, next, 'z');
+    next.y += velocity.y * dt;
+
+    if (next.y < EYE) {
+      next.y = EYE;
+      velocity.y = 0;
+      canJump = true;
+    }
+
+    obj.position.copy(next);
+
+    // Head bob
+    const moving = wish.lengthSq() > 0.01 && canJump;
+    if (moving) {
+      bobPhase += dt * (sprint ? 14 : 9);
+      camera.position.y = EYE + Math.sin(bobPhase) * 0.045;
+    } else {
+      camera.position.y += (EYE - camera.position.y) * Math.min(1, 8 * dt);
+    }
+  }
+
+  // Player-mounted lighting
+  torch.position.copy(obj.position);
+  torch.position.y += 0.2;
+  fillLight.position.copy(obj.position);
+  fillLight.position.y += 0.8;
+
+  const info = syncChunks(obj.position.x, obj.position.z);
+  posLabel.textContent = `x ${obj.position.x.toFixed(1)}  z ${obj.position.z.toFixed(1)}`;
+  chunkLabel.textContent = `cell ${info.ix},${info.iz}  ·  chunk ${info.pcx},${info.pcz}  ·  loaded ${chunks.size}`;
+
+  // Subtle torch flicker
+  torch.intensity = 1.45 + Math.sin(performance.now() * 0.008) * 0.12
+    + Math.sin(performance.now() * 0.023) * 0.08;
+
+  renderer.render(scene, camera);
+}
+
+animate();
+  </script>
+</body>
+</html>

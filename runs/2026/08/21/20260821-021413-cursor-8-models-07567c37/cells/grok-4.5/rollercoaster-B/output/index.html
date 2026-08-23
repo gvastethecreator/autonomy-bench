@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>First-Person Rollercoaster</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a1628; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      color: rgba(255, 255, 255, 0.85);
+      font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+      pointer-events: none;
+      user-select: none;
+    }
+    #hud strong { color: #f5d76e; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="hud">First-person continuous ride · <strong>Space</strong> pause · scroll to change speed</div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87b5e0);
+    scene.fog = new THREE.FogExp2(0x9ec5e8, 0.0018);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // --- Lighting ---
+    scene.add(new THREE.AmbientLight(0xb8d4f0, 0.55));
+    const sun = new THREE.DirectionalLight(0xfff2d6, 1.15);
+    sun.position.set(80, 140, 40);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 400;
+    sun.shadow.camera.left = -120;
+    sun.shadow.camera.right = 120;
+    sun.shadow.camera.top = 120;
+    sun.shadow.camera.bottom = -120;
+    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0x9ecfff, 0x4a7a3a, 0.35));
+
+    // --- Sky dome ---
+    const skyGeo = new THREE.SphereGeometry(900, 32, 16);
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x2a6bb5) },
+        bottomColor: { value: new THREE.Color(0xc8e4f8) },
+        offset: { value: 40 },
+        exponent: { value: 0.55 }
+      },
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        uniform float offset;
+        uniform float exponent;
+        varying vec3 vWorldPosition;
+        void main() {
+          float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
+          gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+        }
+      `
+    });
+    scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+    // --- Ground ---
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(350, 64),
+      new THREE.MeshStandardMaterial({ color: 0x3d6b35, roughness: 0.95, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Soft hills
+    const hillMat = new THREE.MeshStandardMaterial({ color: 0x457a3c, roughness: 0.92, metalness: 0.02 });
+    for (let i = 0; i < 18; i++) {
+      const r = 8 + Math.random() * 22;
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), hillMat);
+      const ang = (i / 18) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = 90 + Math.random() * 160;
+      hill.position.set(Math.cos(ang) * dist, r * 0.25 - 2, Math.sin(ang) * dist);
+      hill.scale.y = 0.35 + Math.random() * 0.25;
+      hill.receiveShadow = true;
+      hill.castShadow = true;
+      scene.add(hill);
+    }
+
+    // Trees
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c3a22, roughness: 0.9 });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0x2f6b2a, roughness: 0.85 });
+    for (let i = 0; i < 60; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 40 + Math.random() * 200;
+      const x = Math.cos(ang) * dist;
+      const z = Math.sin(ang) * dist;
+      if (Math.hypot(x, z) < 35) continue;
+      const group = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.4, 3.5, 6), trunkMat);
+      trunk.position.y = 1.75;
+      trunk.castShadow = true;
+      group.add(trunk);
+      const canopy = new THREE.Mesh(new THREE.ConeGeometry(2.2, 5, 7), leafMat);
+      canopy.position.y = 5;
+      canopy.castShadow = true;
+      group.add(canopy);
+      group.position.set(x, 0, z);
+      scene.add(group);
+    }
+
+    // --- Roller coaster path (closed loop) ---
+    const pathPoints = [
+      new THREE.Vector3(0, 8, 40),
+      new THREE.Vector3(25, 10, 30),
+      new THREE.Vector3(45, 22, 10),
+      new THREE.Vector3(50, 38, -20),
+      new THREE.Vector3(30, 48, -45),
+      new THREE.Vector3(0, 42, -55),
+      new THREE.Vector3(-28, 28, -48),
+      new THREE.Vector3(-48, 18, -20),
+      new THREE.Vector3(-52, 12, 15),
+      new THREE.Vector3(-35, 55, 35),
+      new THREE.Vector3(-10, 70, 20),
+      new THREE.Vector3(15, 62, -5),
+      new THREE.Vector3(35, 40, -25),
+      new THREE.Vector3(40, 18, -5),
+      new THREE.Vector3(28, 10, 20),
+      new THREE.Vector3(10, 8, 35)
+    ];
+    const curve = new THREE.CatmullRomCurve3(pathPoints, true, 'catmullrom', 0.45);
+    const trackLength = curve.getLength();
+
+    // Track visuals
+    const railOffset = 0.55;
+    const railGeo = new THREE.TubeGeometry(curve, 400, 0.08, 8, true);
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0xc0c8d0,
+      metalness: 0.85,
+      roughness: 0.25
+    });
+
+    function offsetCurve(side) {
+      const pts = [];
+      const N = 320;
+      const up = new THREE.Vector3(0, 1, 0);
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const p = curve.getPointAt(t);
+        const tangent = curve.getTangentAt(t).normalize();
+        const normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+        if (normal.lengthSq() < 0.001) {
+          normal.set(1, 0, 0);
+        }
+        const binormal = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+        pts.push(p.clone().addScaledVector(normal, side * railOffset).addScaledVector(binormal, -0.05));
+      }
+      return new THREE.CatmullRomCurve3(pts, true);
+    }
+
+    const leftRail = new THREE.Mesh(
+      new THREE.TubeGeometry(offsetCurve(-1), 400, 0.07, 6, true),
+      railMat
+    );
+    leftRail.castShadow = true;
+    scene.add(leftRail);
+
+    const rightRail = new THREE.Mesh(
+      new THREE.TubeGeometry(offsetCurve(1), 400, 0.07, 6, true),
+      railMat
+    );
+    rightRail.castShadow = true;
+    scene.add(rightRail);
+
+    // Crossties + center spine
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.9, metalness: 0.05 });
+    const spineMat = new THREE.MeshStandardMaterial({ color: 0x333840, metalness: 0.6, roughness: 0.4 });
+    const tieGeo = new THREE.BoxGeometry(railOffset * 2.2, 0.08, 0.22);
+    const spineGeo = new THREE.BoxGeometry(0.12, 0.06, 0.5);
+    const up = new THREE.Vector3(0, 1, 0);
+    const tieCount = 180;
+
+    for (let i = 0; i < tieCount; i++) {
+      const t = i / tieCount;
+      const p = curve.getPointAt(t);
+      const tangent = curve.getTangentAt(t).normalize();
+      let normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+      if (normal.lengthSq() < 0.001) normal.set(1, 0, 0);
+      const binormal = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+      const tie = new THREE.Mesh(tieGeo, tieMat);
+      tie.position.copy(p).addScaledVector(binormal, -0.12);
+      tie.quaternion.setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(normal, binormal, tangent)
+      );
+      tie.castShadow = true;
+      scene.add(tie);
+
+      if (i % 2 === 0) {
+        const spine = new THREE.Mesh(spineGeo, spineMat);
+        spine.position.copy(p).addScaledVector(binormal, -0.18);
+        spine.quaternion.copy(tie.quaternion);
+        scene.add(spine);
+      }
+
+      // Support columns under elevated sections
+      if (p.y > 12 && i % 6 === 0) {
+        const h = p.y - 0.5;
+        const col = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.28, h, 6),
+          new THREE.MeshStandardMaterial({ color: 0x555c66, metalness: 0.5, roughness: 0.45 })
+        );
+        col.position.set(p.x, h / 2, p.z);
+        col.castShadow = true;
+        scene.add(col);
+      }
+    }
+
+    // Station platform
+    const platform = new THREE.Mesh(
+      new THREE.BoxGeometry(14, 1.2, 8),
+      new THREE.MeshStandardMaterial({ color: 0x6b5a48, roughness: 0.85 })
+    );
+    platform.position.set(0, 6.6, 42);
+    platform.receiveShadow = true;
+    platform.castShadow = true;
+    scene.add(platform);
+
+    // Decorative coaster frame near station
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xc44536, metalness: 0.35, roughness: 0.45 });
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(6, 0.35, 8, 24, Math.PI), frameMat);
+    arch.rotation.z = Math.PI;
+    arch.position.set(0, 14, 40);
+    scene.add(arch);
+
+    // --- Ride state ---
+    let progress = 0;
+    let speed = 0.045; // fraction of track per second
+    let paused = false;
+    let lastTime = performance.now();
+
+    const lookAhead = 0.012;
+    const eyeHeight = 0.85;
+    const camPos = new THREE.Vector3();
+    const camTarget = new THREE.Vector3();
+    const camUp = new THREE.Vector3(0, 1, 0);
+
+    function frameCamera(t) {
+      const t0 = ((t % 1) + 1) % 1;
+      const t1 = (t0 + lookAhead) % 1;
+      const p0 = curve.getPointAt(t0);
+      const p1 = curve.getPointAt(t1);
+      const tangent = curve.getTangentAt(t0).normalize();
+      let normal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+      if (normal.lengthSq() < 0.001) normal.set(1, 0, 0);
+      const binormal = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+
+      camPos.copy(p0).addScaledVector(binormal, eyeHeight);
+      camTarget.copy(p1).addScaledVector(binormal, eyeHeight * 0.9);
+      camUp.copy(binormal);
+
+      camera.position.copy(camPos);
+      camera.up.copy(camUp);
+      camera.lookAt(camTarget);
+    }
+
+    // Speed varies slightly with height (gravity feel)
+    function speedAt(t) {
+      const y = curve.getPointAt(((t % 1) + 1) % 1).y;
+      const base = speed;
+      const gravityBoost = THREE.MathUtils.clamp((55 - y) / 80, -0.35, 0.55);
+      return Math.max(0.018, base * (1 + gravityBoost));
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        paused = !paused;
+      }
+    });
+
+    window.addEventListener('wheel', (e) => {
+      speed = THREE.MathUtils.clamp(speed - e.deltaY * 0.00004, 0.015, 0.12);
+    }, { passive: true });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    frameCamera(0);
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+
+      if (!paused) {
+        progress = (progress + speedAt(progress) * dt) % 1;
+      }
+      frameCamera(progress);
+      renderer.render(scene, camera);
+    }
+
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

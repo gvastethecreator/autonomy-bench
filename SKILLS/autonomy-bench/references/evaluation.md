@@ -6,14 +6,14 @@ First establish whether the output loaded and whether the requested core experie
 
 ## Six axes (0–5)
 
-| Axis | 0 | 3 | 5 |
-| --- | --- | --- | --- |
-| Completion | unusable/missing | core task works | complete and resilient |
-| Autonomy | no useful inference | sensible unspecified decisions | strong independent product/technical judgment |
-| Technical quality | broken/fragile | competent | robust, efficient, well-structured for scope |
-| UX/Visual quality | confusing/raw | usable and coherent | highly finished and responsive |
-| Ambition | bare minimum | meaningful extras | unusually capable without losing focus |
-| Coherence | contradictory/noisy | mostly consistent | every major choice reinforces the experience |
+| Axis              | 0                   | 3                              | 5                                             |
+| ----------------- | ------------------- | ------------------------------ | --------------------------------------------- |
+| Completion        | unusable/missing    | core task works                | complete and resilient                        |
+| Autonomy          | no useful inference | sensible unspecified decisions | strong independent product/technical judgment |
+| Technical quality | broken/fragile      | competent                      | robust, efficient, well-structured for scope  |
+| UX/Visual quality | confusing/raw       | usable and coherent            | highly finished and responsive                |
+| Ambition          | bare minimum        | meaningful extras              | unusually capable without losing focus        |
+| Coherence         | contradictory/noisy | mostly consistent              | every major choice reinforces the experience  |
 
 ## Blind review
 

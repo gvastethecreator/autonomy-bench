@@ -11,12 +11,15 @@
 ## Adapters
 
 ### manual
+
 Copy `prompt.md` into a clean model conversation. Save the returned code/files exactly as produced. Fill only facts visible in the UI. If the UI does not expose the effective route, tokens, or tools, record `not captured`.
 
 ### agent
-One new worker or CLI process per cell. Packet-only context is preferred. Record the isolation adapter and evidence. Do not pass this coordinator skill unless it is itself under test.
+
+One new worker or CLI process per cell. Packet-only context is preferred. Record the isolation adapter and evidence. Record `harness` as the program that ran the worker. Do not pass this coordinator skill unless it is itself under test.
 
 ### prototype-lab
+
 Use when browser evidence, comparison hubs, proof loops, or portable packs justify the extra machinery. Export one spec per benchmark + prompt level so model/attempt variants share one invariant prompt.
 
 ## Repetition

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Maze</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0f; }
+    canvas { display: block; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; pointer-events: none;
+      font-family: "Segoe UI", system-ui, sans-serif; color: #e8dcc8;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+      transition: opacity 0.6s ease;
+    }
+    #overlay.hidden { opacity: 0; }
+    #overlay h1 {
+      font-size: 2.4rem; font-weight: 300; letter-spacing: 0.35em;
+      text-transform: uppercase; margin-bottom: 1rem;
+    }
+    #overlay p { font-size: 0.95rem; opacity: 0.85; line-height: 1.8; text-align: center; }
+    #overlay kbd {
+      display: inline-block; padding: 0.15rem 0.45rem; margin: 0 0.1rem;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 4px; font-size: 0.85rem;
+    }
+    #hud {
+      position: fixed; bottom: 1.2rem; left: 1.2rem; pointer-events: none;
+      font-family: "Segoe UI", system-ui, sans-serif; font-size: 0.75rem;
+      color: rgba(232,220,200,0.55); letter-spacing: 0.05em;
+    }
+    #minimap {
+      position: fixed; top: 1rem; right: 1rem; width: 140px; height: 140px;
+      border: 1px solid rgba(232,220,200,0.25); border-radius: 4px;
+      background: rgba(10,10,15,0.7); pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <h1>Infinite Maze</h1>
+    <p>Click to enter · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Shift</kbd> sprint<br/>Mouse to look · <kbd>Esc</kbd> release cursor</p>
+  </div>
+  <canvas id="minimap" width="140" height="140"></canvas>
+  <div id="hud">Chunk — · Cells explored —</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+    // ── Config ──────────────────────────────────────────────────────────────
+    const CELL = 3.2;
+    const WALL_H = 3.0;
+    const CHUNK = 12;
+    const LOAD_RADIUS = 2;
+    const PLAYER_H = 1.65;
+    const PLAYER_R = 0.35;
+    const MOVE = 5.5;
+    const SPRINT = 9.0;
+    const FOG = 38;
+
+    // ── Seeded RNG (Mulberry32) ─────────────────────────────────────────────
+    function hash2(x, y) {
+      let h = (x * 374761393 + y * 668265263) ^ 0xdeadbeef;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return (h ^ (h >>> 16)) >>> 0;
+    }
+    function rng(seed) {
+      let s = seed >>> 0;
+      return () => {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // ── Maze generation (recursive backtracker per chunk, stitched) ───────
+    function generateChunkMaze(cx, cy) {
+      const W = CHUNK, H = CHUNK;
+      const walls = new Uint8Array(W * H * 4);
+      const visited = new Uint8Array(W * H);
+      const rand = rng(hash2(cx, cy));
+
+      function idx(x, y) { return y * W + x; }
+      function wallIndex(x, y, dir) { return (idx(x, y) * 4) + dir; }
+      const N = 0, E = 1, S = 2, Wd = 3;
+
+      for (let i = 0; i < walls.length; i++) walls[i] = 1;
+
+      const stack = [];
+      let sx = Math.floor(rand() * W);
+      let sy = Math.floor(rand() * H);
+      visited[idx(sx, sy)] = 1;
+      stack.push([sx, sy]);
+
+      const dirs = [[0,-1,N,S],[1,0,E,Wd],[0,1,S,N],[-1,0,Wd,E]];
+
+      while (stack.length) {
+        const [x, y] = stack[stack.length - 1];
+        const neighbors = [];
+        for (const [dx, dy, wd, od] of dirs) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < W && ny >= 0 && ny < H && !visited[idx(nx, ny)])
+            neighbors.push([nx, ny, wd, od]);
+        }
+        if (!neighbors.length) { stack.pop(); continue; }
+        const pick = neighbors[Math.floor(rand() * neighbors.length)];
+        const [nx, ny, wd, od] = pick;
+        walls[wallIndex(x, y, wd)] = 0;
+        walls[wallIndex(nx, ny, od)] = 0;
+        visited[idx(nx, ny)] = 1;
+        stack.push([nx, ny]);
+      }
+
+      // Stitch chunk borders with neighbors using shared edge walls
+      for (let x = 0; x < W; x++) {
+        if (isWallGlobal(cx, cy, x, 0, N, walls)) walls[wallIndex(x, 0, N)] = 1;
+        if (isWallGlobal(cx, cy, x, H - 1, S, walls)) walls[wallIndex(x, H - 1, S)] = 1;
+      }
+      for (let y = 0; y < H; y++) {
+        if (isWallGlobal(cx, cy, 0, y, Wd, walls)) walls[wallIndex(0, y, Wd)] = 1;
+        if (isWallGlobal(cx, cy, W - 1, y, E, walls)) walls[wallIndex(W - 1, y, E)] = 1;
+      }
+
+      return walls;
+    }
+
+    function isWallGlobal(cx, cy, lx, ly, dir, localWalls) {
+      const W = CHUNK, H = CHUNK;
+      let gx = cx * W + lx, gy = cy * H + ly;
+      let ngx = gx, ngy = gy, oppDir;
+      if (dir === 0) { ngy--; oppDir = 2; }
+      else if (dir === 1) { ngx++; oppDir = 3; }
+      else if (dir === 2) { ngy++; oppDir = 0; }
+      else { ngx--; oppDir = 1; }
+
+      const ncx = Math.floor(ngx / W), ncy = Math.floor(ngy / H);
+      if (ncx === cx && ncy === cy) {
+        const nlx = ((ngx % W) + W) % W;
+        const nly = ((ngy % H) + H) % H;
+        return localWalls[(nly * W + nlx) * 4 + oppDir] === 1;
+      }
+      const key = chunkKey(ncx, ncy);
+      if (!chunkCache.has(key)) return true;
+      const nWalls = chunkCache.get(key).walls;
+      const nlx = ((ngx % W) + W) % W;
+      const nly = ((ngy % H) + H) % H;
+      return nWalls[(nly * W + nlx) * 4 + oppDir] === 1;
+    }
+
+    function chunkKey(cx, cy) { return cx + ',' + cy; }
+
+    // ── Scene setup ─────────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.95;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a12);
+    scene.fog = new THREE.FogExp2(0x0a0a12, 0.028);
+
+    const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.08, FOG + 12);
+    camera.position.set(CELL * 1.5, PLAYER_H, CELL * 1.5);
+
+    const controls = new PointerLockControls(camera, document.body);
+    const overlay = document.getElementById('overlay');
+    document.body.addEventListener('click', () => {
+      if (!controls.isLocked) controls.lock();
+    });
+    controls.addEventListener('lock', () => overlay.classList.add('hidden'));
+    controls.addEventListener('unlock', () => overlay.classList.remove('hidden'));
+
+    // ── Materials & geometry reuse ──────────────────────────────────────────
+    function makeStoneTexture(hue) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const ctx = c.getContext('2d');
+      const base = hue || 38;
+      ctx.fillStyle = `hsl(${base}, 8%, ${22 + Math.random() * 6}%)`;
+      ctx.fillRect(0, 0, 128, 128);
+      for (let i = 0; i < 600; i++) {
+        const g = 18 + Math.random() * 22;
+        ctx.fillStyle = `hsla(${base + (Math.random() - 0.5) * 10}, 6%, ${g}%, ${0.15 + Math.random() * 0.25})`;
+        const s = 2 + Math.random() * 8;
+        ctx.fillRect(Math.random() * 128, Math.random() * 128, s, s);
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    const wallTex = makeStoneTexture(35);
+    const floorTex = makeStoneTexture(28);
+    floorTex.repeat.set(3, 3);
+    const ceilTex = makeStoneTexture(42);
+    ceilTex.repeat.set(2, 2);
+
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: wallTex, roughness: 0.92, metalness: 0.04, color: 0xaaa090
+    });
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: floorTex, roughness: 0.88, metalness: 0.02, color: 0x8a8070
+    });
+    const ceilMat = new THREE.MeshStandardMaterial({
+      map: ceilTex, roughness: 0.95, metalness: 0.0, color: 0x706858, side: THREE.BackSide
+    });
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: 0x3a3530, roughness: 0.85, metalness: 0.1
+    });
+    const torchMat = new THREE.MeshStandardMaterial({
+      color: 0x2a2520, roughness: 0.7, metalness: 0.3
+    });
+    const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa44 });
+
+    const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, 0.22);
+    const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
+    const ceilGeo = new THREE.PlaneGeometry(CELL, CELL);
+    const torchGeo = new THREE.CylinderGeometry(0.04, 0.06, 0.5, 6);
+    const flameGeo = new THREE.SphereGeometry(0.08, 8, 6);
+
+    scene.add(new THREE.AmbientLight(0x302820, 0.35));
+    const hemi = new THREE.HemisphereLight(0x443830, 0x0a0808, 0.25);
+    scene.add(hemi);
+
+    // ── Chunk management ────────────────────────────────────────────────────
+    const chunkCache = new Map();
+    const chunkGroup = new THREE.Group();
+    scene.add(chunkGroup);
+
+    const explored = new Set();
+    let cellsExplored = 0;
+
+    function worldCell(gx, gy) {
+      const cx = Math.floor(gx / CHUNK), cy = Math.floor(gy / CHUNK);
+      const lx = ((gx % CHUNK) + CHUNK) % CHUNK;
+      const ly = ((gy % CHUNK) + CHUNK) % CHUNK;
+      return { cx, cy, lx, ly };
+    }
+
+    function markExplored(gx, gy) {
+      const k = gx + ',' + gy;
+      if (!explored.has(k)) { explored.add(k); cellsExplored++; }
+    }
+
+    function buildChunk(cx, cy) {
+      const key = chunkKey(cx, cy);
+      if (chunkCache.has(key)) return chunkCache.get(key);
+
+      const walls = generateChunkMaze(cx, cy);
+      const group = new THREE.Group();
+      group.name = key;
+
+      const ox = cx * CHUNK * CELL;
+      const oz = cy * CHUNK * CELL;
+
+      for (let y = 0; y < CHUNK; y++) {
+        for (let x = 0; x < CHUNK; x++) {
+          const px = ox + x * CELL + CELL / 2;
+          const pz = oz + y * CELL + CELL / 2;
+
+          const floor = new THREE.Mesh(floorGeo, floorMat);
+          floor.rotation.x = -Math.PI / 2;
+          floor.position.set(px, 0, pz);
+          floor.receiveShadow = true;
+          group.add(floor);
+
+          const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+          ceil.rotation.x = Math.PI / 2;
+          ceil.position.set(px, WALL_H, pz);
+          group.add(ceil);
+
+          const wi = (y * CHUNK + x) * 4;
+          const wallDefs = [
+            [0, -CELL / 2, 0, 0],
+            [CELL / 2, 0, Math.PI / 2, 1],
+            [0, CELL / 2, 0, 2],
+            [-CELL / 2, 0, Math.PI / 2, 3]
+          ];
+          for (const [dx, dz, rot, d] of wallDefs) {
+            if (walls[wi + d]) {
+              const w = new THREE.Mesh(wallGeo, wallMat);
+              w.position.set(px + dx, WALL_H / 2, pz + dz);
+              w.rotation.y = rot;
+              w.castShadow = true;
+              w.receiveShadow = true;
+              group.add(w);
+
+              const trim = new THREE.Mesh(new THREE.BoxGeometry(CELL + 0.02, 0.12, 0.28), trimMat);
+              trim.position.set(px + dx, 0.06, pz + dz);
+              trim.rotation.y = rot;
+              group.add(trim);
+            }
+          }
+
+          const r = rng(hash2(cx * CHUNK + x, cy * CHUNK + y));
+          if (r() > 0.82 && !walls[wi] && !walls[wi+1] && !walls[wi+2] && !walls[wi+3]) {
+            const torch = new THREE.Mesh(torchGeo, torchMat);
+            torch.position.set(px + 0.5, 1.4, pz + 0.5);
+            group.add(torch);
+            const flame = new THREE.Mesh(flameGeo, flameMat);
+            flame.position.set(px + 0.5, 1.75, pz + 0.5);
+            group.add(flame);
+
+            const light = new THREE.PointLight(0xff9944, 1.8, 9, 1.6);
+            light.position.set(px + 0.5, 1.8, pz + 0.5);
+            light.castShadow = true;
+            light.shadow.mapSize.set(256, 256);
+            group.add(light);
+          }
+        }
+      }
+
+      chunkGroup.add(group);
+      const entry = { cx, cy, walls, group };
+      chunkCache.set(key, entry);
+      return entry;
+    }
+
+    function unloadDistantChunks(pcx, pcy) {
+      for (const [key, entry] of chunkCache) {
+        if (Math.abs(entry.cx - pcx) > LOAD_RADIUS + 1 || Math.abs(entry.cy - pcy) > LOAD_RADIUS + 1) {
+          chunkGroup.remove(entry.group);
+          entry.group.traverse(o => {
+            if (o.geometry && o.geometry !== wallGeo && o.geometry !== floorGeo && o.geometry !== ceilGeo
+                && o.geometry !== torchGeo && o.geometry !== flameGeo) o.geometry.dispose();
+          });
+          chunkCache.delete(key);
+        }
+      }
+    }
+
+    function updateChunks() {
+      const gx = Math.floor(camera.position.x / CELL);
+      const gy = Math.floor(camera.position.z / CELL);
+      const { cx, cy } = worldCell(gx, gy);
+
+      for (let dy = -LOAD_RADIUS; dy <= LOAD_RADIUS; dy++) {
+        for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
+          buildChunk(cx + dx, cy + dy);
+        }
+      }
+      unloadDistantChunks(cx, cy);
+      markExplored(gx, gy);
+    }
+
+    // ── Collision ───────────────────────────────────────────────────────────
+    function cellBlocked(gx, gy, px, pz) {
+      const { cx, cy, lx, ly } = worldCell(gx, gy);
+      const key = chunkKey(cx, cy);
+      if (!chunkCache.has(key)) return true;
+      const walls = chunkCache.get(key).walls;
+      const wi = (ly * CHUNK + lx) * 4;
+
+      const lxPos = px - (cx * CHUNK + lx) * CELL;
+      const lzPos = pz - (cy * CHUNK + ly) * CELL;
+      const margin = PLAYER_R + 0.12;
+
+      if (walls[wi] && lzPos < margin) return true;
+      if (walls[wi + 2] && lzPos > CELL - margin) return true;
+      if (walls[wi + 3] && lxPos < margin) return true;
+      if (walls[wi + 1] && lxPos > CELL - margin) return true;
+      return false;
+    }
+
+    function tryMove(dx, dz) {
+      const nx = camera.position.x + dx;
+      const nz = camera.position.z + dz;
+      const gx = Math.floor(nx / CELL);
+      const gy = Math.floor(nz / CELL);
+
+      if (!cellBlocked(gx, gy, nx, nz)) {
+        camera.position.x = nx;
+        camera.position.z = nz;
+        return;
+      }
+      if (!cellBlocked(gx, Math.floor(camera.position.z / CELL), nx, camera.position.z)) {
+        camera.position.x = nx;
+        return;
+      }
+      if (!cellBlocked(Math.floor(camera.position.x / CELL), gy, camera.position.x, nz)) {
+        camera.position.z = nz;
+      }
+    }
+
+    // ── Input ───────────────────────────────────────────────────────────────
+    const keys = {};
+    window.addEventListener('keydown', e => { keys[e.code] = true; });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // ── Minimap ─────────────────────────────────────────────────────────────
+    const minimap = document.getElementById('minimap');
+    const mctx = minimap.getContext('2d');
+    const MAP_R = 18;
+
+    function drawMinimap() {
+      const w = minimap.width, h = minimap.height;
+      mctx.fillStyle = 'rgba(10,10,15,0.85)';
+      mctx.fillRect(0, 0, w, h);
+
+      const gx = Math.floor(camera.position.x / CELL);
+      const gy = Math.floor(camera.position.z / CELL);
+      const scale = w / (MAP_R * 2 + 1);
+
+      for (let dy = -MAP_R; dy <= MAP_R; dy++) {
+        for (let dx = -MAP_R; dx <= MAP_R; dx++) {
+          const cx = gx + dx, cy = gy + dy;
+          if (!explored.has(cx + ',' + cy)) continue;
+          const { cx: ccx, cy: ccy, lx, ly } = worldCell(cx, cy);
+          const key = chunkKey(ccx, ccy);
+          if (!chunkCache.has(key)) continue;
+          const walls = chunkCache.get(key).walls;
+          const wi = (ly * CHUNK + lx) * 4;
+          const px = (dx + MAP_R + 0.5) * scale;
+          const py = (dy + MAP_R + 0.5) * scale;
+          mctx.fillStyle = 'rgba(180,160,130,0.35)';
+          mctx.fillRect(px - scale / 2, py - scale / 2, scale, scale);
+          mctx.strokeStyle = 'rgba(120,100,80,0.5)';
+          mctx.lineWidth = 1;
+          if (walls[wi]) { mctx.beginPath(); mctx.moveTo(px - scale/2, py - scale/2); mctx.lineTo(px + scale/2, py - scale/2); mctx.stroke(); }
+          if (walls[wi+2]) { mctx.beginPath(); mctx.moveTo(px - scale/2, py + scale/2); mctx.lineTo(px + scale/2, py + scale/2); mctx.stroke(); }
+          if (walls[wi+3]) { mctx.beginPath(); mctx.moveTo(px - scale/2, py - scale/2); mctx.lineTo(px - scale/2, py + scale/2); mctx.stroke(); }
+          if (walls[wi+1]) { mctx.beginPath(); mctx.moveTo(px + scale/2, py - scale/2); mctx.lineTo(px + scale/2, py + scale/2); mctx.stroke(); }
+        }
+      }
+
+      mctx.fillStyle = '#ff6644';
+      mctx.beginPath();
+      mctx.arc((MAP_R + 0.5) * scale, (MAP_R + 0.5) * scale, 3, 0, Math.PI * 2);
+      mctx.fill();
+
+      const yaw = controls.getObject().rotation.y;
+      mctx.strokeStyle = '#ffaa66';
+      mctx.lineWidth = 2;
+      mctx.beginPath();
+      mctx.moveTo((MAP_R + 0.5) * scale, (MAP_R + 0.5) * scale);
+      mctx.lineTo(
+        (MAP_R + 0.5) * scale - Math.sin(yaw) * 10,
+        (MAP_R + 0.5) * scale - Math.cos(yaw) * 10
+      );
+      mctx.stroke();
+    }
+
+    const hud = document.getElementById('hud');
+
+    // ── Loop ────────────────────────────────────────────────────────────────
+    const clock = new THREE.Clock();
+    let bobPhase = 0;
+
+    updateChunks();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+
+      if (controls.isLocked) {
+        const speed = keys['ShiftLeft'] || keys['ShiftRight'] ? SPRINT : MOVE;
+        let mx = 0, mz = 0;
+        if (keys['KeyW'] || keys['ArrowUp']) mz -= 1;
+        if (keys['KeyS'] || keys['ArrowDown']) mz += 1;
+        if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+        if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+
+        if (mx || mz) {
+          const len = Math.hypot(mx, mz);
+          mx /= len; mz /= len;
+          const yaw = controls.getObject().rotation.y;
+          const sin = Math.sin(yaw), cos = Math.cos(yaw);
+          const dx = (mx * cos + mz * sin) * speed * dt;
+          const dz = (-mx * sin + mz * cos) * speed * dt;
+          tryMove(dx, dz);
+          bobPhase += dt * (keys['ShiftLeft'] || keys['ShiftRight'] ? 14 : 9);
+          camera.position.y = PLAYER_H + Math.sin(bobPhase) * 0.04;
+        } else {
+          camera.position.y += (PLAYER_H - camera.position.y) * 0.12;
+        }
+      }
+
+      updateChunks();
+
+      const { cx, cy } = worldCell(
+        Math.floor(camera.position.x / CELL),
+        Math.floor(camera.position.z / CELL)
+      );
+      hud.textContent = `Chunk ${cx}, ${cy} · Explored ${cellsExplored} cells · ${chunkCache.size} loaded`;
+      drawMinimap();
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

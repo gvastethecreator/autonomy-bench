@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite First-Person Maze</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #050508; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; inset: 0; pointer-events: none;
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      color: rgba(220, 230, 240, 0.85);
+    }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 14px; height: 14px;
+      transform: translate(-50%, -50%);
+      opacity: 0.55;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: #e8f0f8;
+    }
+    #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+    #crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+    #overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(8,10,18,0.55) 0%, rgba(4,5,10,0.92) 100%);
+      pointer-events: auto; cursor: pointer; transition: opacity 0.45s ease;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    #panel {
+      text-align: center; max-width: 420px; padding: 2rem 2.25rem;
+      border: 1px solid rgba(160, 180, 210, 0.18);
+      background: rgba(12, 14, 22, 0.72);
+      backdrop-filter: blur(10px);
+    }
+    #panel h1 {
+      font-weight: 300; letter-spacing: 0.28em; text-transform: uppercase;
+      font-size: 1.05rem; margin-bottom: 0.85rem; color: #dce6f2;
+    }
+    #panel p {
+      font-size: 0.88rem; line-height: 1.55; color: rgba(190, 205, 220, 0.78);
+      margin-bottom: 1.25rem;
+    }
+    #panel .hint {
+      font-size: 0.78rem; letter-spacing: 0.08em; color: rgba(140, 170, 200, 0.7);
+    }
+    #stats {
+      position: absolute; left: 1.1rem; bottom: 1.1rem;
+      font-size: 0.72rem; letter-spacing: 0.06em;
+      color: rgba(170, 190, 210, 0.55); line-height: 1.6;
+    }
+    #vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 48%, rgba(0,0,0,0.55) 100%);
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div id="vignette"></div>
+    <div id="crosshair"></div>
+    <div id="stats">
+      <div id="pos">CELL —</div>
+      <div id="chunks">CHUNKS 0</div>
+    </div>
+    <div id="overlay">
+      <div id="panel">
+        <h1>Infinite Maze</h1>
+        <p>A procedurally endless stone labyrinth. Walk the corridors; the walls keep generating beyond the fog.</p>
+        <p class="hint">Click to enter · WASD move · Mouse look · Shift sprint · Esc release</p>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+import * as THREE from "three";
+import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+
+/* ── Tunables ─────────────────────────────────────────────── */
+const CELL = 4;
+const WALL_H = 3.2;
+const CHUNK = 8;
+const VIEW_RADIUS = 3;
+const FOG_NEAR = 4;
+const FOG_FAR = 28;
+const MOVE_SPEED = 6.2;
+const SPRINT_MULT = 1.65;
+const EYE_HEIGHT = 1.65;
+const PLAYER_RADIUS = 0.35;
+
+/* ── Deterministic noise / hash ────────────────────────────── */
+function hash2(x, z) {
+  let n = (x * 374761393 + z * 668265263) | 0;
+  n = (n ^ (n >>> 13)) * 1274126177;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
+function edgeOpen(cx, cz, axis) {
+  // axis 0 = +X wall of cell, 1 = +Z wall of cell
+  const a = axis === 0 ? cx : cz;
+  const b = axis === 0 ? cz : cx;
+  const h = hash2(a * 2 + axis, b * 3 + 17);
+  // Prefer connected corridors: ~62% open; force some long runs
+  const run = hash2(Math.floor(a / 5), b + axis * 91);
+  if (run > 0.78) return true;
+  return h > 0.38;
+}
+
+function cellPassable(cx, cz) {
+  // Sparse pillars / blocked rooms for variety
+  const h = hash2(cx + 101, cz - 77);
+  return h > 0.07;
+}
+
+/* ── Procedural textures ───────────────────────────────────── */
+function makeCanvas(size) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  return c;
+}
+
+function wallTexture() {
+  const size = 256;
+  const c = makeCanvas(size);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#3a3d48";
+  ctx.fillRect(0, 0, size, size);
+
+  const brickW = 32;
+  const brickH = 16;
+  for (let y = 0; y < size; y += brickH) {
+    const offset = (Math.floor(y / brickH) % 2) * (brickW / 2);
+    for (let x = -brickW; x < size + brickW; x += brickW) {
+      const px = x + offset;
+      const n = hash2(px, y);
+      const shade = 48 + Math.floor(n * 28);
+      const r = shade + Math.floor(n * 8);
+      const g = shade + 2;
+      const b = shade + 10;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(px + 1, y + 1, brickW - 2, brickH - 2);
+      // mortar edge highlight
+      ctx.strokeStyle = "rgba(20,22,28,0.55)";
+      ctx.strokeRect(px + 0.5, y + 0.5, brickW - 1, brickH - 1);
+      // subtle chip
+      if (n > 0.82) {
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        ctx.beginPath();
+        ctx.arc(px + 8 + n * 16, y + 5 + n * 6, 2 + n * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  // fine grain
+  const img = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const d = (Math.random() - 0.5) * 14;
+    img.data[i] = Math.min(255, Math.max(0, img.data[i] + d));
+    img.data[i + 1] = Math.min(255, Math.max(0, img.data[i + 1] + d));
+    img.data[i + 2] = Math.min(255, Math.max(0, img.data[i + 2] + d));
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function floorTexture() {
+  const size = 256;
+  const c = makeCanvas(size);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#2a2c34";
+  ctx.fillRect(0, 0, size, size);
+  const tile = 32;
+  for (let y = 0; y < size; y += tile) {
+    for (let x = 0; x < size; x += tile) {
+      const n = hash2(x, y);
+      const v = 36 + Math.floor(n * 22);
+      ctx.fillStyle = `rgb(${v},${v + 1},${v + 4})`;
+      ctx.fillRect(x + 1, y + 1, tile - 2, tile - 2);
+      ctx.strokeStyle = "rgba(12,12,16,0.65)";
+      ctx.strokeRect(x + 0.5, y + 0.5, tile - 1, tile - 1);
+      if (n > 0.7) {
+        ctx.fillStyle = "rgba(255,255,255,0.03)";
+        ctx.fillRect(x + 4, y + 4, tile - 10, 3);
+      }
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function ceilingTexture() {
+  const size = 128;
+  const c = makeCanvas(size);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#1e2028";
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 80; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 1 + Math.random() * 3;
+    ctx.fillStyle = `rgba(${20 + Math.random() * 20},${20},${28},0.4)`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* ── Scene setup ───────────────────────────────────────────── */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07080c);
+scene.fog = new THREE.Fog(0x07080c, FOG_NEAR, FOG_FAR);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.08, 80);
+camera.position.set(CELL * 0.5, EYE_HEIGHT, CELL * 0.5);
+
+const controls = new PointerLockControls(camera, document.body);
+scene.add(controls.getObject());
+
+const wallTex = wallTexture();
+wallTex.repeat.set(1, WALL_H / CELL * 1.2);
+const floorTex = floorTexture();
+floorTex.repeat.set(CHUNK, CHUNK);
+const ceilTex = ceilingTexture();
+ceilTex.repeat.set(CHUNK, CHUNK);
+
+const wallMat = new THREE.MeshStandardMaterial({
+  map: wallTex,
+  roughness: 0.88,
+  metalness: 0.04,
+  color: 0xc8cdd8,
+});
+const floorMat = new THREE.MeshStandardMaterial({
+  map: floorTex,
+  roughness: 0.92,
+  metalness: 0.02,
+  color: 0xb0b6c2,
+});
+const ceilMat = new THREE.MeshStandardMaterial({
+  map: ceilTex,
+  roughness: 0.95,
+  metalness: 0.0,
+  color: 0x8a90a0,
+});
+const trimMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1c24,
+  roughness: 0.7,
+  metalness: 0.15,
+});
+const lampMat = new THREE.MeshStandardMaterial({
+  color: 0xffe6b8,
+  emissive: 0xffcc88,
+  emissiveIntensity: 1.4,
+  roughness: 0.4,
+});
+
+/* Ambient + hemisphere for soft fill */
+scene.add(new THREE.AmbientLight(0x2a3040, 0.35));
+const hemi = new THREE.HemisphereLight(0x4a5570, 0x1a1814, 0.45);
+scene.add(hemi);
+
+/* Torch-like point light attached to player */
+const torch = new THREE.PointLight(0xffd4a0, 1.35, 16, 1.6);
+torch.castShadow = true;
+torch.shadow.mapSize.set(512, 512);
+torch.shadow.camera.near = 0.2;
+torch.shadow.camera.far = 18;
+torch.shadow.bias = -0.0008;
+camera.add(torch);
+torch.position.set(0.15, -0.1, -0.2);
+scene.add(camera);
+
+const fill = new THREE.PointLight(0x8899bb, 0.22, 22, 2);
+camera.add(fill);
+fill.position.set(-0.4, 0.2, 0.3);
+
+/* ── Chunk management ──────────────────────────────────────── */
+const chunks = new Map();
+const collisionWalls = []; // axis-aligned segments {x0,z0,x1,z1} in world units
+const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, 0.28);
+const floorGeo = new THREE.PlaneGeometry(CHUNK * CELL, CHUNK * CELL);
+const ceilGeo = new THREE.PlaneGeometry(CHUNK * CELL, CHUNK * CELL);
+const trimGeo = new THREE.BoxGeometry(CELL, 0.12, 0.34);
+const pillarGeo = new THREE.BoxGeometry(0.45, WALL_H, 0.45);
+const lampGeo = new THREE.SphereGeometry(0.08, 10, 10);
+
+function chunkKey(cx, cz) {
+  return `${cx},${cz}`;
+}
+
+function buildChunk(cx, cz) {
+  const group = new THREE.Group();
+  group.userData = { cx, cz, lights: [] };
+
+  const originX = cx * CHUNK * CELL;
+  const originZ = cz * CHUNK * CELL;
+
+  // Floor
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(originX + (CHUNK * CELL) / 2, 0, originZ + (CHUNK * CELL) / 2);
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  // Ceiling
+  const ceil = new THREE.Mesh(ceilGeo, ceilMat);
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set(originX + (CHUNK * CELL) / 2, WALL_H, originZ + (CHUNK * CELL) / 2);
+  group.add(ceil);
+
+  const localWalls = [];
+
+  for (let lz = 0; lz < CHUNK; lz++) {
+    for (let lx = 0; lx < CHUNK; lx++) {
+      const gx = cx * CHUNK + lx;
+      const gz = cz * CHUNK + lz;
+      const wx = originX + lx * CELL + CELL / 2;
+      const wz = originZ + lz * CELL + CELL / 2;
+
+      if (!cellPassable(gx, gz)) {
+        const pillar = new THREE.Mesh(
+          new THREE.BoxGeometry(CELL * 0.92, WALL_H, CELL * 0.92),
+          wallMat
+        );
+        pillar.position.set(wx, WALL_H / 2, wz);
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        group.add(pillar);
+        localWalls.push({
+          x0: wx - CELL * 0.46, z0: wz - CELL * 0.46,
+          x1: wx + CELL * 0.46, z1: wz + CELL * 0.46,
+          solid: true,
+        });
+        continue;
+      }
+
+      // +X wall (east edge of cell)
+      if (!edgeOpen(gx, gz, 0)) {
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.position.set(wx + CELL / 2, WALL_H / 2, wz);
+        wall.rotation.y = Math.PI / 2;
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        group.add(wall);
+
+        const trimB = new THREE.Mesh(trimGeo, trimMat);
+        trimB.position.set(wx + CELL / 2, 0.06, wz);
+        trimB.rotation.y = Math.PI / 2;
+        group.add(trimB);
+        const trimT = trimB.clone();
+        trimT.position.y = WALL_H - 0.06;
+        group.add(trimT);
+
+        localWalls.push({
+          x0: wx + CELL / 2 - 0.14, z0: wz - CELL / 2,
+          x1: wx + CELL / 2 + 0.14, z1: wz + CELL / 2,
+        });
+      }
+
+      // +Z wall (south edge of cell)
+      if (!edgeOpen(gx, gz, 1)) {
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.position.set(wx, WALL_H / 2, wz + CELL / 2);
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        group.add(wall);
+
+        const trimB = new THREE.Mesh(trimGeo, trimMat);
+        trimB.position.set(wx, 0.06, wz + CELL / 2);
+        group.add(trimB);
+        const trimT = trimB.clone();
+        trimT.position.y = WALL_H - 0.06;
+        group.add(trimT);
+
+        localWalls.push({
+          x0: wx - CELL / 2, z0: wz + CELL / 2 - 0.14,
+          x1: wx + CELL / 2, z1: wz + CELL / 2 + 0.14,
+        });
+      }
+
+      // Corner pillars where walls meet (visual density)
+      const corner = hash2(gx * 13, gz * 17);
+      if (corner > 0.72 && (!edgeOpen(gx, gz, 0) || !edgeOpen(gx, gz, 1))) {
+        const p = new THREE.Mesh(pillarGeo, wallMat);
+        p.position.set(wx + CELL / 2 - 0.05, WALL_H / 2, wz + CELL / 2 - 0.05);
+        p.castShadow = true;
+        group.add(p);
+      }
+
+      // Occasional wall lamps
+      if (hash2(gx + 3, gz + 9) > 0.91 && !edgeOpen(gx, gz, 0)) {
+        const lamp = new THREE.Mesh(lampGeo, lampMat);
+        lamp.position.set(wx + CELL / 2 - 0.22, 2.1, wz);
+        group.add(lamp);
+        const pl = new THREE.PointLight(0xffc070, 0.55, 8, 2);
+        pl.position.copy(lamp.position);
+        group.add(pl);
+        group.userData.lights.push(pl);
+      } else if (hash2(gx + 5, gz + 2) > 0.93 && !edgeOpen(gx, gz, 1)) {
+        const lamp = new THREE.Mesh(lampGeo, lampMat);
+        lamp.position.set(wx, 2.1, wz + CELL / 2 - 0.22);
+        group.add(lamp);
+        const pl = new THREE.PointLight(0xffc070, 0.55, 8, 2);
+        pl.position.copy(lamp.position);
+        group.add(pl);
+        group.userData.lights.push(pl);
+      }
+    }
+  }
+
+  // Outer boundary walls for chunk edges that connect to neighbors are handled per-cell;
+  // also seal the -X and -Z borders of cells by checking previous cells' +walls — already covered.
+
+  group.userData.walls = localWalls;
+  scene.add(group);
+  return group;
+}
+
+function syncChunks(px, pz) {
+  const ccx = Math.floor(px / (CHUNK * CELL));
+  const ccz = Math.floor(pz / (CHUNK * CELL));
+  const needed = new Set();
+
+  for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+    for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+      if (dx * dx + dz * dz > VIEW_RADIUS * VIEW_RADIUS + 1) continue;
+      needed.add(chunkKey(ccx + dx, ccz + dz));
+    }
+  }
+
+  for (const key of [...chunks.keys()]) {
+    if (!needed.has(key)) {
+      const g = chunks.get(key);
+      scene.remove(g);
+      g.traverse((o) => {
+        if (o.isLight && o.dispose) { /* lights don't need geo dispose */ }
+      });
+      chunks.delete(key);
+    }
+  }
+
+  for (const key of needed) {
+    if (!chunks.has(key)) {
+      const [sx, sz] = key.split(",").map(Number);
+      chunks.set(key, buildChunk(sx, sz));
+    }
+  }
+
+  // Rebuild collision list from loaded chunks
+  collisionWalls.length = 0;
+  for (const g of chunks.values()) {
+    for (const w of g.userData.walls) collisionWalls.push(w);
+  }
+
+  document.getElementById("chunks").textContent = `CHUNKS ${chunks.size}`;
+}
+
+/* ── Collision ─────────────────────────────────────────────── */
+function collide(nx, nz) {
+  const r = PLAYER_RADIUS;
+  for (const w of collisionWalls) {
+    if (w.solid) {
+      const cx = THREE.MathUtils.clamp(nx, w.x0, w.x1);
+      const cz = THREE.MathUtils.clamp(nz, w.z0, w.z1);
+      const dx = nx - cx;
+      const dz = nz - cz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < r * r && d2 > 1e-8) {
+        const d = Math.sqrt(d2);
+        const push = (r - d) / d;
+        nx += dx * push;
+        nz += dz * push;
+      } else if (d2 <= 1e-8) {
+        // inside solid — push out toward nearest face
+        const left = nx - w.x0;
+        const right = w.x1 - nx;
+        const top = nz - w.z0;
+        const bot = w.z1 - nz;
+        const m = Math.min(left, right, top, bot);
+        if (m === left) nx = w.x0 - r;
+        else if (m === right) nx = w.x1 + r;
+        else if (m === top) nz = w.z0 - r;
+        else nz = w.z1 + r;
+      }
+    } else {
+      const closestX = THREE.MathUtils.clamp(nx, w.x0, w.x1);
+      const closestZ = THREE.MathUtils.clamp(nz, w.z0, w.z1);
+      const dx = nx - closestX;
+      const dz = nz - closestZ;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < r * r) {
+        if (d2 > 1e-8) {
+          const d = Math.sqrt(d2);
+          const push = (r - d) / d;
+          nx += dx * push;
+          nz += dz * push;
+        } else {
+          // On edge — push along thinner axis
+          const wx = w.x1 - w.x0;
+          const wz = w.z1 - w.z0;
+          if (wx < wz) nx = nx < (w.x0 + w.x1) / 2 ? w.x0 - r : w.x1 + r;
+          else nz = nz < (w.z0 + w.z1) / 2 ? w.z0 - r : w.z1 + r;
+        }
+      }
+    }
+  }
+  return { x: nx, z: nz };
+}
+
+/* ── Input ─────────────────────────────────────────────────── */
+const keys = Object.create(null);
+window.addEventListener("keydown", (e) => { keys[e.code] = true; });
+window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+const overlay = document.getElementById("overlay");
+overlay.addEventListener("click", () => controls.lock());
+controls.addEventListener("lock", () => overlay.classList.add("hidden"));
+controls.addEventListener("unlock", () => overlay.classList.remove("hidden"));
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ── Ensure spawn is open ──────────────────────────────────── */
+function findSpawn() {
+  // Start near origin; nudge until cell is passable and has some openings
+  for (let i = 0; i < 40; i++) {
+    const gx = i % 7;
+    const gz = Math.floor(i / 7);
+    if (cellPassable(gx, gz)) {
+      return { x: gx * CELL + CELL / 2, z: gz * CELL + CELL / 2 };
+    }
+  }
+  return { x: CELL / 2, z: CELL / 2 };
+}
+
+const spawn = findSpawn();
+controls.getObject().position.set(spawn.x, EYE_HEIGHT, spawn.z);
+syncChunks(spawn.x, spawn.z);
+
+/* ── Animation loop ────────────────────────────────────────── */
+const clock = new THREE.Clock();
+const vel = new THREE.Vector3();
+const dir = new THREE.Vector3();
+const forward = new THREE.Vector3();
+const right = new THREE.Vector3();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const obj = controls.getObject();
+
+  if (controls.isLocked) {
+    const sprint = keys["ShiftLeft"] || keys["ShiftRight"];
+    const speed = MOVE_SPEED * (sprint ? SPRINT_MULT : 1);
+
+    forward.set(0, 0, -1).applyQuaternion(obj.quaternion);
+    forward.y = 0;
+    forward.normalize();
+    right.set(1, 0, 0).applyQuaternion(obj.quaternion);
+    right.y = 0;
+    right.normalize();
+
+    dir.set(0, 0, 0);
+    if (keys["KeyW"] || keys["ArrowUp"]) dir.add(forward);
+    if (keys["KeyS"] || keys["ArrowDown"]) dir.sub(forward);
+    if (keys["KeyD"] || keys["ArrowRight"]) dir.add(right);
+    if (keys["KeyA"] || keys["ArrowLeft"]) dir.sub(right);
+    if (dir.lengthSq() > 0) dir.normalize();
+
+    vel.x = dir.x * speed;
+    vel.z = dir.z * speed;
+
+    let nx = obj.position.x + vel.x * dt;
+    let nz = obj.position.z + vel.z * dt;
+
+    // Separate axes for smoother sliding
+    let hit = collide(nx, obj.position.z);
+    nx = hit.x;
+    hit = collide(nx, nz);
+    nz = hit.z;
+
+    obj.position.x = nx;
+    obj.position.z = nz;
+    obj.position.y = EYE_HEIGHT;
+
+    // Subtle bob
+    const moving = dir.lengthSq() > 0;
+    if (moving) {
+      const t = clock.elapsedTime * (sprint ? 10 : 7);
+      obj.position.y = EYE_HEIGHT + Math.sin(t) * 0.035;
+      torch.intensity = 1.25 + Math.sin(clock.elapsedTime * 3.2) * 0.08;
+    } else {
+      torch.intensity = 1.3 + Math.sin(clock.elapsedTime * 1.5) * 0.05;
+    }
+  }
+
+  syncChunks(obj.position.x, obj.position.z);
+
+  const gx = Math.floor(obj.position.x / CELL);
+  const gz = Math.floor(obj.position.z / CELL);
+  document.getElementById("pos").textContent = `CELL ${gx}, ${gz}`;
+
+  renderer.render(scene, camera);
+}
+
+animate();
+  </script>
+</body>
+</html>

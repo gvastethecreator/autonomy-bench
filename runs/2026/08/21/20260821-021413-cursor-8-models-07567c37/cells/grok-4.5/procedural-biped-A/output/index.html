@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Procedural Biped Walk</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1020; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; left: 16px; bottom: 16px;
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: rgba(230, 240, 255, 0.85);
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">Procedural biped walk · drag to orbit</div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
+    scene.fog = new THREE.Fog(0x0b1020, 18, 42);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(4.5, 3.2, 6.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.4, 0);
+    controls.enableDamping = true;
+    controls.maxPolarAngle = Math.PI * 0.49;
+
+    const hemi = new THREE.HemisphereLight(0xb8d4ff, 0x2a1a10, 0.7);
+    scene.add(hemi);
+
+    const sun = new THREE.DirectionalLight(0xfff2dd, 1.35);
+    sun.position.set(6, 10, 4);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 30;
+    sun.shadow.camera.left = -8;
+    sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 8;
+    sun.shadow.camera.bottom = -8;
+    scene.add(sun);
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 40),
+      new THREE.MeshStandardMaterial({ color: 0x1a2438, roughness: 0.95, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(40, 40, 0x3a4a68, 0x1e2a40);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    const mat = {
+      body: new THREE.MeshStandardMaterial({ color: 0x6ec8ff, roughness: 0.45, metalness: 0.15 }),
+      limb: new THREE.MeshStandardMaterial({ color: 0x4aa3e0, roughness: 0.5, metalness: 0.12 }),
+      joint: new THREE.MeshStandardMaterial({ color: 0xe8f4ff, roughness: 0.35, metalness: 0.4 }),
+      accent: new THREE.MeshStandardMaterial({ color: 0xff8c5a, roughness: 0.4, metalness: 0.2 }),
+    };
+
+    function box(w, h, d, material, cast = true) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      m.castShadow = cast;
+      m.receiveShadow = true;
+      return m;
+    }
+
+    function sphere(r, material) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), material);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      return m;
+    }
+
+    const biped = new THREE.Group();
+    scene.add(biped);
+
+    const pelvis = new THREE.Group();
+    pelvis.position.y = 1.55;
+    biped.add(pelvis);
+
+    const hips = box(0.55, 0.22, 0.32, mat.body);
+    pelvis.add(hips);
+
+    const torso = new THREE.Group();
+    torso.position.y = 0.35;
+    pelvis.add(torso);
+    torso.add(box(0.5, 0.7, 0.3, mat.body));
+
+    const chestAccent = box(0.42, 0.18, 0.32, mat.accent);
+    chestAccent.position.set(0, 0.12, 0.02);
+    torso.add(chestAccent);
+
+    const neck = box(0.14, 0.16, 0.14, mat.limb);
+    neck.position.y = 0.45;
+    torso.add(neck);
+
+    const head = sphere(0.22, mat.body);
+    head.position.y = 0.62;
+    torso.add(head);
+
+    const eyeL = sphere(0.04, mat.joint);
+    eyeL.position.set(-0.08, 0.64, 0.18);
+    torso.add(eyeL);
+    const eyeR = eyeL.clone();
+    eyeR.position.x = 0.08;
+    torso.add(eyeR);
+
+    function makeArm(side) {
+      const root = new THREE.Group();
+      root.position.set(side * 0.32, 0.28, 0);
+      torso.add(root);
+
+      const shoulder = sphere(0.08, mat.joint);
+      root.add(shoulder);
+
+      const upper = new THREE.Group();
+      root.add(upper);
+      const upperMesh = box(0.12, 0.42, 0.12, mat.limb);
+      upperMesh.position.y = -0.21;
+      upper.add(upperMesh);
+
+      const elbow = new THREE.Group();
+      elbow.position.y = -0.42;
+      upper.add(elbow);
+      elbow.add(sphere(0.06, mat.joint));
+
+      const lower = new THREE.Group();
+      elbow.add(lower);
+      const lowerMesh = box(0.1, 0.38, 0.1, mat.limb);
+      lowerMesh.position.y = -0.19;
+      lower.add(lowerMesh);
+
+      const hand = box(0.12, 0.1, 0.14, mat.accent);
+      hand.position.y = -0.42;
+      lower.add(hand);
+
+      return { root, upper, elbow, lower };
+    }
+
+    function makeLeg(side) {
+      const root = new THREE.Group();
+      root.position.set(side * 0.16, -0.05, 0);
+      pelvis.add(root);
+
+      const hip = sphere(0.09, mat.joint);
+      root.add(hip);
+
+      const upper = new THREE.Group();
+      root.add(upper);
+      const thigh = box(0.16, 0.55, 0.18, mat.limb);
+      thigh.position.y = -0.28;
+      upper.add(thigh);
+
+      const knee = new THREE.Group();
+      knee.position.y = -0.55;
+      upper.add(knee);
+      knee.add(sphere(0.07, mat.joint));
+
+      const lower = new THREE.Group();
+      knee.add(lower);
+      const shin = box(0.14, 0.5, 0.15, mat.limb);
+      shin.position.y = -0.25;
+      lower.add(shin);
+
+      const ankle = new THREE.Group();
+      ankle.position.y = -0.5;
+      lower.add(ankle);
+      const foot = box(0.16, 0.08, 0.32, mat.accent);
+      foot.position.set(0, -0.02, 0.06);
+      ankle.add(foot);
+
+      return { root, upper, knee, lower, ankle };
+    }
+
+    const leftArm = makeArm(-1);
+    const rightArm = makeArm(1);
+    const leftLeg = makeLeg(-1);
+    const rightLeg = makeLeg(1);
+
+    const walk = {
+      speed: 2.4,
+      stride: 0.72,
+      hipSwing: 0.55,
+      kneeBend: 0.95,
+      ankleLift: 0.35,
+      armSwing: 0.7,
+      elbowBend: 0.55,
+      bob: 0.06,
+      sway: 0.04,
+      lean: 0.06,
+    };
+
+    const clock = new THREE.Clock();
+    let phase = 0;
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      phase += dt * walk.speed;
+      const t = phase;
+      const sL = Math.sin(t);
+      const sR = Math.sin(t + Math.PI);
+      const cL = Math.cos(t);
+      const cR = Math.cos(t + Math.PI);
+
+      // Legs: hip pitch, knee flexion on swing, ankle follow
+      leftLeg.upper.rotation.x = sL * walk.hipSwing;
+      rightLeg.upper.rotation.x = sR * walk.hipSwing;
+
+      const kneeL = Math.max(0, -sL) * walk.kneeBend + Math.max(0, cL) * 0.15;
+      const kneeR = Math.max(0, -sR) * walk.kneeBend + Math.max(0, cR) * 0.15;
+      leftLeg.knee.rotation.x = kneeL;
+      rightLeg.knee.rotation.x = kneeR;
+
+      leftLeg.ankle.rotation.x = -leftLeg.upper.rotation.x * 0.35 - kneeL * 0.2 + Math.max(0, sL) * walk.ankleLift;
+      rightLeg.ankle.rotation.x = -rightLeg.upper.rotation.x * 0.35 - kneeR * 0.2 + Math.max(0, sR) * walk.ankleLift;
+
+      // Arms opposite to legs
+      leftArm.upper.rotation.x = sR * walk.armSwing;
+      rightArm.upper.rotation.x = sL * walk.armSwing;
+      leftArm.elbow.rotation.x = -0.25 - Math.max(0, -sR) * walk.elbowBend;
+      rightArm.elbow.rotation.x = -0.25 - Math.max(0, -sL) * walk.elbowBend;
+
+      // Torso / pelvis secondary motion
+      pelvis.position.y = 1.55 + Math.abs(Math.sin(t * 2)) * walk.bob;
+      pelvis.rotation.y = Math.sin(t) * walk.sway;
+      pelvis.rotation.z = Math.cos(t) * walk.sway * 0.8;
+      torso.rotation.x = walk.lean + Math.sin(t * 2) * 0.02;
+      torso.rotation.y = -pelvis.rotation.y * 0.6;
+
+      // Forward locomotion on a loop path
+      biped.position.z = ((t * walk.stride * 0.35) % 16) - 8;
+      biped.position.x = Math.sin(t * 0.15) * 0.4;
+
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+  </script>
+</body>
+</html>

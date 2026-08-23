@@ -6,4 +6,4 @@ Benchmark changes are methodology changes. Do not silently edit prompts in a rel
 - Add new benchmarks as new ids; never repurpose an existing id.
 - Keep A/B/C deltas controlled.
 - Keep worker receipts factual and evaluator scores separate.
-- Run `node scripts/bench.mjs doctor` before committing.
+- Run `vp check`, `vp test`, and `vp run bench:doctor` before committing.

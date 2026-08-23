@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural Biped — Three.js</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #0b0e17;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: #cfd8ff;
+  }
+  canvas { display: block; }
+  #hud {
+    position: fixed;
+    top: 18px;
+    left: 18px;
+    padding: 14px 18px;
+    background: rgba(12, 16, 28, 0.72);
+    border: 1px solid rgba(120, 150, 255, 0.22);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    user-select: none;
+    max-width: 260px;
+  }
+  #hud h1 {
+    margin: 0 0 2px 0;
+    font-size: 15px;
+    letter-spacing: 2px;
+    font-weight: 600;
+    color: #8fe8dc;
+  }
+  #hud p {
+    margin: 0 0 12px 0;
+    font-size: 11px;
+    color: #7a86ad;
+  }
+  .ctl { margin-bottom: 10px; }
+  .ctl label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #9aa7cf;
+    margin-bottom: 4px;
+  }
+  .ctl input[type="range"] {
+    width: 100%;
+    accent-color: #3ec6b8;
+    cursor: pointer;
+  }
+  #hint {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #5b668c;
+    text-transform: uppercase;
+    user-select: none;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>PROCEDURAL BIPED</h1>
+  <p>pure math walk cycle &middot; zero keyframes</p>
+  <div class="ctl">
+    <label><span>Walk speed</span><span id="speedVal">1.20</span></label>
+    <input id="speed" type="range" min="0.2" max="2.6" step="0.05" value="1.2">
+  </div>
+  <div class="ctl">
+    <label><span>Stride</span><span id="strideVal">0.65</span></label>
+    <input id="stride" type="range" min="0.25" max="1.05" step="0.05" value="0.65">
+  </div>
+</div>
+<div id="hint">drag to orbit &middot; scroll to zoom</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---------- renderer / scene / camera ----------
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e17);
+  scene.fog = new THREE.Fog(0x0b0e17, 16, 52);
+
+  var camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 200);
+
+  var renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  document.body.appendChild(renderer.domElement);
+
+  // ---------- lights ----------
+  var hemi = new THREE.HemisphereLight(0x8fb8ff, 0x201812, 0.75);
+  scene.add(hemi);
+
+  var sun = new THREE.DirectionalLight(0xfff1dd, 1.15);
+  sun.position.set(5, 9, 4);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -7;
+  sun.shadow.camera.right = 7;
+  sun.shadow.camera.top = 7;
+  sun.shadow.camera.bottom = -7;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 25;
+  sun.shadow.bias = -0.0004;
+  scene.add(sun);
+
+  var rim = new THREE.DirectionalLight(0x3ec6b8, 0.5);
+  rim.position.set(-6, 4, -5);
+  scene.add(rim);
+
+  // ---------- ground ----------
+  var ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(220, 220),
+    new THREE.MeshStandardMaterial({ color: 0x10141f, roughness: 0.95, metalness: 0 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  var GRID_CELL = 1;
+  var grid = new THREE.GridHelper(80, 80, 0x2c3a63, 0x1a2138);
+  grid.position.y = 0.01;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.85;
+  scene.add(grid);
+
+  // scattered rocks scrolling past to sell the forward motion
+  var rocks = [];
+  var rockGeo = new THREE.DodecahedronGeometry(1, 0);
+  var rockMat = new THREE.MeshStandardMaterial({ color: 0x232b42, roughness: 0.9, flatShading: true });
+  for (var i = 0; i < 34; i++) {
+    var rock = new THREE.Mesh(rockGeo, rockMat);
+    var s = 0.08 + Math.random() * 0.3;
+    rock.scale.set(s, s * (0.6 + Math.random() * 0.6), s);
+    rock.position.set((Math.random() < 0.5 ? -1 : 1) * (1.6 + Math.random() * 9), s * 0.4, -45 + Math.random() * 60);
+    rock.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    scene.add(rock);
+    rocks.push(rock);
+  }
+
+  // ---------- materials ----------
+  var M = {
+    shell:  new THREE.MeshStandardMaterial({ color: 0x3ec6b8, roughness: 0.5,  metalness: 0.2 }),
+    belly:  new THREE.MeshStandardMaterial({ color: 0x9be8de, roughness: 0.65, metalness: 0.05 }),
+    dark:   new THREE.MeshStandardMaterial({ color: 0x17323a, roughness: 0.6,  metalness: 0.3 }),
+    accent: new THREE.MeshStandardMaterial({ color: 0xff8c42, roughness: 0.45, metalness: 0.1 }),
+    eyeW:   new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 }),
+    pupil:  new THREE.MeshStandardMaterial({ color: 0x0a0d14, roughness: 0.2 }),
+    glow:   new THREE.MeshStandardMaterial({ color: 0xff8c42, emissive: 0xff8c42, emissiveIntensity: 1.4, roughness: 0.4 })
+  };
+
+  function mesh(geo, mat, x, y, z) {
+    var m = new THREE.Mesh(geo, mat);
+    m.position.set(x || 0, y || 0, z || 0);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  // A limb segment: pivot at the TOP of the segment, geometry hangs downward.
+  function segment(rTop, rBottom, len, mat) {
+    var g = new THREE.Group();
+    var geo = new THREE.CylinderGeometry(rTop, rBottom, len, 14);
+    geo.translate(0, -len / 2, 0); // pivot at top
+    g.add(mesh(geo, mat));
+    // rounded joint cap at the pivot
+    g.add(mesh(new THREE.SphereGeometry(rTop, 14, 12), mat));
+    return g;
+  }
+
+  // ---------- creature ----------
+  var HIP_HEIGHT = 1.42;
+  var creature = new THREE.Group();
+  creature.position.y = HIP_HEIGHT;
+  scene.add(creature);
+
+  // pelvis
+  var pelvis = mesh(new THREE.BoxGeometry(0.58, 0.3, 0.4), M.dark, 0, 0, 0);
+  creature.add(pelvis);
+
+  // body group (everything above the legs) so the torso can roll/bob as one
+  var bodyG = new THREE.Group();
+  bodyG.position.y = 0.14;
+  creature.add(bodyG);
+
+  var torso = mesh(new THREE.BoxGeometry(0.68, 0.66, 0.44), M.shell, 0, 0.46, 0);
+  bodyG.add(torso);
+  var belly = mesh(new THREE.BoxGeometry(0.5, 0.42, 0.06), M.belly, 0, 0.42, 0.23);
+  bodyG.add(belly);
+  var chestLight = mesh(new THREE.BoxGeometry(0.16, 0.1, 0.03), M.glow, 0, 0.62, 0.24);
+  bodyG.add(chestLight);
+  var backpack = mesh(new THREE.BoxGeometry(0.44, 0.5, 0.16), M.dark, 0, 0.48, -0.3);
+  bodyG.add(backpack);
+
+  // head
+  var headG = new THREE.Group();
+  headG.position.y = 0.98;
+  bodyG.add(headG);
+  var skull = mesh(new THREE.SphereGeometry(0.32, 24, 18), M.shell, 0, 0.12, 0);
+  skull.scale.set(1, 0.92, 1.05);
+  headG.add(skull);
+  var snout = mesh(new THREE.BoxGeometry(0.3, 0.14, 0.16), M.belly, 0, 0.02, 0.28);
+  headG.add(snout);
+
+  var eyeL = new THREE.Group();
+  eyeL.position.set(0.13, 0.16, 0.26);
+  eyeL.add(mesh(new THREE.SphereGeometry(0.085, 16, 12), M.eyeW));
+  var pupilL = mesh(new THREE.SphereGeometry(0.04, 12, 10), M.pupil, 0, 0, 0.055);
+  eyeL.add(pupilL);
+  headG.add(eyeL);
+
+  var eyeR = new THREE.Group();
+  eyeR.position.set(-0.13, 0.16, 0.26);
+  eyeR.add(mesh(new THREE.SphereGeometry(0.085, 16, 12), M.eyeW));
+  var pupilR = mesh(new THREE.SphereGeometry(0.04, 12, 10), M.pupil, 0, 0, 0.055);
+  eyeR.add(pupilR);
+  headG.add(eyeR);
+
+  // antenna
+  var antG = new THREE.Group();
+  antG.position.set(0, 0.4, 0);
+  var antStemGeo = new THREE.CylinderGeometry(0.016, 0.024, 0.34, 8);
+  antStemGeo.translate(0, 0.17, 0);
+  antG.add(mesh(antStemGeo, M.dark));
+  antG.add(mesh(new THREE.SphereGeometry(0.05, 12, 10), M.glow, 0, 0.37, 0));
+  headG.add(antG);
+
+  // arms — shoulder pivots at the torso sides
+  function buildArm(side) {
+    var shoulder = new THREE.Group();
+    shoulder.position.set(0.4 * side, 0.72, 0);
+    var upper = segment(0.085, 0.07, 0.46, M.shell);
+    shoulder.add(upper);
+    var elbow = new THREE.Group();
+    elbow.position.y = -0.46;
+    upper.add(elbow);
+    var fore = segment(0.065, 0.055, 0.4, M.dark);
+    elbow.add(fore);
+    fore.add(mesh(new THREE.SphereGeometry(0.095, 14, 12), M.accent, 0, -0.42, 0)); // hand
+    bodyG.add(shoulder);
+    return { shoulder: shoulder, elbow: elbow };
+  }
+  var armL = buildArm(1);
+  var armR = buildArm(-1);
+
+  // legs — hip pivots under the pelvis
+  function buildLeg(side) {
+    var hip = new THREE.Group();
+    hip.position.set(0.19 * side, -0.1, 0);
+    var thigh = segment(0.115, 0.09, 0.6, M.shell);
+    hip.add(thigh);
+    var knee = new THREE.Group();
+    knee.position.y = -0.6;
+    thigh.add(knee);
+    var shin = segment(0.085, 0.06, 0.56, M.dark);
+    knee.add(shin);
+    var footG = new THREE.Group();
+    footG.position.y = -0.56;
+    shin.add(footG);
+    footG.add(mesh(new THREE.BoxGeometry(0.2, 0.11, 0.4), M.accent, 0, -0.055, 0.09));
+    creature.add(hip);
+    return { hip: hip, knee: knee, foot: footG };
+  }
+  var legL = buildLeg(1);
+  var legR = buildLeg(-1);
+
+  // ---------- UI ----------
+  var params = { speed: 1.2, stride: 0.65 };
+  var speedEl = document.getElementById('speed');
+  var strideEl = document.getElementById('stride');
+  var speedVal = document.getElementById('speedVal');
+  var strideVal = document.getElementById('strideVal');
+  speedEl.addEventListener('input', function () {
+    params.speed = parseFloat(speedEl.value);
+    speedVal.textContent = params.speed.toFixed(2);
+  });
+  strideEl.addEventListener('input', function () {
+    params.stride = parseFloat(strideEl.value);
+    strideVal.textContent = params.stride.toFixed(2);
+  });
+
+  // ---------- camera orbit (custom, no extra deps) ----------
+  var orbit = { theta: 0.65, phi: 1.12, radius: 6.4, target: new THREE.Vector3(0, 1.25, 0), dragging: false, px: 0, py: 0, idle: 0 };
+  renderer.domElement.addEventListener('pointerdown', function (e) {
+    orbit.dragging = true; orbit.px = e.clientX; orbit.py = e.clientY; orbit.idle = 0;
+  });
+  window.addEventListener('pointermove', function (e) {
+    if (!orbit.dragging) return;
+    orbit.theta -= (e.clientX - orbit.px) * 0.006;
+    orbit.phi = Math.max(0.35, Math.min(1.5, orbit.phi - (e.clientY - orbit.py) * 0.005));
+    orbit.px = e.clientX; orbit.py = e.clientY;
+  });
+  window.addEventListener('pointerup', function () { orbit.dragging = false; });
+  renderer.domElement.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    orbit.radius = Math.max(3.2, Math.min(14, orbit.radius + e.deltaY * 0.004));
+    orbit.idle = 0;
+  }, { passive: false });
+
+  // ---------- animation ----------
+  var clock = new THREE.Clock();
+  var t = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    var dt = Math.min(clock.getDelta(), 0.05);
+    t += dt;
+
+    var freq = params.speed;            // full walk cycles per second
+    var amp = params.stride;            // hip swing amplitude (radians)
+    var phase = t * freq * Math.PI * 2; // walk-cycle phase
+    var s = Math.sin(phase);
+    var s2 = Math.sin(phase * 2);
+
+    // legs — opposite phase, knees flex during the forward swing
+    legL.hip.rotation.x = s * amp;
+    legR.hip.rotation.x = -s * amp;
+    var kneeBendL = Math.max(0, Math.cos(phase - 0.35)) * (0.55 + amp * 0.75);
+    var kneeBendR = Math.max(0, Math.cos(phase + Math.PI - 0.35)) * (0.55 + amp * 0.75);
+    legL.knee.rotation.x = kneeBendL;
+    legR.knee.rotation.x = kneeBendR;
+    // feet stay roughly flat, with a small toe push-off at the end of stance
+    legL.foot.rotation.x = -(legL.hip.rotation.x + kneeBendL) * 0.55 + Math.max(0, -s) * 0.28;
+    legR.foot.rotation.x = -(legR.hip.rotation.x + kneeBendR) * 0.55 + Math.max(0, s) * 0.28;
+
+    // arms counter-swing the legs, elbows keep a soft bend
+    var armAmp = amp * 0.75;
+    armL.shoulder.rotation.x = -s * armAmp;
+    armR.shoulder.rotation.x = s * armAmp;
+    armL.elbow.rotation.x = -(0.35 + Math.max(0, -s) * 0.35);
+    armR.elbow.rotation.x = -(0.35 + Math.max(0, s) * 0.35);
+
+    // body: double-frequency bob, forward lean, counter-yaw, lateral roll
+    creature.position.y = HIP_HEIGHT + s2 * 0.05 - 0.02;
+    bodyG.rotation.x = 0.09 + s2 * 0.025;
+    bodyG.rotation.y = s * 0.12;
+    bodyG.rotation.z = s * 0.055;
+    creature.rotation.z = -s * 0.03;
+
+    // head: subtle bob + idle look-around
+    headG.rotation.x = -0.05 + s2 * 0.03;
+    headG.rotation.y = Math.sin(t * 0.55) * 0.28;
+
+    // antenna wobble
+    antG.rotation.z = Math.sin(t * 5.1) * 0.13;
+    antG.rotation.x = Math.cos(t * 4.3) * 0.11;
+
+    // blink every ~3.7 s
+    var blink = (t % 3.7) < 0.12 ? 0.12 : 1;
+    pupilL.scale.y = blink;
+    pupilR.scale.y = blink;
+
+    // world scroll — creature walks in place, ground slides backward
+    var worldSpeed = freq * amp * 2.6;
+    grid.position.z = (t * worldSpeed) % GRID_CELL;
+    for (var i = 0; i < rocks.length; i++) {
+      var r = rocks[i];
+      r.position.z += worldSpeed * dt;
+      if (r.position.z > 16) {
+        r.position.z -= 62;
+        r.position.x = (Math.random() < 0.5 ? -1 : 1) * (1.6 + Math.random() * 9);
+      }
+    }
+
+    // camera orbit with gentle auto-drift when idle
+    orbit.idle += dt;
+    if (!orbit.dragging && orbit.idle > 2.5) orbit.theta += dt * 0.07;
+    var sp = Math.sin(orbit.phi);
+    camera.position.set(
+      orbit.target.x + orbit.radius * sp * Math.sin(orbit.theta),
+      orbit.target.y + orbit.radius * Math.cos(orbit.phi),
+      orbit.target.z + orbit.radius * sp * Math.cos(orbit.theta)
+    );
+    camera.lookAt(orbit.target);
+
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  animate();
+})();
+</script>
+</body>
+</html>
