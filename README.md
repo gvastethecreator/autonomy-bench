@@ -60,7 +60,7 @@ vp run bench:doctor
 vp run dev
 ```
 
-VS Code tasks live in `.vscode/tasks.json` (`vp: check`, `vp: test`, `vp: gallery`, and the bench/deploy scripts). Install the Vite Plus extension pack so format-on-save matches `vp fmt`.
+VS Code tasks live in `.vscode/tasks.json` (`🔍 check`, `🧪 test`, `🖼️ gallery`, `⚡ dev`, `🩺 bench:doctor`, etc.). Install the Vite Plus extension pack so format-on-save matches `vp fmt`.
 
 ## Commands
 

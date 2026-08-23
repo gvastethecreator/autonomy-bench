@@ -5,7 +5,6 @@ const generated = [
   'runs/**',
   'exports/**',
   'receipts/**',
-  'autonomy-bench/**',
   '.wrangler/**',
   'dist/**',
   'node_modules/**',
