@@ -51,7 +51,7 @@ Full CLI, run modes, and gallery publish steps: [docs/commands.md](docs/commands
 ## Status
 
 - Suite version `2.0.0` in `suites/browser-autonomy/suite.json`.
-- Package version `0.7.0`. See [CHANGELOG.md](CHANGELOG.md).
+- Package version `0.8.0`. See [CHANGELOG.md](CHANGELOG.md).
 - All 33 v1.5 concepts remain in the suite. Raw A prompts are neutralized where wording unnecessarily prescribed interaction or quality; Rollercoaster A remains byte-for-byte unchanged.
 - B and C are now frozen and runnable across the full suite. Gallery publishing accepts A/B/C takes.
 - `n=1` runs are exploratory. Use at least two independent attempts before claiming a stable model effect.
