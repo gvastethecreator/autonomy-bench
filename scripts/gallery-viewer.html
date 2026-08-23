@@ -1294,6 +1294,7 @@
     import { animate, scrambleText, remove, cubicBezier, createLayout } from './vendor/anime.esm.min.js';
     /* __HIGHLIGHT_HTML__ */
     /* __SCRAMBLE_SPAN__ */
+    /* __STACK_PANELS__ */
     /* __IFRAME_QUEUE__ */
     /* __RUN_MONTH__ */
     /* __VOTES__ */
@@ -1407,7 +1408,7 @@
         target = el.querySelector('.scramble-mid');
         target.textContent = parts.fromMid;
       }
-      if (el.id !== 'mark') el.setAttribute('aria-hidden', 'true');
+      if (el.id !== 'mark' && el.tagName !== 'H1' && el.tagName !== 'H2') el.setAttribute('aria-hidden', 'true');
       const anim = animate(target, {
         innerHTML: scrambleText({
           text: dest,
@@ -2529,7 +2530,7 @@
     }
     function htmlPanelMarkup(key) {
       return '<section class="panel" data-kind="html" data-stack="' + esc(key) + '">'
-        + '<header class="drawer-head"><h2>HTML · ' + esc(stackLabel(key)) + '</h2>'
+        + '<header class="drawer-head"><h2></h2>'
         + '<button type="button" class="panel-copy" data-icon="copy" data-tip="Copy" aria-label="Copy"><span class="label">Copy</span></button>'
         + '<button type="button" class="icon-only panel-close" data-icon="close" data-tip="Close HTML" aria-label="Close HTML"></button></header>'
         + '<div class="source-port"><div class="source-loader" hidden role="status"><p class="frame-loader-text">Loading</p></div>'
@@ -2537,9 +2538,25 @@
     }
     function receiptPanelMarkup(key) {
       return '<section class="panel" data-kind="receipt" data-stack="' + esc(key) + '">'
-        + '<header class="drawer-head"><h2>Receipt · ' + esc(stackLabel(key)) + '</h2>'
+        + '<header class="drawer-head"><h2></h2>'
         + '<button type="button" class="icon-only panel-close" data-icon="close" data-tip="Close receipt" aria-label="Close receipt"></button></header>'
         + '<div class="drawer-body">' + receiptMarkup(cellForKey(key)) + '</div></section>';
+    }
+    function paintStackHeading(panel, kind, key) {
+      if (!panel) return;
+      scrambleTo(panel.querySelector('h2'), stackHeading(kind, stackLabel(key)), 'label');
+    }
+    function bindReceiptPanel(panel, key) {
+      const cell = cellForKey(key);
+      const sig = receiptBindKey(cell, stackLabel(key));
+      if (panel.dataset.bind === sig) return;
+      const first = panel.dataset.bind == null;
+      panel.dataset.bind = sig;
+      if (first) return;
+      const body = panel.querySelector('.drawer-body');
+      if (!body) return;
+      body.innerHTML = receiptMarkup(cell);
+      paintIcons(body);
     }
     function syncStack(kind, keys) {
       const el = document.getElementById('stack-' + kind);
@@ -2549,20 +2566,38 @@
       const fromWidth = el.getBoundingClientRect().width;
       const fromOpacity = parseFloat(getComputedStyle(el).opacity);
       const fromMargin = parseFloat(getComputedStyle(el).marginInlineStart) || 0;
-      el.innerHTML = keys.map(key => kind === 'html' ? htmlPanelMarkup(key) : receiptPanelMarkup(key)).join('');
-      paintIcons(el);
+      const prev = [...el.querySelectorAll(':scope > .panel')];
+      const map = new Map(prev.map(panel => [panel.dataset.stack, panel]));
+      const plan = nextPanelKeys(prev.map(panel => panel.dataset.stack), keys);
+      plan.remove.forEach(key => {
+        const panel = map.get(key);
+        if (!panel) return;
+        stopMotion(panel.querySelector('h2'));
+        panel.remove();
+        map.delete(key);
+      });
+      keys.forEach(key => {
+        let panel = map.get(key);
+        let created = false;
+        if (!panel) {
+          el.insertAdjacentHTML('beforeend', kind === 'html' ? htmlPanelMarkup(key) : receiptPanelMarkup(key));
+          panel = el.querySelector(':scope > .panel[data-stack="' + CSS.escape(key) + '"]');
+          paintIcons(panel);
+          created = true;
+          map.set(key, panel);
+        }
+        if (panel) el.appendChild(panel);
+        paintStackHeading(panel, kind, key);
+        const cell = cellForKey(key);
+        if (kind === 'html') loadHtmlIntoPanel(panel, cell && cell.src);
+        else if (created) panel.dataset.bind = receiptBindKey(cell, stackLabel(key));
+        else bindReceiptPanel(panel, key);
+      });
       el.classList.toggle('open', open);
       el.hidden = !open;
       el.toggleAttribute('inert', !open);
       el.setAttribute('aria-hidden', open ? 'false' : 'true');
       if (open !== wasOpen) animateDrawer(el, open, fromWidth, fromOpacity, fromMargin);
-      if (kind === 'html') {
-        keys.forEach(key => {
-          const cell = cellForKey(key);
-          const panel = el.querySelector('.panel[data-stack="' + CSS.escape(key) + '"]');
-          if (panel) loadHtmlIntoPanel(panel, cell && cell.src);
-        });
-      }
     }
     function renderStacks() {
       state.htmlOpen = state.htmlOpen.filter(key => {
@@ -2675,13 +2710,31 @@
       scheduleFitFrameText();
     }
     async function loadHtmlIntoPanel(panel, src) {
+      const nextSrc = src || '';
+      if (shouldReuseSource(panel.dataset.boundSrc, panel.dataset.ready, nextSrc)) return;
+      const token = String((Number(panel.dataset.loadToken) || 0) + 1);
+      panel.dataset.loadToken = token;
+      panel.dataset.boundSrc = nextSrc;
+      panel.dataset.ready = '0';
       const code = panel.querySelector('code');
       const loader = panel.querySelector('.source-loader');
       const copyBtn = panel.querySelector('.panel-copy');
+      const stale = () => panel.dataset.loadToken !== token;
       const stop = () => {
+        if (stale()) return;
         if (loader) loader.hidden = true;
         panel.removeAttribute('aria-busy');
+        panel.dataset.ready = '1';
       };
+      if (copyBtn && copyBtn.classList.contains('copied')) {
+        copyBtn.classList.remove('copied');
+        const label = copyBtn.querySelector('.label');
+        if (label) scrambleTo(label, 'Copy', 'label');
+        copyBtn.setAttribute('aria-label', 'Copy');
+        copyBtn.setAttribute('data-tip', 'Copy');
+        const iconEl = copyBtn.querySelector('.icon');
+        if (iconEl) iconEl.outerHTML = icon('copy');
+      }
       if (!src) {
         if (code) code.textContent = 'No HTML for this take.';
         if (copyBtn) copyBtn.disabled = true;
@@ -2692,12 +2745,21 @@
       if (copyBtn) copyBtn.disabled = false;
       if (sourceCache.has(src)) {
         const text = sourceCache.get(src);
+        if (stale()) return;
         panel.dataset.raw = text;
         if (code) code.innerHTML = highlightHtml(text);
         stop();
         return;
       }
-      if (loader) loader.hidden = false;
+      if (loader) {
+        loader.hidden = false;
+        const loading = loader.querySelector('.frame-loader-text');
+        if (loading && loading.dataset.plain !== 'Loading') {
+          loading.textContent = '';
+          delete loading.dataset.plain;
+          scrambleTo(loading, 'Loading', 'label');
+        }
+      }
       panel.setAttribute('aria-busy', 'true');
       if (code) code.textContent = '';
       try {
@@ -2705,9 +2767,11 @@
         if (!res.ok) throw new Error(String(res.status));
         const text = await res.text();
         sourceCache.set(src, text);
+        if (stale()) return;
         panel.dataset.raw = text;
         if (code) code.innerHTML = highlightHtml(text);
       } catch (err) {
+        if (stale()) return;
         panel.dataset.raw = '';
         if (code) code.textContent = 'Could not load source.';
       }

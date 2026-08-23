@@ -20,7 +20,7 @@ Default experiment order: Rollercoaster, Endless Driving, Medieval City, Procedu
 
 ## Motion
 
-Title, toast, Copy/Copied, Compact/Expand, vote labels, and the experiment/prompt/month/run chips scramble with Anime.js when their copy changes. Shared prefix and suffix stay still. Source and receipt stacks, plus Compact, animate open and closed. Tooltips use the same snap curve. The model list uses Anime.js `createLayout` when a benchmark, month, or run change adds or removes models. `prefers-reduced-motion` skips travel and sets the text immediately.
+Title, toast, Copy/Copied, Compact/Expand, vote labels, stack headings, and the experiment/prompt/month/run chips scramble with Anime.js when their copy changes. Shared prefix and suffix stay still. Source and receipt stacks keep the same panel for a take (`model::level`) so scroll, highlight, and copy state survive chrome updates; they still animate open and closed. Tooltips use the same snap curve. The model list uses Anime.js `createLayout` when a benchmark, month, or run change adds or removes models. `prefers-reduced-motion` skips travel and sets the text immediately.
 
 ## Shortcuts
 
