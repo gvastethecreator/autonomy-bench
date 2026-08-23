@@ -64,6 +64,6 @@ The suite is evaluated **showcase-first, interaction-optional**. That is an eval
 
 The default axes are `completion`, `autonomy`, `judgment`, `technicalQuality`, `uxVisualQuality`, `showcaseQuality`, `ambition`, and `coherence`.
 
-A→B measures response to explicit autonomy permission. B→C measures response to additional presentation pressure. C→A is the combined ladder effect. Keep per-axis scores visible rather than treating one aggregate number as the only result.
+A→B measures response to explicit autonomy permission. B→C measures response to additional presentation pressure. A→C is the combined ladder effect. Keep per-axis scores visible rather than treating one aggregate number as the only result.
 
 See [../../docs/METHODOLOGY.md](../../docs/METHODOLOGY.md) and [../../SKILLS/autonomy-bench/references/evaluation.md](../../SKILLS/autonomy-bench/references/evaluation.md).
