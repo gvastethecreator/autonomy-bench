@@ -19,7 +19,9 @@ VS Code tasks live in `.vscode/tasks.json`. Install the Vite Plus extension pack
 ```powershell
 vp run bench -- list
 vp run bench -- show rollercoaster --level A
-vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A --attempts 2 --adapter manual --harness cursor --contributor gvastethecreator
+vp run bench -- show rollercoaster --level B
+vp run bench -- show rollercoaster --level C
+vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A,B,C --attempts 2 --adapter manual --harness cursor --contributor gvastethecreator
 vp run bench -- status --run <run-id>
 vp run bench -- gallery --run <run-id>
 vp run bench -- export-prototype-lab --run <run-id>
@@ -28,6 +30,8 @@ vp run bench -- finalize --run <run-id>
 
 `plan` never calls a model. It freezes the matrix and writes one isolated work packet per cell. `--contributor` is a GitHub login stored on every cell receipt with that take's avatar URL.
 
+All A/B/C prompts are frozen in Browser Autonomy v2. Because the planner defaults to every fully populated prompt level, omitting `--levels` currently selects `A,B,C`. Pass `--levels A`, `--levels B`, `--levels C`, or another explicit subset when you want to control run size and cost.
+
 ## Run mode and adapter
 
 A run mode describes **what is compared**. An adapter describes **how cells are executed**. Do not mix the two.
@@ -35,10 +39,10 @@ A run mode describes **what is compared**. An adapter describes **how cells are 
 Run modes:
 
 - `single`: one benchmark × one model.
-- `prompt-ladder`: A/B/C slots stay in the suite. A is frozen; B and C prompts are reserved until written.
+- `prompt-ladder`: A/B/C for the same benchmark and model. A is Raw, B adds exactly 20 words of autonomy permission, and C adds exactly 20 further words of showcase pressure.
 - `model-shootout`: several models against the same frozen prompt.
 - `matrix`: chosen benchmarks × models × attempts.
-- `suite`: the complete 32-benchmark matrix.
+- `suite`: the complete 33-benchmark matrix.
 
 Adapters:
 
@@ -55,7 +59,7 @@ vp run dev
 vp run deploy
 ```
 
-`gallery --run` copies each take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus `gallery/vendor/anime.esm.min.js`.
+`gallery --run` copies each publishable A/B/C take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus `gallery/vendor/anime.esm.min.js`.
 
 Local votes need the D1 schema once:
 
