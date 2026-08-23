@@ -10,6 +10,34 @@ Autonomy Bench has five layers:
 
 This separation allows the benchmark method to stay stable while model providers and execution tools change.
 
+Use Autonomy Bench to freeze and index a benchmark matrix. Use Prototype Lab when you need its richer browser proof, comparison hubs, and packaging.
+
+## Repository layout
+
+```text
+suites/                         versioned benchmark definitions
+  browser-autonomy/
+    suite.json
+    README.md
+runs/
+  YYYY/MM/DD/<run-id>/          one frozen execution
+    manifest.json
+    cells/<model>/<prompt-V>/   ledger: prompt, receipt, output
+    completion-receipt.json     written only by finalize
+gallery/
+  index.html                    public stage viewer
+  catalog.json
+  <model>/<prompt-V>/<fecha>/
+exports/prototype-lab/<run-id>/ generated Prototype Lab specs
+receipts/YYYY/MM/DD/            workflow receipts
+SKILLS/autonomy-bench/          coordinator skill
+scripts/bench.mjs               plan / status / finalize
+scripts/gallery.mjs             publish takes into gallery/
+schemas/                        receipt and manifest schemas
+```
+
+`<prompt-V>` is `{benchmark}-{A|B|C}` (`rollercoaster-A`). `<fecha>` is `{YYYY-MM-DD}-{HHMMSS}` from the run id. Extra attempts append `-a02` on the gallery date folder, or an `a02/` child in the ledger.
+
 ## Stable IDs
 
 A cell id is derived from benchmark, level, normalized model id, and attempt. A run id adds a UTC timestamp and a short hash of the planned matrix.

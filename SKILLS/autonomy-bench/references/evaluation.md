@@ -21,7 +21,7 @@ When comparing models, hide model labels during the first qualitative pass. Keep
 
 ## Prompt-ladder interpretation
 
-A→B measures response to explicit autonomy permission. B→C measures response to a higher finish target. Do not interpret a single pair as a stable effect; repeated attempts are required for claims about typical behavior.
+A→B measures response to explicit autonomy permission. B→C measures response to an automatic-showcase target. Do not interpret a single pair as a stable effect; repeated attempts are required for claims about typical behavior.
 
 ## Evidence
 

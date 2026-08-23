@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Infinite Maze B - Gemini 3.1 Pro</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+    #hud { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); text-align: center; color: white; background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(4px); }
+    #compass { margin-top: 5px; font-weight: bold; color: #4dc; }
+    #crosshair { position: absolute; top: 50%; left: 50%; width: 4px; height: 4px; background: white; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="hud">Grid Labyrinth (Level B) <br><div id="compass">N</div></div>
+  <div id="crosshair"></div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0c);
+    scene.fog = new THREE.FogExp2(0x0a0a0c, 0.1);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.6, 0); // Eye height
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    // Dynamic Flashlight
+    const flashlight = new THREE.SpotLight(0xffffff, 2, 20, Math.PI / 4, 0.5, 1);
+    flashlight.position.set(0, 0, 0);
+    camera.add(flashlight);
+    flashlight.target = new THREE.Object3D();
+    flashlight.target.position.set(0, 0, -1);
+    camera.add(flashlight.target);
+    scene.add(camera); // Add camera to scene to apply children lights
+
+    scene.add(new THREE.AmbientLight(0x111122));
+
+    // Maze generation
+    const wallGeo = new THREE.BoxGeometry(2, 4, 2);
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x334455, roughness: 0.9, metalness: 0.1 });
+    
+    // Checkered floor
+    const floorGeo = new THREE.PlaneGeometry(200, 200, 50, 50);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    // Instanced mesh for walls to handle infinite-like maze without lagging
+    const dummy = new THREE.Object3D();
+    const mazeSize = 20;
+    const instancedWalls = new THREE.InstancedMesh(wallGeo, wallMat, mazeSize * mazeSize);
+    
+    let count = 0;
+    for (let x = -mazeSize/2; x < mazeSize/2; x++) {
+        for (let z = -mazeSize/2; z < mazeSize/2; z++) {
+            // Leave center clear
+            if (Math.abs(x) < 2 && Math.abs(z) < 2) continue;
+            
+            // Random maze pattern
+            if (Math.random() > 0.6) {
+                dummy.position.set(x * 2, 2, z * 2);
+                dummy.updateMatrix();
+                instancedWalls.setMatrixAt(count++, dummy.matrix);
+            }
+        }
+    }
+    instancedWalls.count = count;
+    scene.add(instancedWalls);
+
+    const keys = { w: false, a: false, s: false, d: false };
+    window.addEventListener('keydown', e => { if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; });
+    window.addEventListener('keyup', e => { if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
+
+    let pitch = 0, yaw = 0;
+    document.addEventListener('mousemove', e => {
+        if (document.pointerLockElement === document.body) {
+            yaw -= e.movementX * 0.002;
+            pitch -= e.movementY * 0.002;
+            pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+        }
+    });
+    document.body.addEventListener('click', () => document.body.requestPointerLock());
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const compassEl = document.getElementById('compass');
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        const speed = 0.08;
+        const dir = new THREE.Vector3();
+        if (keys.w) dir.z -= speed;
+        if (keys.s) dir.z += speed;
+        if (keys.a) dir.x -= speed;
+        if (keys.d) dir.x += speed;
+        
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        
+        // Simple collision (prevent walking too far from center for now)
+        const nextPos = camera.position.clone().add(dir);
+        if(Math.abs(nextPos.x) < 38 && Math.abs(nextPos.z) < 38) {
+            camera.position.copy(nextPos);
+        }
+        
+        camera.rotation.set(pitch, yaw, 0, 'YXZ');
+        
+        // Update compass
+        let angle = (yaw * 180 / Math.PI) % 360;
+        if (angle < 0) angle += 360;
+        let dirStr = "N";
+        if (angle > 45 && angle <= 135) dirStr = "W";
+        else if (angle > 135 && angle <= 225) dirStr = "S";
+        else if (angle > 225 && angle <= 315) dirStr = "E";
+        compassEl.innerText = `Heading: ${dirStr} (${angle.toFixed(0)}°)`;
+
+        renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

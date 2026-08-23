@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infinite Maze</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a12; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const CELL = 4;
+const WALL_H = 3.2;
+const WALL_T = 0.35;
+const CHUNK = 8;
+const VIEW = 3;
+const SPEED = 3.2;
+const TURN_SPEED = 2.4;
+const SEED = 0xC0FFEE;
+
+const DIRS = [
+  { dx: 0, dz: -1, bit: 1, ang: 0 },
+  { dx: 1, dz: 0, bit: 2, ang: -Math.PI / 2 },
+  { dx: 0, dz: 1, bit: 4, ang: Math.PI },
+  { dx: -1, dz: 0, bit: 8, ang: Math.PI / 2 },
+];
+
+function hash(x, z) {
+  let h = SEED ^ (x * 374761393) ^ (z * 668265263);
+  h = (h ^ (h >>> 13)) * 1274126177;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function rng(state) {
+  state = (state * 1664525 + 1013904223) >>> 0;
+  return [state, (state >>> 0) / 4294967296];
+}
+
+function carveMaze(cx, cz) {
+  const w = CHUNK * 2 + 1;
+  const h = CHUNK * 2 + 1;
+  const grid = new Uint8Array(w * h);
+  const stack = [[1, 1]];
+  grid[1 * w + 1] = 1;
+  let [state] = [hash(cx, cz)];
+
+  while (stack.length) {
+    const [x, z] = stack[stack.length - 1];
+    const opts = [];
+    for (const d of DIRS) {
+      const nx = x + d.dx * 2;
+      const nz = z + d.dz * 2;
+      if (nx > 0 && nz > 0 && nx < w - 1 && nz < h - 1 && !grid[nz * w + nx]) {
+        opts.push([nx, nz, x + d.dx, z + d.dz]);
+      }
+    }
+    if (!opts.length) { stack.pop(); continue; }
+    let idx;
+    [state, idx] = rng(state);
+    idx = Math.floor(idx * opts.length);
+    const [nx, nz, wx, wz] = opts[idx];
+    grid[nz * w + nx] = 1;
+    grid[wz * w + wx] = 1;
+    stack.push([nx, nz]);
+  }
+  return { grid, w, h, cx, cz };
+}
+
+function worldCell(gx, gz) {
+  const cx = Math.floor(gx / CHUNK);
+  const cz = Math.floor(gz / CHUNK);
+  const lx = ((gx % CHUNK) + CHUNK) % CHUNK;
+  const lz = ((gz % CHUNK) + CHUNK) % CHUNK;
+  return { cx, cz, lx, lz };
+}
+
+const chunks = new Map();
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x8899bb, roughness: 0.85, metalness: 0.05 });
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x1a2233, roughness: 0.95, metalness: 0.02 });
+const ceilMat = new THREE.MeshStandardMaterial({ color: 0x0e1420, roughness: 1, metalness: 0 });
+const accentMat = new THREE.MeshStandardMaterial({ color: 0x44ccaa, emissive: 0x115544, emissiveIntensity: 0.35, roughness: 0.6 });
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080810);
+scene.fog = new THREE.Fog(0x080810, 8, 48);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 80);
+camera.position.set(CELL * 0.5, 1.65, CELL * 0.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0x334466, 0.45));
+const sun = new THREE.DirectionalLight(0xaaccff, 0.55);
+sun.position.set(6, 14, 4);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+scene.add(sun);
+
+const torches = new THREE.PointLight(0xffaa66, 0.9, 14, 2);
+scene.add(torches);
+
+const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, WALL_T);
+const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
+const pillarGeo = new THREE.BoxGeometry(0.18, WALL_H, 0.18);
+
+function chunkKey(cx, cz) { return cx + ',' + cz; }
+
+function isOpen(gx, gz) {
+  const { cx, cz, lx, lz } = worldCell(gx, gz);
+  const key = chunkKey(cx, cz);
+  if (!chunks.has(key)) return true;
+  const c = chunks.get(key);
+  const ix = lx * 2 + 1;
+  const iz = lz * 2 + 1;
+  return c.grid[iz * c.w + ix] === 1;
+}
+
+function getChunk(cx, cz) {
+  const key = chunkKey(cx, cz);
+  if (chunks.has(key)) return chunks.get(key);
+  const data = carveMaze(cx, cz);
+  const group = new THREE.Group();
+  group.position.set(cx * CHUNK * CELL, 0, cz * CHUNK * CELL);
+
+  for (let lz = 0; lz < CHUNK; lz++) {
+    for (let lx = 0; lx < CHUNK; lx++) {
+      const ix = lx * 2 + 1;
+      const iz = lz * 2 + 1;
+      if (!data.grid[iz * data.w + ix]) continue;
+
+      const wx = lx * CELL + CELL * 0.5;
+      const wz = lz * CELL + CELL * 0.5;
+
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.set(wx, 0, wz);
+      floor.receiveShadow = true;
+      group.add(floor);
+
+      const ceil = new THREE.Mesh(floorGeo, ceilMat);
+      ceil.rotation.x = Math.PI / 2;
+      ceil.position.set(wx, WALL_H, wz);
+      group.add(ceil);
+
+      if (hash(cx * 997 + lx, cz * 991 + lz) % 17 === 0) {
+        const pillar = new THREE.Mesh(pillarGeo, accentMat);
+        pillar.position.set(wx, WALL_H * 0.5, wz);
+        pillar.castShadow = true;
+        group.add(pillar);
+      }
+
+      const gx = cx * CHUNK + lx;
+      const gz = cz * CHUNK + lz;
+      for (const d of DIRS) {
+        const nx = gx + d.dx;
+        const nz = gz + d.dz;
+        if (isOpen(nx, nz)) continue;
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+        wall.position.set(wx + d.dx * (CELL * 0.5), WALL_H * 0.5, wz + d.dz * (CELL * 0.5));
+        if (d.dx !== 0) wall.rotation.y = Math.PI / 2;
+        group.add(wall);
+      }
+    }
+  }
+
+  data.group = group;
+  scene.add(group);
+  chunks.set(key, data);
+  return data;
+}
+
+function ensureChunksAround(gx, gz) {
+  const { cx, cz } = worldCell(gx, gz);
+  for (let dz = -VIEW; dz <= VIEW; dz++) {
+    for (let dx = -VIEW; dx <= VIEW; dx++) {
+      getChunk(cx + dx, cz + dz);
+    }
+  }
+  for (const [key, c] of chunks) {
+    if (Math.abs(c.cx - cx) > VIEW + 1 || Math.abs(c.cz - cz) > VIEW + 1) {
+      scene.remove(c.group);
+      c.group.traverse(o => {
+        if (o.geometry && o.geometry !== wallGeo && o.geometry !== floorGeo && o.geometry !== pillarGeo) o.geometry.dispose();
+      });
+      chunks.delete(key);
+    }
+  }
+}
+
+function openDirs(gx, gz) {
+  const out = [];
+  for (const d of DIRS) {
+    if (isOpen(gx + d.dx, gz + d.dz)) out.push(d);
+  }
+  return out;
+}
+
+function pickDir(gx, gz, prevDx, prevDz) {
+  const opts = openDirs(gx, gz);
+  if (!opts.length) return null;
+  const back = opts.filter(d => d.dx === -prevDx && d.dz === -prevDz);
+  const forward = opts.filter(d => !(d.dx === -prevDx && d.dz === -prevDz));
+  const pool = forward.length ? forward : opts;
+  const h = hash(gx, gz);
+  return pool[h % pool.length];
+}
+
+let cellX = 0, cellZ = 0;
+let dirDx = 0, dirDz = -1;
+let targetYaw = 0;
+let yaw = 0;
+let phase = 'move';
+let t = 0;
+let fromX = 0, fromZ = 0, toX = 0, toZ = 0;
+let nextCellX = 0, nextCellZ = 0;
+
+function startMove() {
+  const d = pickDir(cellX, cellZ, dirDx, dirDz);
+  if (!d) {
+    dirDx = -dirDx; dirDz = -dirDz;
+    targetYaw = DIRS.find(x => x.dx === dirDx && x.dz === dirDz).ang;
+    phase = 'turn';
+    t = 0;
+    return;
+  }
+  dirDx = d.dx; dirDz = d.dz;
+  nextCellX = cellX + dirDx;
+  nextCellZ = cellZ + dirDz;
+  fromX = cellX * CELL + CELL * 0.5;
+  fromZ = cellZ * CELL + CELL * 0.5;
+  toX = nextCellX * CELL + CELL * 0.5;
+  toZ = nextCellZ * CELL + CELL * 0.5;
+  targetYaw = d.ang;
+  phase = dirDx !== 0 || dirDz !== 0 ? (Math.abs(shortestAngle(yaw, targetYaw)) > 0.05 ? 'turn' : 'walk') : 'walk';
+  t = 0;
+}
+
+function shortestAngle(a, b) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function lerp(a, b, u) { return a + (b - a) * u; }
+function ease(u) { return u * u * (3 - 2 * u); }
+
+ensureChunksAround(0, 0);
+startMove();
+
+const clock = new THREE.Clock();
+
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (phase === 'turn') {
+    const diff = shortestAngle(yaw, targetYaw);
+    const step = TURN_SPEED * dt;
+    if (Math.abs(diff) <= step) {
+      yaw = targetYaw;
+      if (fromX !== toX || fromZ !== toZ) phase = 'walk';
+      else { cellX = nextCellX; cellZ = nextCellZ; startMove(); }
+    } else {
+      yaw += Math.sign(diff) * step;
+    }
+  } else if (phase === 'walk') {
+    t += (SPEED / CELL) * dt;
+    const u = ease(Math.min(t, 1));
+    camera.position.x = lerp(fromX, toX, u);
+    camera.position.z = lerp(fromZ, toZ, u);
+    if (t >= 1) {
+      cellX = nextCellX;
+      cellZ = nextCellZ;
+      ensureChunksAround(cellX, cellZ);
+      startMove();
+    }
+  }
+
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = yaw;
+  camera.rotation.x = Math.sin(performance.now() * 0.0007) * 0.012;
+
+  torches.position.copy(camera.position);
+  torches.position.y = 2.1;
+  torches.position.x += Math.sin(yaw) * 0.4;
+  torches.position.z += Math.cos(yaw) * 0.4;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+tick();
+</script>
+</body>
+</html>

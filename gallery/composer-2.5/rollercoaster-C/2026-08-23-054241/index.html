@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Midnight Aurora — Coaster</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #02040a; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 10;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+  }
+  #hud {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    font-family: 'Segoe UI', system-ui, sans-serif; color: rgba(255,255,255,0.85);
+    text-align: center; pointer-events: none; z-index: 11;
+    letter-spacing: 0.18em; text-transform: uppercase; font-size: 11px;
+    opacity: 0; transition: opacity 1.2s ease;
+  }
+  #hud.visible { opacity: 1; }
+  #hud .phase { font-size: 13px; font-weight: 300; color: #7ee8ff; margin-bottom: 4px; }
+  #hud .sub { font-size: 10px; opacity: 0.5; letter-spacing: 0.25em; }
+  #title-card {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; z-index: 12; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 40%, rgba(10,20,40,0.92) 0%, rgba(2,4,10,0.98) 70%);
+    transition: opacity 2s ease 0.5s;
+  }
+  #title-card.hidden { opacity: 0; }
+  #title-card h1 {
+    font-family: Georgia, 'Times New Roman', serif; font-weight: 400;
+    font-size: clamp(28px, 5vw, 52px); color: #e8f4ff;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    text-shadow: 0 0 40px rgba(100,200,255,0.4);
+    margin-bottom: 12px;
+  }
+  #title-card p {
+    font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px;
+    letter-spacing: 0.35em; text-transform: uppercase; color: rgba(126,232,255,0.6);
+  }
+  #vignette-flash {
+    position: fixed; inset: 0; pointer-events: none; z-index: 9;
+    background: radial-gradient(circle, rgba(255,200,120,0) 0%, rgba(255,200,120,0) 100%);
+    transition: background 0.15s ease;
+  }
+</style>
+</head>
+<body>
+<div id="title-card">
+  <h1>Midnight Aurora</h1>
+  <p>Hold on — departure imminent</p>
+</div>
+<div id="overlay"></div>
+<div id="vignette-flash"></div>
+<div id="hud"><div class="phase">Station</div><div class="sub">Automatic ride</div></div>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const PHASES = [
+  { t: 0.00, label: 'Station', sub: 'Climb aboard' },
+  { t: 0.06, label: 'Ascent', sub: 'Chain lift engaged' },
+  { t: 0.18, label: 'Summit', sub: 'Edge of the sky' },
+  { t: 0.22, label: 'First Drop', sub: 'Gravity takes hold' },
+  { t: 0.35, label: 'Canyon Run', sub: 'Wind in your face' },
+  { t: 0.48, label: 'Helix', sub: 'Spiraling descent' },
+  { t: 0.58, label: 'Aurora Gate', sub: 'Enter the light' },
+  { t: 0.72, label: 'Zero-G Loop', sub: 'Weightless moment' },
+  { t: 0.82, label: 'Finale', sub: 'Last rush home' },
+  { t: 0.95, label: 'Return', sub: 'Ride complete' },
+];
+
+const RIDE_DURATION = 95;
+const TRACK_POINTS = [
+  new THREE.Vector3(0, 2, 0),
+  new THREE.Vector3(0, 2, -8),
+  new THREE.Vector3(0, 2, -18),
+  new THREE.Vector3(0, 8, -28),
+  new THREE.Vector3(0, 22, -38),
+  new THREE.Vector3(0, 38, -48),
+  new THREE.Vector3(0, 52, -58),
+  new THREE.Vector3(0, 58, -68),
+  new THREE.Vector3(0, 42, -82),
+  new THREE.Vector3(0, 18, -98),
+  new THREE.Vector3(0, 6, -112),
+  new THREE.Vector3(12, 4, -128),
+  new THREE.Vector3(28, 8, -142),
+  new THREE.Vector3(42, 14, -152),
+  new THREE.Vector3(52, 10, -162),
+  new THREE.Vector3(58, 6, -172),
+  new THREE.Vector3(62, 12, -185),
+  new THREE.Vector3(64, 28, -198),
+  new THREE.Vector3(62, 48, -210),
+  new THREE.Vector3(58, 62, -218),
+  new THREE.Vector3(50, 58, -228),
+  new THREE.Vector3(38, 42, -238),
+  new THREE.Vector3(22, 28, -248),
+  new THREE.Vector3(8, 18, -258),
+  new THREE.Vector3(-6, 22, -268),
+  new THREE.Vector3(-18, 32, -278),
+  new THREE.Vector3(-28, 44, -288),
+  new THREE.Vector3(-34, 52, -298),
+  new THREE.Vector3(-36, 48, -308),
+  new THREE.Vector3(-32, 32, -318),
+  new THREE.Vector3(-24, 18, -328),
+  new THREE.Vector3(-14, 10, -338),
+  new THREE.Vector3(-4, 8, -348),
+  new THREE.Vector3(6, 12, -358),
+  new THREE.Vector3(14, 22, -368),
+  new THREE.Vector3(18, 38, -378),
+  new THREE.Vector3(16, 52, -388),
+  new THREE.Vector3(10, 58, -398),
+  new THREE.Vector3(2, 52, -408),
+  new THREE.Vector3(-4, 38, -418),
+  new THREE.Vector3(-6, 22, -428),
+  new THREE.Vector3(-4, 12, -438),
+  new THREE.Vector3(0, 8, -448),
+  new THREE.Vector3(0, 4, -458),
+  new THREE.Vector3(0, 2, -468),
+  new THREE.Vector3(0, 2, -478),
+];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02040a);
+scene.fog = new THREE.FogExp2(0x0a1428, 0.0042);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 800);
+const clock = new THREE.Clock();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.35, 0.82);
+composer.addPass(bloom);
+
+const curve = new THREE.CatmullRomCurve3(TRACK_POINTS, false, 'catmullrom', 0.35);
+const trackLength = curve.getLength();
+const trackSamples = 900;
+const trackPositions = [];
+const trackTangents = [];
+const trackNormals = [];
+const up = new THREE.Vector3(0, 1, 0);
+
+for (let i = 0; i <= trackSamples; i++) {
+  const t = i / trackSamples;
+  const pos = curve.getPointAt(t);
+  const tan = curve.getTangentAt(t).normalize();
+  const normal = new THREE.Vector3().crossVectors(tan, up).normalize();
+  if (normal.lengthSq() < 0.001) normal.set(1, 0, 0);
+  const binormal = new THREE.Vector3().crossVectors(tan, normal).normalize();
+  trackPositions.push(pos.clone());
+  trackTangents.push(tan.clone());
+  trackNormals.push({ normal, binormal });
+}
+
+function getTrackState(progress) {
+  const t = THREE.MathUtils.clamp(progress, 0, 0.9999);
+  const idx = t * trackSamples;
+  const i0 = Math.floor(idx);
+  const i1 = Math.min(i0 + 1, trackSamples);
+  const f = idx - i0;
+  const pos = trackPositions[i0].clone().lerp(trackPositions[i1], f);
+  const tan = trackTangents[i0].clone().lerp(trackTangents[i1], f).normalize();
+  const n0 = trackNormals[i0];
+  const n1 = trackNormals[i1];
+  const normal = n0.normal.clone().lerp(n1.normal, f).normalize();
+  const binormal = n0.binormal.clone().lerp(n1.binormal, f).normalize();
+  return { pos, tan, normal, binormal };
+}
+
+const ambient = new THREE.AmbientLight(0x1a2844, 0.55);
+scene.add(ambient);
+
+const moon = new THREE.DirectionalLight(0x8899cc, 0.35);
+moon.position.set(-80, 120, -60);
+moon.castShadow = true;
+moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.camera.near = 10;
+moon.shadow.camera.far = 400;
+moon.shadow.camera.left = -120;
+moon.shadow.camera.right = 120;
+moon.shadow.camera.top = 120;
+moon.shadow.camera.bottom = -120;
+scene.add(moon);
+
+const auroraLight = new THREE.PointLight(0x44ffcc, 0, 80);
+auroraLight.position.set(-20, 45, -290);
+scene.add(auroraLight);
+
+const finaleLight = new THREE.PointLight(0xff8844, 0, 60);
+finaleLight.position.set(0, 30, -400);
+scene.add(finaleLight);
+
+const groundGeo = new THREE.PlaneGeometry(600, 600, 1, 1);
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x0a1220, roughness: 0.95, metalness: 0.05 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.5;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const gridHelper = new THREE.GridHelper(500, 80, 0x1a3050, 0x0e1828);
+gridHelper.position.y = -0.48;
+gridHelper.material.opacity = 0.25;
+gridHelper.material.transparent = true;
+scene.add(gridHelper);
+
+function buildTrackMesh() {
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.85, roughness: 0.25 });
+  const tieMat = new THREE.MeshStandardMaterial({ color: 0x334455, metalness: 0.3, roughness: 0.7 });
+  const group = new THREE.Group();
+  const step = 3;
+  for (let i = 0; i < trackSamples; i += step) {
+    const t = i / trackSamples;
+    const { pos, normal, binormal } = getTrackState(t);
+    const tie = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.15, 0.4), tieMat);
+    tie.position.copy(pos);
+    tie.position.y -= 0.35;
+    tie.castShadow = true;
+    group.add(tie);
+    for (const side of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.35, 1.8), railMat);
+      const offset = normal.clone().multiplyScalar(side * 1.1);
+      rail.position.copy(pos).add(offset);
+      rail.position.y -= 0.15;
+      rail.lookAt(pos.clone().add(binormal));
+      rail.castShadow = true;
+      group.add(rail);
+    }
+  }
+  const glowCurve = curve.getPoints(400);
+  const glowGeo = new THREE.BufferGeometry().setFromPoints(glowCurve);
+  const glowMat = new THREE.LineBasicMaterial({ color: 0x44aaff, transparent: true, opacity: 0.35 });
+  const glowLine = new THREE.Line(glowGeo, glowMat);
+  group.add(glowLine);
+  return group;
+}
+scene.add(buildTrackMesh());
+
+function buildSupports() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x556677, metalness: 0.7, roughness: 0.4 });
+  for (let i = 0; i < trackSamples; i += 12) {
+    const t = i / trackSamples;
+    const { pos } = getTrackState(t);
+    if (pos.y < 3) continue;
+    const h = pos.y + 0.5;
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, h, 6), mat);
+    pillar.position.set(pos.x, h / 2 - 0.5, pos.z);
+    pillar.castShadow = true;
+    group.add(pillar);
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.12, 0.12), mat);
+    cross.position.copy(pos);
+    cross.position.y -= 0.35;
+    group.add(cross);
+  }
+  return group;
+}
+scene.add(buildSupports());
+
+function buildStation() {
+  const g = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x223344, metalness: 0.6, roughness: 0.5, emissive: 0x112233, emissiveIntensity: 0.3 });
+  const signMat = new THREE.MeshStandardMaterial({ color: 0x112233, emissive: 0x44aaff, emissiveIntensity: 1.2 });
+  for (let x = -6; x <= 6; x += 3) {
+    const col = new THREE.Mesh(new THREE.BoxGeometry(0.3, 5, 0.3), frameMat);
+    col.position.set(x, 2.5, 4);
+    col.castShadow = true;
+    g.add(col);
+  }
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(14, 0.2, 6), frameMat);
+  roof.position.set(0, 5.2, 2);
+  g.add(roof);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 0.2), signMat);
+  sign.position.set(0, 4.2, 6.8);
+  g.add(sign);
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(14, 0.3, 8), new THREE.MeshStandardMaterial({ color: 0x1a2233, roughness: 0.8 }));
+  platform.position.set(0, 0.15, 2);
+  platform.receiveShadow = true;
+  g.add(platform);
+  const lamp = new THREE.PointLight(0xffaa66, 2, 18);
+  lamp.position.set(0, 4.5, 3);
+  g.add(lamp);
+  return g;
+}
+scene.add(buildStation());
+
+function buildAuroraArch() {
+  const g = new THREE.Group();
+  g.position.set(-20, 0, -295);
+  const archMat = new THREE.MeshStandardMaterial({ color: 0x223355, emissive: 0x22ffaa, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3 });
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 11) * Math.PI;
+    const r = 22;
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.4, 28, 0.4), archMat);
+    beam.position.set(Math.cos(angle) * r, 14, Math.sin(angle) * r * 0.3);
+    beam.rotation.z = Math.cos(angle) * 0.15;
+    g.add(beam);
+  }
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(22, 0.25, 8, 48, Math.PI), archMat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 26;
+  g.add(ring);
+  const particles = new THREE.BufferGeometry();
+  const count = 800;
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 50;
+    positions[i * 3 + 1] = Math.random() * 35 + 5;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
+  }
+  particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pMat = new THREE.PointsMaterial({ color: 0x66ffcc, size: 0.35, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false });
+  g.add(new THREE.Points(particles, pMat));
+  g.userData.particles = g.children[g.children.length - 1];
+  return g;
+}
+const auroraArch = buildAuroraArch();
+scene.add(auroraArch);
+
+function buildLandscape() {
+  const g = new THREE.Group();
+  const mtnMat = new THREE.MeshStandardMaterial({ color: 0x0e1828, roughness: 0.9 });
+  for (let i = 0; i < 24; i++) {
+    const m = new THREE.Mesh(new THREE.ConeGeometry(18 + Math.random() * 30, 40 + Math.random() * 50, 5), mtnMat);
+    const angle = (i / 24) * Math.PI * 2;
+    const dist = 120 + Math.random() * 80;
+    m.position.set(Math.cos(angle) * dist, 15, Math.sin(angle) * dist - 180);
+    m.castShadow = true;
+    g.add(m);
+  }
+  const towerMat = new THREE.MeshStandardMaterial({ color: 0x334455, emissive: 0xff6644, emissiveIntensity: 0.4 });
+  for (let i = 0; i < 8; i++) {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2, 35 + Math.random() * 20, 8), towerMat);
+    t.position.set((Math.random() - 0.5) * 200, 18, -100 - Math.random() * 300);
+    const blink = new THREE.PointLight(0xff4422, 0.8, 25);
+    blink.position.set(0, 18, 0);
+    t.add(blink);
+    g.add(t);
+  }
+  return g;
+}
+scene.add(buildLandscape());
+
+const starsGeo = new THREE.BufferGeometry();
+const starCount = 3000;
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+  const r = 250 + Math.random() * 150;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+  starPos[i * 3 + 1] = Math.abs(r * Math.cos(phi)) + 20;
+  starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta) - 150;
+}
+starsGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const stars = new THREE.Points(starsGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.6, transparent: true, opacity: 0.8, sizeAttenuation: true }));
+scene.add(stars);
+
+const speedLinesGeo = new THREE.BufferGeometry();
+const speedCount = 120;
+const speedPos = new Float32Array(speedCount * 3);
+speedLinesGeo.setAttribute('position', new THREE.BufferAttribute(speedPos, 3));
+const speedLines = new THREE.Points(speedLinesGeo, new THREE.PointsMaterial({ color: 0x88ccff, size: 0.15, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(speedLines);
+
+const frontBarGeo = new THREE.BoxGeometry(2.6, 0.08, 0.08);
+const frontBarMat = new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.9, roughness: 0.2 });
+const frontBar = new THREE.Mesh(frontBarGeo, frontBarMat);
+const coasterGroup = new THREE.Group();
+coasterGroup.add(frontBar);
+frontBar.position.set(0, -0.35, -0.55);
+scene.add(coasterGroup);
+
+let rideProgress = 0;
+let rideTime = 0;
+let titleHidden = false;
+let hudVisible = false;
+
+const hudEl = document.getElementById('hud');
+const titleEl = document.getElementById('title-card');
+const flashEl = document.getElementById('vignette-flash');
+
+function speedAtProgress(p) {
+  if (p < 0.06) return 0.008 + p * 0.04;
+  if (p < 0.18) return 0.012;
+  if (p < 0.22) return 0.012 + (p - 0.18) * 1.2;
+  if (p < 0.35) return 0.06 + Math.sin((p - 0.22) * 12) * 0.008;
+  if (p < 0.58) return 0.055;
+  if (p < 0.72) return 0.07;
+  if (p < 0.82) return 0.05;
+  if (p < 0.95) return 0.035;
+  return 0.015;
+}
+
+function updateHUD(p) {
+  let phase = PHASES[0];
+  for (let i = PHASES.length - 1; i >= 0; i--) {
+    if (p >= PHASES[i].t) { phase = PHASES[i]; break; }
+  }
+  hudEl.querySelector('.phase').textContent = phase.label;
+  hudEl.querySelector('.sub').textContent = phase.sub;
+}
+
+function updateCamera(progress, dt) {
+  const { pos, tan, normal, binormal } = getTrackState(progress);
+  const lookAhead = 0.012 + speedAtProgress(progress) * 0.15;
+  const ahead = getTrackState(Math.min(progress + lookAhead, 0.999));
+  const bank = normal.clone().multiplyScalar(Math.sin(progress * Math.PI * 14) * 0.12 * speedAtProgress(progress) * 8);
+  const shake = progress > 0.2 && progress < 0.28 ? Math.sin(clock.elapsedTime * 28) * 0.04 * (1 - (progress - 0.2) / 0.08) : 0;
+  const camPos = pos.clone().add(bank);
+  camPos.y += 0.15 + shake;
+  camera.position.copy(camPos);
+  const target = ahead.pos.clone().add(ahead.binormal.clone().multiplyScalar(Math.sin(progress * 40) * 0.05));
+  camera.lookAt(target);
+  camera.up.copy(binormal.clone().lerp(new THREE.Vector3(0, 1, 0), 0.25).normalize());
+  coasterGroup.position.copy(camPos);
+  coasterGroup.quaternion.copy(camera.quaternion);
+}
+
+function updateLighting(p, elapsed) {
+  const auroraPhase = p > 0.52 && p < 0.78;
+  auroraLight.intensity = auroraPhase ? 3 + Math.sin(elapsed * 3) * 1.5 : 0;
+  finaleLight.intensity = p > 0.78 ? 2.5 : 0;
+  bloom.strength = auroraPhase ? 0.85 + Math.sin(elapsed * 2) * 0.2 : p > 0.2 && p < 0.3 ? 0.65 : 0.55;
+  scene.fog.density = auroraPhase ? 0.0028 : 0.0042;
+  if (auroraArch.userData.particles) {
+    auroraArch.userData.particles.rotation.y = elapsed * 0.15;
+    auroraArch.userData.particles.material.opacity = auroraPhase ? 0.9 : 0.3;
+  }
+  if (p > 0.2 && p < 0.24) {
+    flashEl.style.background = `radial-gradient(circle, rgba(255,180,80,${0.25 * (1 - (p - 0.2) / 0.04)}) 0%, transparent 70%)`;
+  } else if (auroraPhase) {
+    flashEl.style.background = `radial-gradient(circle, rgba(80,255,200,${0.12 + Math.sin(elapsed * 4) * 0.06}) 0%, transparent 65%)`;
+  } else {
+    flashEl.style.background = 'radial-gradient(circle, transparent 0%, transparent 100%)';
+  }
+}
+
+function updateSpeedLines(p, dt) {
+  const speed = speedAtProgress(p);
+  const opacity = Math.min(1, (speed - 0.03) * 20);
+  speedLines.material.opacity = opacity * 0.5;
+  const arr = speedLinesGeo.attributes.position.array;
+  for (let i = 0; i < speedCount; i++) {
+    arr[i * 3] = (Math.random() - 0.5) * 3;
+    arr[i * 3 + 1] = (Math.random() - 0.5) * 2;
+    arr[i * 3 + 2] = -1 - Math.random() * 4 - speed * 30;
+  }
+  speedLinesGeo.attributes.position.needsUpdate = true;
+  speedLines.position.copy(camera.position);
+  speedLines.quaternion.copy(camera.quaternion);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  rideTime += dt;
+
+  if (!titleHidden && rideTime > 2.5) {
+    titleHidden = true;
+    titleEl.classList.add('hidden');
+    hudVisible = true;
+    hudEl.classList.add('visible');
+  }
+
+  const speed = speedAtProgress(rideProgress);
+  rideProgress += speed * dt * 0.35;
+
+  if (rideProgress >= 1) {
+    rideProgress = 0;
+    rideTime = 0;
+    titleHidden = false;
+    titleEl.classList.remove('hidden');
+    hudEl.classList.remove('visible');
+    setTimeout(() => { titleHidden = true; titleEl.classList.add('hidden'); hudEl.classList.add('visible'); }, 2500);
+  }
+
+  updateCamera(rideProgress, dt);
+  updateLighting(rideProgress, clock.elapsedTime);
+  updateSpeedLines(rideProgress, dt);
+  updateHUD(rideProgress);
+  stars.rotation.y = clock.elapsedTime * 0.002;
+  composer.render();
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>

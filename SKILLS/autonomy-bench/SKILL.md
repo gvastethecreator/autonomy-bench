@@ -39,7 +39,7 @@ Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
 5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, harness (program), timing, token usage when visible, isolation evidence, tool visibility, limitations, and output hashes.
 6. Evaluate only after raw outputs are frozen. Prefer blind evaluation when comparing models.
 7. Run `bench status`; resolve missing receipts or record blockers explicitly.
-8. Run `bench gallery --run <run-id>` to copy HTML, prompts, and receipts into `gallery/<model>/<prompt-V>/<fecha>/`. Serve `gallery/` (`vp run dev`) and publish that folder.
+8. Run `bench gallery --run <run-id>` to copy HTML, prompts, and receipts into `gallery/<model>/<prompt-V>/<fecha>/` and rebuild the public catalog from that tree. Serve `gallery/` (`vp run dev`) and publish that folder.
 9. Run `bench finalize`; this writes `completion-receipt.json` and a SHA-256 integrity manifest.
 
 ## Prototype Lab route

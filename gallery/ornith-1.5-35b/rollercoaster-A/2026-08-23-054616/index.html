@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rollercoaster</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #87b8d8; }
+  canvas { display: block; }
+  #hud {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    user-select: none;
+    line-height: 1.5;
+  }
+  #hud b { font-size: 15px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>Rollercoaster</b><br>
+  Continuous playback &middot; press <b>Space</b> to pause
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x9dc4e0, 120, 620);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 3000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// --- Lights ---
+const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x4a6a3a, 0.9);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
+sun.position.set(120, 220, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 10;
+sun.shadow.camera.far = 700;
+const s = 400;
+sun.shadow.camera.left = -s;
+sun.shadow.camera.right = s;
+sun.shadow.camera.top = s;
+sun.shadow.camera.bottom = -s;
+scene.add(sun);
+scene.add(sun.target);
+
+// --- Sky ---
+const skyGeo = new THREE.SphereGeometry(1400, 32, 16);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {
+    top:    { value: new THREE.Color(0x2f6fc0) },
+    bottom: { value: new THREE.Color(0xcfe6f5) }
+  },
+  vertexShader: `
+    varying vec3 vWorld;
+    void main() {
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorld = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    varying vec3 vWorld;
+    uniform vec3 top;
+    uniform vec3 bottom;
+    void main() {
+      float h = clamp(vWorld.y / 700.0, 0.0, 1.0);
+      gl_FragColor = vec4(mix(bottom, top, h), 1.0);
+    }`
+});
+scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+// --- Track path (closed loop) ---
+const points = [
+  new THREE.Vector3(0, 8, 0),
+  new THREE.Vector3(40, 12, 40),
+  new THREE.Vector3(80, 20, 10),
+  new THREE.Vector3(90, 30, -40),
+  new THREE.Vector3(60, 10, -80),
+  new THREE.Vector3(10, 6, -70),
+  new THREE.Vector3(-20, 40, -40),
+  new THREE.Vector3(-60, 55, 10),
+  new THREE.Vector3(-90, 30, 50),
+  new THREE.Vector3(-70, 10, 70),
+  new THREE.Vector3(-30, 8, 55),
+  new THREE.Vector3(10, 15, 25),
+];
+const curve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', 0.5);
+
+// Rail tube
+const railMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.8 });
+const trailGeo = new THREE.TubeGeometry(curve, 900, 0.6, 12, true);
+const trail = new THREE.Mesh(trailGeo, railMat);
+trail.castShadow = true;
+trail.receiveShadow = true;
+scene.add(trail);
+
+// Sleepers / ties across the track
+const tiesMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 });
+const TIE_COUNT = 400;
+const tiesGroup = new THREE.Group();
+scene.add(tiesGroup);
+const up = new THREE.Vector3(0, 1, 0);
+for (let i = 0; i < TIE_COUNT; i++) {
+  const t = i / TIE_COUNT;
+  const p = curve.getPointAt(t);
+  const tan = curve.getTangentAt(t);
+  const tie = new THREE.Mesh(
+    new THREE.BoxGeometry(6, 0.5, 1.4),
+    tiesMat
+  );
+  tie.position.copy(p);
+  const basis = new THREE.Matrix4().lookAt(p, p.clone().add(tan), up);
+  tie.quaternion.setFromRotationMatrix(basis);
+  tie.castShadow = true;
+  tie.receiveShadow = true;
+  tiesGroup.add(tie);
+}
+
+// --- Scenery ---
+const treeMat = new THREE.MeshStandardMaterial({ color: 0x2f7d3a, roughness: 0.9 });
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 });
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x5c8a45, roughness: 1 });
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(1300, 64),
+  groundMat
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = 0;
+ground.receiveShadow = true;
+scene.add(ground);
+
+function makeTree(x, z) {
+  const g = new THREE.Group();
+  const h = 8 + Math.random() * 10;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, h * 0.4, 6), trunkMat);
+  trunk.position.y = h * 0.2;
+  trunk.castShadow = true;
+  const leaves = new THREE.Mesh(new THREE.ConeGeometry(3.5, h, 7), treeMat);
+  leaves.position.y = h * 0.55 + h * 0.2;
+  leaves.castShadow = true;
+  g.add(trunk);
+  g.add(leaves);
+  g.position.set(x, 0, z);
+  return g;
+}
+
+for (let i = 0; i < 260; i++) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 110 + Math.random() * 1000;
+  const x = Math.cos(a) * r;
+  const z = Math.sin(a) * r;
+  scene.add(makeTree(x, z));
+}
+
+// --- First-person camera rig ---
+const rig = new THREE.Group();
+scene.add(rig);
+
+let progress = 0;         // 0..1 around the loop
+const SPEED = 0.035;      // loops per second
+let paused = false;
+
+// --- Animation ---
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (!paused) {
+    progress = (progress + SPEED * dt) % 1;
+  }
+
+  const p = curve.getPointAt(progress);
+  const lookT = (progress + 0.012) % 1;
+  const lookP = curve.getPointAt(lookT);
+
+  rig.position.copy(p);
+  const dir = lookP.clone().sub(p);
+  if (dir.lengthSq() > 0.0001) {
+    rig.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize());
+  }
+
+  // Camera sits just above the rail and looks along the track
+  camera.position.set(0, 2.2, 0);
+  camera.updateMatrixWorld();
+  rig.attach(camera);
+
+  // Keep the sun shadow focused on the rider
+  sun.position.set(p.x + 120, p.y + 220, p.z + 80);
+  sun.target.position.copy(p);
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// --- Controls ---
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    paused = !paused;
+  }
+});
+</script>
+</body>
+</html>

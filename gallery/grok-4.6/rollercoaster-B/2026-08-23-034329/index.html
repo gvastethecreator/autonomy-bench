@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>First-Person Rollercoaster</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #07060c; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .vignette {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 42%, transparent 48%, rgba(4, 2, 10, 0.55) 100%);
+    }
+    .hud {
+      pointer-events: none;
+      position: fixed;
+      left: 18px;
+      bottom: 16px;
+      font: 11px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      color: rgba(255, 236, 214, 0.72);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="vignette"></div>
+  <div class="hud" id="hud">chain lift</div>
+  <script type="module">
+    import * as THREE from "three";
+
+    const canvas = document.getElementById("c");
+    const hud = document.getElementById("hud");
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      powerPreference: "high-performance",
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x6a3d38, 0.00155);
+
+    const camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.12, 1400);
+    scene.add(camera);
+
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const _p = new THREE.Vector3();
+    const _t = new THREE.Vector3();
+    const _t2 = new THREE.Vector3();
+    const _right = new THREE.Vector3();
+    const _up = new THREE.Vector3();
+    const _look = new THREE.Vector3();
+    const _lat = new THREE.Vector3();
+    const _q = new THREE.Quaternion();
+    const _m = new THREE.Matrix4();
+
+    function buildControlPoints() {
+      const pts = [];
+      const push = (x, y, z) => pts.push(new THREE.Vector3(x, y, z));
+
+      push(0, 3.2, -28);
+      push(0, 3.2, 8);
+      push(0, 3.2, 48);
+      push(2, 8, 86);
+      push(8, 22, 118);
+      push(14, 40, 142);
+      push(18, 54, 158);
+      push(22, 58.5, 168);
+
+      push(30, 36, 182);
+      push(40, 12, 196);
+      push(52, 5.4, 204);
+
+      const cx = 72, cz = 206, r = 15.4, cy = 5.6 + 15.4;
+      for (let i = 0; i <= 20; i++) {
+        const a = (i / 20) * Math.PI * 2;
+        push(cx + Math.sin(a) * r, cy - Math.cos(a) * r, cz);
+      }
+
+      push(96, 7, 210);
+      push(118, 16, 214);
+      push(138, 24, 198);
+      push(146, 18, 170);
+      push(138, 9, 142);
+
+      const hx = 108, hz = 118, hr = 30;
+      for (let i = 0; i <= 12; i++) {
+        const a = Math.PI * 0.15 + (i / 12) * Math.PI * 2.05;
+        const y = 9 + Math.sin((i / 12) * Math.PI) * 16;
+        push(hx + Math.cos(a) * hr, y, hz + Math.sin(a) * hr);
+      }
+
+      push(72, 8, 92);
+      push(40, 26, 78);
+      push(12, 8, 62);
+      push(-18, 22, 36);
+      push(-36, 7, 8);
+      push(-30, 18, -22);
+      push(-8, 6, -46);
+      push(10, 4, -52);
+      push(6, 3.2, -40);
+      return pts;
+    }
+
+    const path = new THREE.CatmullRomCurve3(buildControlPoints(), true, "catmullrom", 0.18);
+    const railCurve = (offset) => {
+      const samples = 420;
+      const pts = [];
+      for (let i = 0; i < samples; i++) {
+        const u = i / samples;
+        path.getPointAt(u, _p);
+        path.getTangentAt(u, _t);
+        _right.crossVectors(_t, worldUp);
+        if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
+        else _right.normalize();
+        _up.crossVectors(_right, _t).normalize();
+        pts.push(_p.clone().addScaledVector(_right, offset).addScaledVector(_up, 0.06));
+      }
+      return new THREE.CatmullRomCurve3(pts, true);
+    };
+
+    const steel = new THREE.MeshStandardMaterial({
+      color: 0xb7c2cc,
+      metalness: 0.92,
+      roughness: 0.28,
+    });
+    const steelDark = new THREE.MeshStandardMaterial({
+      color: 0x3a414a,
+      metalness: 0.85,
+      roughness: 0.4,
+    });
+    const paint = new THREE.MeshStandardMaterial({
+      color: 0xc43b2a,
+      metalness: 0.35,
+      roughness: 0.42,
+    });
+    const wood = new THREE.MeshStandardMaterial({
+      color: 0x4a301c,
+      roughness: 0.86,
+      metalness: 0.02,
+    });
+
+    const leftRail = new THREE.Mesh(
+      new THREE.TubeGeometry(railCurve(-0.48), 720, 0.07, 8, true),
+      steel
+    );
+    const rightRail = new THREE.Mesh(
+      new THREE.TubeGeometry(railCurve(0.48), 720, 0.07, 8, true),
+      steel
+    );
+    const spine = new THREE.Mesh(
+      new THREE.TubeGeometry(path, 640, 0.11, 7, true),
+      paint
+    );
+    leftRail.castShadow = rightRail.castShadow = spine.castShadow = true;
+    scene.add(leftRail, rightRail, spine);
+
+    const tieGeo = new THREE.BoxGeometry(1.22, 0.08, 0.16);
+    const tieCount = 420;
+    const ties = new THREE.InstancedMesh(tieGeo, wood, tieCount);
+    ties.castShadow = true;
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < tieCount; i++) {
+      const u = i / tieCount;
+      path.getPointAt(u, dummy.position);
+      path.getTangentAt(u, _t);
+      dummy.position.y -= 0.02;
+      dummy.up.copy(worldUp);
+      dummy.lookAt(_look.copy(dummy.position).add(_t));
+      dummy.updateMatrix();
+      ties.setMatrixAt(i, dummy.matrix);
+    }
+    scene.add(ties);
+
+    const supportGeo = new THREE.CylinderGeometry(0.13, 0.18, 1, 6);
+    const supportMat = steelDark;
+    const supportMax = 90;
+    const supports = new THREE.InstancedMesh(supportGeo, supportMat, supportMax);
+    supports.castShadow = true;
+    let supportN = 0;
+    for (let i = 0; i < 90 && supportN < supportMax; i++) {
+      const u = i / 90;
+      path.getPointAt(u, _p);
+      if (_p.y < 6.5) continue;
+      dummy.position.set(_p.x, _p.y * 0.5, _p.z);
+      dummy.scale.set(1, _p.y, 1);
+      dummy.rotation.set(0, 0, 0);
+      dummy.quaternion.identity();
+      dummy.updateMatrix();
+      supports.setMatrixAt(supportN++, dummy.matrix);
+    }
+    supports.count = supportN;
+    scene.add(supports);
+
+    const cart = new THREE.Group();
+    scene.add(cart);
+
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x1c1418,
+      metalness: 0.55,
+      roughness: 0.38,
+    });
+    const accent = new THREE.MeshStandardMaterial({
+      color: 0xe8c36a,
+      metalness: 0.7,
+      roughness: 0.3,
+    });
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.08, 1.7), bodyMat);
+    floor.position.set(0, -0.42, 0.15);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.22, 0.55), paint);
+    nose.position.set(0, -0.22, -0.82);
+    const bar = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.035, 8, 20, Math.PI), accent);
+    bar.rotation.x = Math.PI / 2;
+    bar.position.set(0, -0.08, -0.28);
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.18), steelDark);
+    dash.position.set(0, -0.18, -0.5);
+    cart.add(floor, nose, bar, dash);
+    camera.position.set(0, 0.42, 0.22);
+    cart.add(camera);
+
+    function makeSky() {
+      const geo = new THREE.SphereGeometry(900, 48, 24);
+      const colors = new Float32Array(geo.attributes.position.count * 3);
+      const zenith = new THREE.Color(0x0c1028);
+      const horizon = new THREE.Color(0xd46a3a);
+      const nadir = new THREE.Color(0x1a0e10);
+      const c = new THREE.Color();
+      for (let i = 0; i < geo.attributes.position.count; i++) {
+        const y = geo.attributes.position.getY(i) / 900;
+        if (y >= 0) c.copy(horizon).lerp(zenith, Math.pow(y, 0.65));
+        else c.copy(horizon).lerp(nadir, Math.min(1, -y * 1.4));
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false })
+      );
+      return mesh;
+    }
+    scene.add(makeSky());
+
+    const sun = new THREE.Mesh(
+      new THREE.SphereGeometry(14, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffe2a8, fog: false, depthWrite: false })
+    );
+    sun.position.set(-220, 48, -380);
+    scene.add(sun);
+
+    const hemi = new THREE.HemisphereLight(0x9ab4ff, 0x3a2418, 0.55);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffd2a0, 2.35);
+    dir.position.set(-180, 120, -240);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(2048, 2048);
+    dir.shadow.camera.near = 20;
+    dir.shadow.camera.far = 700;
+    dir.shadow.camera.left = -220;
+    dir.shadow.camera.right = 220;
+    dir.shadow.camera.top = 180;
+    dir.shadow.camera.bottom = -180;
+    dir.shadow.bias = -0.00025;
+    dir.shadow.normalBias = 0.04;
+    scene.add(dir);
+    const fill = new THREE.DirectionalLight(0x4466aa, 0.28);
+    fill.position.set(80, 40, 120);
+    scene.add(fill);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(520, 72),
+      new THREE.MeshStandardMaterial({ color: 0x1c2818, roughness: 0.96, metalness: 0.0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const station = new THREE.Group();
+    const plat = new THREE.Mesh(
+      new THREE.BoxGeometry(8, 0.5, 22),
+      new THREE.MeshStandardMaterial({ color: 0x2a2420, roughness: 0.8 })
+    );
+    plat.position.set(-3.6, 2.55, -8);
+    plat.receiveShadow = true;
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(9, 0.18, 24),
+      new THREE.MeshStandardMaterial({ color: 0x6b1f18, roughness: 0.7 })
+    );
+    roof.position.set(-3.6, 7.2, -8);
+    roof.castShadow = true;
+    const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 4.4, 8);
+    const postMat = steelDark;
+    for (const z of [-16, 0, 8]) {
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.set(-7.4, 4.7, z);
+      post.castShadow = true;
+      station.add(post);
+    }
+    station.add(plat, roof);
+    scene.add(station);
+
+    const treeTrunk = new THREE.CylinderGeometry(0.22, 0.32, 2.2, 5);
+    const treeCanopy = new THREE.ConeGeometry(1.6, 4.2, 6);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.9 });
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0x1d3a22, roughness: 0.85 });
+    const treeCount = 70;
+    const trunks = new THREE.InstancedMesh(treeTrunk, trunkMat, treeCount);
+    const canopies = new THREE.InstancedMesh(treeCanopy, leafMat, treeCount);
+    trunks.castShadow = canopies.castShadow = true;
+    const trackPts = path.getSpacedPoints(180);
+    const rng = (s) => {
+      let x = Math.sin(s * 127.1) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    let planted = 0;
+    for (let n = 0; n < 400 && planted < treeCount; n++) {
+      const a = rng(n * 3.1) * Math.PI * 2;
+      const rad = 70 + rng(n * 8.7) * 280;
+      const x = Math.cos(a) * rad;
+      const z = Math.sin(a) * rad;
+      let ok = true;
+      for (let k = 0; k < trackPts.length; k += 3) {
+        const ddx = trackPts[k].x - x;
+        const ddz = trackPts[k].z - z;
+        if (ddx * ddx + ddz * ddz < 220) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      const s = 0.7 + rng(n * 2.2) * 1.4;
+      dummy.position.set(x, 1.1 * s, z);
+      dummy.scale.set(s, s, s);
+      dummy.rotation.set(0, rng(n) * 6.28, 0);
+      dummy.quaternion.setFromAxisAngle(worldUp, rng(n) * 6.28);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(planted, dummy.matrix);
+      dummy.position.y = 3.4 * s;
+      dummy.updateMatrix();
+      canopies.setMatrixAt(planted, dummy.matrix);
+      planted++;
+    }
+    trunks.count = canopies.count = planted;
+    scene.add(trunks, canopies);
+
+    const rockGeo = new THREE.DodecahedronGeometry(2.4, 0);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x4a463f, roughness: 0.92 });
+    const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 18);
+    rocks.castShadow = true;
+    for (let i = 0; i < 18; i++) {
+      dummy.position.set((rng(i + 40) - 0.5) * 380, 0.6, (rng(i + 90) - 0.5) * 380);
+      dummy.scale.setScalar(0.6 + rng(i + 2) * 2.2);
+      dummy.quaternion.setFromEuler(
+        new THREE.Euler(rng(i) * 1.2, rng(i + 1) * 6, rng(i + 3) * 1.2)
+      );
+      dummy.updateMatrix();
+      rocks.setMatrixAt(i, dummy.matrix);
+    }
+    scene.add(rocks);
+
+    const lampMat = new THREE.MeshStandardMaterial({
+      color: 0xffb060,
+      emissive: 0xff8a3a,
+      emissiveIntensity: 3.2,
+    });
+    for (const [x, z] of [[-6.5, -18], [-6.5, 2], [4.5, -24]]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 5.2, 6), steelDark);
+      pole.position.set(x, 5.5, z);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10), lampMat);
+      bulb.position.set(x, 8.1, z);
+      scene.add(pole, bulb);
+      const lamp = new THREE.PointLight(0xff9a55, 12, 28, 1.8);
+      lamp.position.set(x, 8.0, z);
+      scene.add(lamp);
+    }
+
+    const SAMPLES = 2400;
+    const spaced = path.getSpacedPoints(SAMPLES);
+    const times = new Float32Array(SAMPLES + 1);
+    let hMax = 0;
+    for (let i = 0; i < SAMPLES; i++) hMax = Math.max(hMax, spaced[i].y);
+    const G = 9.81;
+    let totalTime = 0;
+    times[0] = 0;
+    for (let i = 0; i < SAMPLES; i++) {
+      const a = spaced[i];
+      const b = spaced[(i + 1) % SAMPLES];
+      const ds = a.distanceTo(b);
+      const h = a.y;
+      let v = Math.sqrt(Math.max(3.2, 2 * G * (hMax - h + 1.15)));
+      const climb = b.y - a.y;
+      const u = i / SAMPLES;
+      if (climb > 0.015 && h > 8 && h < hMax - 3.5 && u < 0.22) v = 4.6;
+      if (u > 0.93 || u < 0.035) v = Math.min(v, 6.2);
+      totalTime += ds / v;
+      times[i + 1] = totalTime;
+    }
+
+    function uAt(rideTime) {
+      const tau = ((rideTime % totalTime) + totalTime) % totalTime;
+      let lo = 0;
+      let hi = SAMPLES;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (times[mid] < tau) lo = mid + 1;
+        else hi = mid;
+      }
+      const i = Math.max(1, lo);
+      const t0 = times[i - 1];
+      const t1 = times[i];
+      const f = t1 === t0 ? 0 : (tau - t0) / (t1 - t0);
+      return ((i - 1 + f) / SAMPLES) % 1;
+    }
+
+    let bankSmoothed = 0;
+    let rideTime = 0;
+    const clock = new THREE.Clock();
+
+    function frameAt(u, outPos, outFwd, outUp) {
+      path.getPointAt(u, outPos);
+      path.getTangentAt(u, outFwd);
+      path.getTangentAt((u + 0.003) % 1, _t2);
+      _right.crossVectors(outFwd, worldUp);
+      if (_right.lengthSq() < 1e-8) _right.set(1, 0, 0);
+      else _right.normalize();
+      outUp.crossVectors(_right, outFwd).normalize();
+      _lat.subVectors(_t2, outFwd);
+      const bankTarget = Math.atan2(_lat.dot(_right), 0.003) * 0.42;
+      bankSmoothed += (bankTarget - bankSmoothed) * 0.12;
+      _right.applyAxisAngle(outFwd, bankSmoothed);
+      outUp.crossVectors(_right, outFwd).normalize();
+      _right.crossVectors(outFwd, outUp).normalize();
+    }
+
+    function poseCart(u) {
+      frameAt(u, _p, _t, _up);
+      cart.position.copy(_p).addScaledVector(_up, 0.55);
+      _look.copy(_p).add(_t);
+      cart.up.copy(_up);
+      cart.lookAt(_look);
+    }
+
+    function phaseLabel(u, h) {
+      if (u < 0.035 || u > 0.93) return "brakes · station";
+      if (u < 0.20) return "chain lift";
+      if (h > 40 && u < 0.26) return "crest";
+      if (u > 0.24 && u < 0.42) return "first drop · loop";
+      if (u > 0.42 && u < 0.68) return "helix";
+      return "airtime hills";
+    }
+
+    poseCart(0);
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+    window.addEventListener("resize", onResize);
+
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      rideTime += dt;
+      const u = uAt(rideTime);
+      poseCart(u);
+      path.getPointAt(u, _p);
+      hud.textContent = phaseLabel(u, _p.y);
+      renderer.render(scene, camera);
+    }
+    tick();
+  </script>
+</body>
+</html>

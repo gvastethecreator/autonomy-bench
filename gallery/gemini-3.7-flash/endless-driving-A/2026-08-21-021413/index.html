@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Endless Night Driving</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #020617; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      color: #94a3b8;
+      font-family: sans-serif;
+      font-size: 13px;
+      pointer-events: none;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">Endless Night Drive • Steer with A/D or Left/Right Arrow Keys</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020617);
+    scene.fog = new THREE.FogExp2(0x020617, 0.012);
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 800);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Starfield
+    const starGeo = new THREE.BufferGeometry();
+    const starCoords = [];
+    for (let i = 0; i < 1200; i++) {
+      starCoords.push((Math.random() - 0.5) * 1000, Math.random() * 300 + 20, (Math.random() - 0.5) * 1000);
+    }
+    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.0 })));
+
+    // Moonlight
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(12, 16, 16), new THREE.MeshBasicMaterial({ color: 0xfef08a }));
+    moon.position.set(-180, 100, -400);
+    scene.add(moon);
+
+    const ambient = new THREE.AmbientLight(0x1e293b, 0.6);
+    scene.add(ambient);
+
+    // Ground Plane
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(600, 1000),
+      new THREE.MeshLambertMaterial({ color: 0x050a14 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.1;
+    scene.add(ground);
+
+    // Road Streaming Chunks
+    const roadWidth = 12;
+    const roadLength = 500;
+    const segments = 5;
+    const roadChunks = [];
+
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 });
+    const dashMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+    const treeTrunkMat = new THREE.MeshLambertMaterial({ color: 0x451a03 });
+    const treeLeavesMat = new THREE.MeshLambertMaterial({ color: 0x064e3b });
+
+    for (let i = 0; i < segments; i++) {
+      const group = new THREE.Group();
+
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, roadLength / segments), roadMat);
+      road.rotation.x = -Math.PI / 2;
+      group.add(road);
+
+      // Center dashed stripe
+      for (let z = -40; z <= 40; z += 10) {
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 4), dashMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(0, 0.02, z);
+        group.add(dash);
+      }
+
+      // Roadside Trees
+      for (let side of [-roadWidth / 2 - 4, roadWidth / 2 + 4]) {
+        for (let tz = -30; tz <= 30; tz += 25) {
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 3, 6), treeTrunkMat);
+          trunk.position.set(side + (Math.random() - 0.5) * 2, 1.5, tz);
+          const leaves = new THREE.Mesh(new THREE.ConeGeometry(2, 5, 6), treeLeavesMat);
+          leaves.position.set(trunk.position.x, 5.0, tz);
+          group.add(trunk);
+          group.add(leaves);
+        }
+      }
+
+      group.position.z = -i * (roadLength / segments);
+      scene.add(group);
+      roadChunks.push(group);
+    }
+
+    // Player Car Model
+    const carGroup = new THREE.Group();
+    const carBody = new THREE.Mesh(
+      new THREE.BoxGeometry(2.0, 0.8, 4.2),
+      new THREE.MeshStandardMaterial({ color: 0x2563eb, metalness: 0.5, roughness: 0.3 })
+    );
+    carBody.position.y = 0.6;
+    carGroup.add(carBody);
+
+    const carCabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.65, 2.0),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1 })
+    );
+    carCabin.position.set(0, 1.2, -0.2);
+    carGroup.add(carCabin);
+
+    // Headlights
+    const leftHeadlight = new THREE.SpotLight(0xfffae0, 20, 80, Math.PI / 6, 0.4);
+    leftHeadlight.position.set(-0.7, 0.6, -2.1);
+    leftHeadlight.target.position.set(-0.7, 0, -40);
+    carGroup.add(leftHeadlight);
+    carGroup.add(leftHeadlight.target);
+
+    const rightHeadlight = new THREE.SpotLight(0xfffae0, 20, 80, Math.PI / 6, 0.4);
+    rightHeadlight.position.set(0.7, 0.6, -2.1);
+    rightHeadlight.target.position.set(0.7, 0, -40);
+    carGroup.add(rightHeadlight);
+    carGroup.add(rightHeadlight.target);
+
+    // Taillights
+    const tailMat = new THREE.MeshBasicMaterial({ color: 0xdc2626 });
+    const leftTail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.1), tailMat);
+    leftTail.position.set(-0.7, 0.6, 2.11);
+    const rightTail = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.1), tailMat);
+    rightTail.position.set(0.7, 0.6, 2.11);
+    carGroup.add(leftTail);
+    carGroup.add(rightTail);
+
+    scene.add(carGroup);
+
+    // Input Handling
+    const keys = { Left: false, Right: false };
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.Left = true;
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.Right = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.Left = false;
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.Right = false;
+    });
+
+    let carX = 0;
+    let steerSpeed = 0;
+    const drivingSpeed = 65;
+    let lastTime = performance.now();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const now = performance.now();
+      const delta = (now - lastTime) / 1000;
+      lastTime = now;
+
+      let steerInput = 0;
+      if (keys.Left) steerInput -= 1;
+      if (keys.Right) steerInput += 1;
+
+      steerSpeed += (steerInput * 5 - steerSpeed) * delta * 7;
+      carX += steerSpeed * delta * 2.0;
+      carX = Math.max(-roadWidth / 2 + 1.5, Math.min(roadWidth / 2 - 1.5, carX));
+
+      carGroup.position.x = carX;
+      carGroup.rotation.y = -steerSpeed * 0.04;
+      carGroup.rotation.z = -steerSpeed * 0.02;
+
+      // Scroll road
+      const chunkSpan = roadLength / segments;
+      for (const chunk of roadChunks) {
+        chunk.position.z += drivingSpeed * delta;
+        if (chunk.position.z > 50) {
+          chunk.position.z -= roadLength;
+        }
+      }
+
+      // Camera follow
+      camera.position.set(carX * 0.4, 2.8, 7.0);
+      camera.lookAt(carX * 0.7, 1.2, -30);
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

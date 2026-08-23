@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skyline Run — First Person Coaster</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #07111d; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 38%, rgba(0,0,0,.2) 72%, rgba(0,0,0,.7) 128%); mix-blend-mode: multiply; }
+    #grain { position: fixed; inset: 0; pointer-events: none; opacity: .09; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E"); mix-blend-mode: overlay; }
+    #hud { position: fixed; inset: 0; pointer-events: none; padding: clamp(18px, 3vw, 42px); display: flex; flex-direction: column; justify-content: space-between; text-shadow: 0 2px 12px #000; }
+    .top { display:flex; justify-content:space-between; align-items:flex-start; gap: 16px; }
+    .brand { letter-spacing: .22em; text-transform: uppercase; font-size: 11px; font-weight: 800; color: #d8f4ff; }
+    .brand b { display:block; letter-spacing: .05em; font-size: clamp(20px, 3.4vw, 42px); line-height: .95; color: #fff7df; margin-top: 5px; }
+    .status { display:flex; align-items:center; gap:8px; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:#e0eff7; }
+    .dot { width:8px; height:8px; border-radius:50%; background:#8dffc5; box-shadow:0 0 14px #8dffc5; animation: breathe 1.8s ease-in-out infinite; }
+    .bottom { display:flex; align-items:flex-end; justify-content:space-between; gap: 16px; }
+    .meters { display:flex; gap:22px; align-items:end; }
+    .meter label { display:block; color:#a3c0cb; text-transform:uppercase; font-size:9px; font-weight:800; letter-spacing:.14em; margin-bottom:5px; }
+    .meter span { font-variant-numeric: tabular-nums; font-size:clamp(22px, 3vw, 34px); font-weight:300; color:#fff; line-height:1; }
+    .meter small { font-size:10px; color:#c3d8df; margin-left:3px; }
+    .help { max-width:290px; text-align:right; color:#c2d6de; font-size:10px; letter-spacing:.08em; text-transform:uppercase; line-height:1.65; }
+    #start { pointer-events:auto; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); border:1px solid rgba(238,251,255,.56); color:#fff; background:rgba(7,17,29,.36); backdrop-filter:blur(10px); padding:14px 21px; font:800 11px/1 Inter, sans-serif; letter-spacing:.18em; text-transform:uppercase; cursor:pointer; transition:.25s ease; box-shadow:0 8px 35px rgba(0,0,0,.3); }
+    #start:hover { background:rgba(255,244,214,.18); border-color:#fff7df; transform:translate(-50%,-50%) scale(1.04); }
+    @keyframes breathe { 50% { opacity:.35; box-shadow:0 0 5px #8dffc5; } }
+    @media (max-width: 520px) { .help { display:none; } .meters { gap:14px; } .top { gap:8px; } }
+  </style>
+</head>
+<body>
+  <div id="vignette"></div><div id="grain"></div>
+  <div id="hud">
+    <div class="top"><div class="brand">Northstar Amusements<b>Skyline Run</b></div><div class="status"><i class="dot"></i> Live circuit</div></div>
+    <div class="bottom"><div class="meters"><div class="meter"><label>Speed</label><span id="speed">0</span><small>km/h</small></div><div class="meter"><label>Altitude</label><span id="altitude">0</span><small>m</small></div></div><div class="help">First-person flight<br>R · restart &nbsp; P · pause</div></div>
+  </div>
+  <button id="start" type="button">Begin the ride</button>
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x07111d);
+    scene.fog = new THREE.FogExp2(0x0e2732, 0.0082);
+
+    const camera = new THREE.PerspectiveCamera(76, innerWidth / innerHeight, 0.08, 700);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.22;
+    document.body.prepend(renderer.domElement);
+
+    const hemi = new THREE.HemisphereLight(0x8dd7ff, 0x13241a, 2.4); scene.add(hemi);
+    const sunLight = new THREE.DirectionalLight(0xffd6a1, 3.4); sunLight.position.set(-65, 90, -48); scene.add(sunLight);
+    const fill = new THREE.PointLight(0x61b9ff, 10, 36, 1.7); fill.position.set(12, 19, -6); scene.add(fill);
+
+    // Gradient sky dome.
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(420, 40, 22), new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false,
+      uniforms: { top: { value: new THREE.Color(0x06101f) }, horizon: { value: new THREE.Color(0x4d8da0) }, ground: { value: new THREE.Color(0x1a3840) } },
+      vertexShader: 'varying vec3 p; void main(){ p=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+      fragmentShader: 'uniform vec3 top; uniform vec3 horizon; uniform vec3 ground; varying vec3 p; void main(){ float h=normalize(p).y; vec3 c=mix(horizon,top,smoothstep(.0,.88,h)); c=mix(ground,c,smoothstep(-.32,.12,h)); gl_FragColor=vec4(c,1.); }'
+    })); scene.add(sky);
+    const sun = new THREE.Mesh(new THREE.SphereGeometry(7, 30, 20), new THREE.MeshBasicMaterial({ color: 0xffdfa6, fog: false })); sun.position.set(-100, 54, -150); scene.add(sun);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffcf88, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })); halo.position.copy(sun.position); halo.scale.set(48,48,1); scene.add(halo);
+
+    function glowTexture(){ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d'); const g=x.createRadialGradient(64,64,0,64,64,64); g.addColorStop(0,'rgba(255,245,205,.92)'); g.addColorStop(.13,'rgba(255,210,145,.54)'); g.addColorStop(.48,'rgba(255,186,101,.11)'); g.addColorStop(1,'rgba(255,150,80,0)'); x.fillStyle=g; x.fillRect(0,0,128,128); return new THREE.CanvasTexture(c); }
+
+    // A broad procedural valley, kept below the ride surface.
+    const terrain = new THREE.PlaneGeometry(330, 330, 120, 120);
+    const pos = terrain.attributes.position;
+    const terrainY = (x,z) => -7 + Math.sin(x*.053)*2.1 + Math.cos(z*.045)*1.8 + Math.sin((x+z)*.024)*2.4 + Math.cos(Math.hypot(x,z)*.075)*1.5;
+    for(let i=0;i<pos.count;i++){ const x=pos.getX(i), z=pos.getY(i); pos.setZ(i, terrainY(x,z)); }
+    terrain.rotateX(-Math.PI/2); terrain.computeVertexNormals();
+    scene.add(new THREE.Mesh(terrain, new THREE.MeshStandardMaterial({ color:0x193a31, roughness:1, metalness:0 })));
+
+    // Sculpted mountain silhouettes at the horizon.
+    const mountainMat = new THREE.MeshStandardMaterial({ color:0x15323b, roughness:1, flatShading:true });
+    for(let i=0;i<26;i++){ const a=i/26*Math.PI*2, r=96+(i%4)*15, h=16+(i*17%31); const m=new THREE.Mesh(new THREE.ConeGeometry(11+(i%5)*4,h,6),mountainMat); m.position.set(Math.cos(a)*r,h/2-6,Math.sin(a)*r); m.rotation.y=a*.7; scene.add(m); }
+
+    // Track: a closed, swept mountain circuit.
+    const knots = [
+      [-6,10,45], [22,14,39], [42,24,16], [35,19,-13], [16,9,-27], [-11,11,-34], [-35,26,-20], [-44,37,7], [-28,28,28], [-5,13,24],
+      [8,11,10], [4,15,-6], [-15,31,-1], [-23,45,18], [-9,52,32], [14,42,36], [29,26,25], [28,13,4], [12,8,-13], [-11,12,-18],
+      [-22,20,-3], [-16,18,16]
+    ].map(v=>new THREE.Vector3(...v));
+    const path = new THREE.CatmullRomCurve3(knots, true, 'catmullrom', .34);
+    const samples=520, trackPts=[], normals=[], rights=[];
+    const worldUp=new THREE.Vector3(0,1,0), tempTan=new THREE.Vector3(), tempR=new THREE.Vector3(), tempN=new THREE.Vector3();
+    for(let i=0;i<samples;i++){
+      const t=i/samples, p=path.getPointAt(t), tangent=path.getTangentAt(t).normalize();
+      const bank=.48*Math.sin(t*Math.PI*8-.6)+.28*Math.sin(t*Math.PI*3.2+1.2);
+      tempR.crossVectors(worldUp,tangent); if(tempR.lengthSq()<.01) tempR.set(1,0,0); tempR.normalize();
+      tempN.crossVectors(tangent,tempR).normalize();
+      tempN.applyAxisAngle(tangent,bank).normalize(); tempR.crossVectors(tempN,tangent).normalize();
+      trackPts.push(p); normals.push(tempN.clone()); rights.push(tempR.clone());
+    }
+    function tubeFor(offset, radius, color, metal=.85){ const points=trackPts.map((p,i)=>p.clone().addScaledVector(rights[i],offset).addScaledVector(normals[i],-.32)); const c=new THREE.CatmullRomCurve3(points,true,'catmullrom',.32); const mesh=new THREE.Mesh(new THREE.TubeGeometry(c,820,radius,8,true),new THREE.MeshStandardMaterial({ color, metalness:metal, roughness:.26 })); scene.add(mesh); return mesh; }
+    tubeFor(-1.18,.115,0xd2dfdf); tubeFor(1.18,.115,0xd2dfdf);
+    tubeFor(-.62,.075,0x28343a,.7); tubeFor(.62,.075,0x28343a,.7);
+
+    // Cross ties and dramatic support pylons.
+    const sleeperGeo=new THREE.BoxGeometry(3.35,.16,.38), sleeperMat=new THREE.MeshStandardMaterial({ color:0x4a3021, roughness:.82 });
+    const sleeper=new THREE.InstancedMesh(sleeperGeo,sleeperMat,Math.floor(samples/3)); const pillarGeo=new THREE.CylinderGeometry(.22,.34,1,9), pillarMat=new THREE.MeshStandardMaterial({color:0x263840,metalness:.72,roughness:.34}); const supports=[];
+    const basis=new THREE.Matrix4(), dummy=new THREE.Object3D(); let si=0;
+    for(let i=0;i<samples;i+=3){ basis.makeBasis(rights[i],normals[i],path.getTangentAt(i/samples).normalize()); dummy.position.copy(trackPts[i]).addScaledVector(normals[i],-.58); dummy.quaternion.setFromRotationMatrix(basis); dummy.scale.set(1,1,1); dummy.updateMatrix(); sleeper.setMatrixAt(si++,dummy.matrix); }
+    sleeper.instanceMatrix.needsUpdate=true; scene.add(sleeper);
+    for(let i=5;i<samples;i+=15){ const p=trackPts[i], floor=terrainY(p.x,p.z)+.1, len=Math.max(3,p.y-floor-.5); const s=new THREE.Mesh(pillarGeo,pillarMat); s.scale.y=len; s.position.copy(p).addScaledVector(normals[i],-1.0); s.position.y=floor+len/2; scene.add(s); supports.push(s); }
+
+    // Gentle water plane and a lit station landmark.
+    const water=new THREE.Mesh(new THREE.CircleGeometry(23,64),new THREE.MeshPhysicalMaterial({color:0x2d8ba0,metalness:.1,roughness:.14,transparent:true,opacity:.72,clearcoat:.7})); water.rotation.x=-Math.PI/2; water.position.set(44,-5.25,-38); scene.add(water);
+    const station=new THREE.Group(); station.position.set(-4,terrainY(-4,46)+.2,48); const platform=new THREE.Mesh(new THREE.BoxGeometry(15,1.1,7),new THREE.MeshStandardMaterial({color:0x25343a,roughness:.7})); platform.position.y=.55; station.add(platform); const roof=new THREE.Mesh(new THREE.BoxGeometry(18,.5,10),new THREE.MeshStandardMaterial({color:0x122029,metalness:.65,roughness:.3})); roof.position.y=6.3; station.add(roof); for(const x of [-7,7]) for(const z of [-3,3]){ const post=new THREE.Mesh(new THREE.CylinderGeometry(.22,.28,6,8),pillarMat); post.position.set(x,3,z); station.add(post); } const sign=document.createElement('canvas'); sign.width=512; sign.height=128; const sx=sign.getContext('2d'); sx.fillStyle='#0e1a20'; sx.fillRect(0,0,512,128); sx.strokeStyle='#d7f5ff'; sx.lineWidth=5; sx.strokeRect(7,7,498,114); sx.fillStyle='#fff3c6'; sx.font='bold 52px sans-serif'; sx.textAlign='center'; sx.fillText('SKYLINE RUN',256,79); const signMesh=new THREE.Mesh(new THREE.PlaneGeometry(8,2),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(sign),transparent:true})); signMesh.position.set(0,4.4,3.56); station.add(signMesh); scene.add(station);
+
+    // Low-poly pines with deterministic placement.
+    const treeTrunk=new THREE.CylinderGeometry(.12,.19,1.3,6), treeLeaf=new THREE.ConeGeometry(.9,3.2,7); const treeMats=[new THREE.MeshStandardMaterial({color:0x0d3929,roughness:1}),new THREE.MeshStandardMaterial({color:0x13513a,roughness:1})];
+    function rand(i){ return (Math.sin(i*928.217+3.7)*49239.123)%1; }
+    for(let i=1;i<250;i++){ const a=rand(i)*Math.PI*2, r=22+rand(i+9)*110; const x=Math.cos(a)*r,z=Math.sin(a)*r; const near=path.getPointAt((i*37%samples)/samples); if(Math.hypot(x-near.x,z-near.z)<8) continue; const h=2.5+rand(i+17)*5.2, g=new THREE.Group(), tr=new THREE.Mesh(treeTrunk,new THREE.MeshStandardMaterial({color:0x352219,roughness:1})), leaves=new THREE.Mesh(treeLeaf,treeMats[i%2]); tr.position.y=.65*h/3; leaves.position.y=h*.55; leaves.scale.y=h/3.2; g.add(tr,leaves); g.position.set(x,terrainY(x,z),z); g.rotation.y=rand(i+42)*6; scene.add(g); }
+
+    const cockpit=new THREE.Group(); camera.add(cockpit); scene.add(camera);
+    const nose=new THREE.Mesh(new THREE.BoxGeometry(1.5,.22,2.3),new THREE.MeshStandardMaterial({color:0x0d2730,metalness:.85,roughness:.22})); nose.position.set(0,-1.12,-2.2); cockpit.add(nose);
+    const leftBar=new THREE.Mesh(new THREE.CylinderGeometry(.045,.045,2.7,8),new THREE.MeshStandardMaterial({color:0x74b4be,metalness:1,roughness:.18})); leftBar.rotation.z=Math.PI/2; leftBar.position.set(-1.06,-.87,-1.7); cockpit.add(leftBar); const rightBar=leftBar.clone(); rightBar.position.x=1.06; cockpit.add(rightBar);
+
+    const speedEl=document.querySelector('#speed'), altEl=document.querySelector('#altitude'), start=document.querySelector('#start'); let rideT=.018, playing=true, elapsed=0;
+    start.style.display='none';
+    function reset(){ rideT=.018; elapsed=0; }
+    addEventListener('keydown',e=>{ if(e.key.toLowerCase()==='r') reset(); if(e.key.toLowerCase()==='p'){ playing=!playing; start.textContent=playing?'Pause':'Resume ride'; start.style.opacity=playing?'.0':'1'; } });
+    start.addEventListener('click',()=>{ playing=!playing; start.textContent=playing?'Pause':'Resume ride'; start.style.opacity=playing?'0':'1'; });
+    start.addEventListener('mouseenter',()=>{ if(playing) start.style.opacity='.9'; }); start.addEventListener('mouseleave',()=>{ if(playing) start.style.opacity='0'; });
+
+    const clock=new THREE.Clock();
+    function animate(){ requestAnimationFrame(animate); const dt=Math.min(clock.getDelta(),.05); if(playing){ elapsed+=dt; const here=path.getPointAt(rideT); const descent=Math.max(0,-path.getTangentAt(rideT).y); const pace=.0105+descent*.022+Math.sin(elapsed*.35)*.0006; rideT=(rideT+dt*pace)%1; }
+      const p=path.getPointAt(rideT), tangent=path.getTangentAt(rideT).normalize(); const i=Math.floor(rideT*samples)%samples; const normal=normals[i].clone();
+      const bob=Math.sin(elapsed*11)*.025 + Math.sin(elapsed*3.1)*.032; camera.position.copy(p).addScaledVector(normal,1.12+bob).addScaledVector(tangent,.26); camera.up.copy(normal); camera.lookAt(p.clone().addScaledVector(tangent,8));
+      const velocity=62+Math.max(0,-tangent.y)*70; speedEl.textContent=Math.round(velocity); altEl.textContent=Math.round(p.y); fill.position.copy(p).addScaledVector(normal,2).addScaledVector(tangent,4); water.material.opacity=.64+Math.sin(elapsed*.8)*.08; renderer.render(scene,camera); }
+    addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+    animate();
+  </script>
+</body>
+</html>

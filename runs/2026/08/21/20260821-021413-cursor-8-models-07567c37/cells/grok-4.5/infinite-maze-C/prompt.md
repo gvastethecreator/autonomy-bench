@@ -1,1 +1,0 @@
-Create an infinite first-person maze with careful attention to detail in a single HTML file using Three.js. It should feel like a finished, polished interactive experience rather than a technical prototype. Decide all other design and implementation details yourself.

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skyline Run — First-person coaster</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #050b19; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    canvas { display: block; }
+    .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 45%, rgba(1,4,12,.48) 120%); mix-blend-mode: multiply; }
+    .hud { position: fixed; inset: 0; pointer-events: none; padding: 28px 30px; display: flex; justify-content: space-between; align-items: flex-start; letter-spacing: .12em; text-transform: uppercase; }
+    .brand { font-weight: 760; font-size: 12px; line-height: 1.35; color: #fff; text-shadow: 0 2px 20px #000; }
+    .brand span { display:block; margin-top: 5px; color: #83ebff; font: 600 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; }
+    .ride-data { display: grid; grid-template-columns: auto auto; gap: 9px 23px; text-align: right; color: #d8efff; font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-shadow: 0 2px 18px #000; }
+    .ride-data b { font-size: 13px; color: #fff; letter-spacing: .05em; }
+    .reticle { position: fixed; left:50%; top:50%; width: 7px; height:7px; transform: translate(-50%,-50%); border: 1px solid rgba(201,246,255,.48); border-radius: 50%; pointer-events:none; }
+    .bottom { position: fixed; left: 30px; right: 30px; bottom: 27px; pointer-events: none; display:flex; justify-content:space-between; align-items:end; }
+    .progress-wrap { width: min(270px, 44vw); }
+    .progress-meta { display:flex; justify-content:space-between; color:#d7f8ff; font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.12em; text-transform:uppercase; text-shadow:0 1px 8px #000; }
+    .progress { height:2px; margin-top:9px; background:rgba(193,235,255,.24); overflow:hidden; }
+    .progress i { display:block; height:100%; width:0%; background:#7ff3ff; box-shadow: 0 0 12px #65efff; }
+    .hint { color:rgba(234,249,255,.74); font: 500 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.11em; text-transform:uppercase; text-align:right; text-shadow:0 1px 8px #000; }
+    .start-card { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; pointer-events:none; animation: fade-away 4.8s ease forwards; }
+    .start-card .eyebrow { color:#9deaff; font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.43em; text-transform:uppercase; }
+    .start-card h1 { margin:12px 0 9px; color:#fff; font-size:clamp(31px,6vw,70px); line-height:.9; letter-spacing:-.065em; text-transform:uppercase; text-shadow:0 8px 30px rgba(0,0,0,.55); }
+    .start-card p { margin:0; color:#d2efff; font:500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:.18em; text-transform:uppercase; }
+    @keyframes fade-away { 0%,55%{ opacity:1; transform:translate(-50%,-50%) scale(1); } 100% { opacity:0; transform:translate(-50%,-53%) scale(1.04); visibility:hidden; } }
+    @media (max-width: 520px) { .hud { padding:18px; } .bottom { left:18px; right:18px; bottom:18px; } .hint { display:none; } }
+  </style>
+</head>
+<body>
+  <div class="vignette"></div>
+  <div class="hud">
+    <div class="brand">SKYLINE RUN<span>Night ride / continuous</span></div>
+    <div class="ride-data"><span>velocity</span><b id="speed">078 km/h</b><span>altitude</span><b id="altitude">034 m</b></div>
+  </div>
+  <div class="reticle"></div>
+  <div class="bottom"><div class="progress-wrap"><div class="progress-meta"><span>Track position</span><span id="percent">00.0%</span></div><div class="progress"><i id="progress"></i></div></div><div class="hint">AUTOPILOT ENGAGED<br>THE TRAIN NEVER STOPS</div></div>
+  <div class="start-card"><div class="eyebrow">You are on the front car</div><h1>Skyline<br>Run</h1><p>Hold on. The descent is close.</p></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+  <script>
+  (() => {
+    const THREE = window.THREE;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x07142a, 0.007);
+    const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.08, 1200);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.18;
+    document.body.appendChild(renderer.domElement);
+
+    // A horizon that feels like a blue hour after a summer storm.
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(680, 48, 24), new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false,
+      uniforms: { top: { value: new THREE.Color('#07122d') }, horizon: { value: new THREE.Color('#335b91') }, low: { value: new THREE.Color('#d28381') } },
+      vertexShader: 'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 top; uniform vec3 horizon; uniform vec3 low; varying vec3 vP; void main(){ float h=normalize(vP).y; vec3 c=mix(horizon,top,smoothstep(-.04,.68,h)); c=mix(low,c,smoothstep(-.18,.15,h)); gl_FragColor=vec4(c,1.0); }'
+    }));
+    scene.add(sky);
+
+    scene.add(new THREE.HemisphereLight(0x8fd5ff, 0x0a1723, 1.55));
+    const sun = new THREE.DirectionalLight(0xffc99d, 2.4); sun.position.set(-130, 95, -90); scene.add(sun);
+    const cool = new THREE.DirectionalLight(0x7bc9ff, 0.75); cool.position.set(90, 35, 80); scene.add(cool);
+
+    // Terrain: low-poly only at a distance, gently lit to make the track read first.
+    const terrainGeo = new THREE.PlaneGeometry(520, 520, 100, 100);
+    const pos = terrainGeo.attributes.position;
+    const groundHeight = (x, z) => {
+      const ridge = Math.sin(x * .035) * 3.2 + Math.cos(z * .044) * 2.7 + Math.sin((x + z) * .024) * 3.1;
+      const bowl = -0.000045 * (x*x + z*z);
+      return ridge + bowl - 5;
+    };
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, groundHeight(pos.getX(i), pos.getY(i)));
+    terrainGeo.computeVertexNormals();
+    const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ color: 0x12334a, roughness: .95, metalness: .02, flatShading: true }));
+    terrain.rotation.x = -Math.PI / 2; scene.add(terrain);
+    const lake = new THREE.Mesh(new THREE.CircleGeometry(45, 80), new THREE.MeshStandardMaterial({ color: 0x103c67, metalness:.66, roughness:.16, transparent:true, opacity:.75 }));
+    lake.rotation.x = -Math.PI/2; lake.position.set(-6, -4.18, 48); scene.add(lake);
+
+    // The route deliberately alternates crest, plunge, sweep, and a last high turn.
+    const points = [
+      [-7, 11, 89], [-48, 15, 78], [-92, 28, 45], [-105, 15, -5], [-87, 8, -55],
+      [-37, 16, -88], [10, 42, -99], [48, 57, -70], [76, 22, -18], [78, 10, 35],
+      [49, 18, 77], [7, 10, 105], [-25, 9, 107], [-48, 23, 91]
+    ].map(v => new THREE.Vector3(...v));
+    const path = new THREE.CatmullRomCurve3(points, true, 'centripetal', .36);
+    const samples = 720;
+    const frames = [];
+    const worldUp = new THREE.Vector3(0,1,0);
+    for (let i = 0; i < samples; i++) {
+      const t = i / samples, p = path.getPointAt(t), tangent = path.getTangentAt(t).normalize();
+      let side = new THREE.Vector3().crossVectors(tangent, worldUp);
+      if (side.lengthSq() < .001) side.set(1,0,0); else side.normalize();
+      const up = new THREE.Vector3().crossVectors(side, tangent).normalize();
+      frames.push({ p, tangent, side, up });
+    }
+
+    function makeTube(offset, radius, material) {
+      const radial = 7, vertices = [], indices = [];
+      for (let i = 0; i <= samples; i++) {
+        const f = frames[i % samples], center = f.p.clone().addScaledVector(f.side, offset);
+        for (let j = 0; j < radial; j++) {
+          const a = Math.PI * 2 * j / radial;
+          vertices.push(center.x + (f.side.x * Math.cos(a) + f.up.x * Math.sin(a)) * radius, center.y + (f.side.y * Math.cos(a) + f.up.y * Math.sin(a)) * radius, center.z + (f.side.z * Math.cos(a) + f.up.z * Math.sin(a)) * radius);
+        }
+      }
+      for (let i = 0; i < samples; i++) for (let j = 0; j < radial; j++) { const n=(j+1)%radial, a=i*radial+j, b=(i+1)*radial+j; indices.push(a,b,a+radial+n, a,a+radial+n,a+n); }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(vertices,3)); g.setIndex(indices); g.computeVertexNormals();
+      return new THREE.Mesh(g, material);
+    }
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x9dd9e8, metalness: .9, roughness: .22 });
+    scene.add(makeTube(-1.16, .145, railMat), makeTube(1.16, .145, railMat));
+    const sleeperMat = new THREE.MeshStandardMaterial({ color: 0x283d4b, metalness:.45, roughness:.7 });
+    const tieGeo = new THREE.BoxGeometry(3.2,.16,.36);
+    const beamGeo = new THREE.BoxGeometry(.22,.22,.22);
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x192735, metalness:.7, roughness:.45 });
+    for (let i=0; i<samples; i+=10) {
+      const f=frames[i], tie=new THREE.Mesh(tieGeo,sleeperMat);
+      tie.position.copy(f.p).addScaledVector(f.up,-.23);
+      const q=new THREE.Matrix4().makeBasis(f.side, f.up, f.tangent); tie.quaternion.setFromRotationMatrix(q); scene.add(tie);
+    }
+    for (let i=0; i<samples; i+=34) {
+      const f=frames[i], y0=groundHeight(f.p.x,f.p.z)+.6, h=Math.max(1.5,f.p.y-y0);
+      const a=new THREE.Mesh(new THREE.CylinderGeometry(.19,.28,h,6),supportMat), b=a.clone();
+      a.position.copy(f.p).addScaledVector(f.side,-1.18); a.position.y=y0+h/2;
+      b.position.copy(f.p).addScaledVector(f.side,1.18); b.position.y=y0+h/2;
+      scene.add(a,b);
+      const brace=new THREE.Mesh(beamGeo,supportMat); brace.scale.set(1,1,12); brace.position.copy(f.p); brace.position.y=y0+h*.58; brace.lookAt(f.p.clone().add(f.tangent)); scene.add(brace);
+    }
+
+    // Fine points of light help sell the speed without adding visual noise.
+    const starGeo = new THREE.BufferGeometry(), starPos=[];
+    for(let i=0;i<1100;i++){ const r=260+Math.random()*260, a=Math.random()*Math.PI*2, y=30+Math.random()*230; starPos.push(Math.cos(a)*r,y,Math.sin(a)*r); }
+    starGeo.setAttribute('position',new THREE.Float32BufferAttribute(starPos,3));
+    scene.add(new THREE.Points(starGeo,new THREE.PointsMaterial({color:0xbfe7ff,size:1.05,sizeAttenuation:true,transparent:true,opacity:.72})));
+    const beaconGeo=new THREE.SphereGeometry(.4,8,8), beaconMat=new THREE.MeshBasicMaterial({color:0xff6d76});
+    for(let i=0;i<samples;i+=56){ const f=frames[i], beacon=new THREE.Mesh(beaconGeo,beaconMat); beacon.position.copy(f.p).addScaledVector(f.up,.6).addScaledVector(f.side,1.3); scene.add(beacon); }
+
+    const speedEl=document.getElementById('speed'), altitudeEl=document.getElementById('altitude'), percentEl=document.getElementById('percent'), progressEl=document.getElementById('progress');
+    const clock=new THREE.Clock(); let journey=.016, elapsed=0;
+    const qBank=new THREE.Quaternion();
+    function animate(){
+      requestAnimationFrame(animate); const dt=Math.min(clock.getDelta(), .05); elapsed += dt;
+      const f=frames[Math.floor(journey*samples)%samples], prev=frames[(Math.floor(journey*samples)-4+samples)%samples], next=frames[(Math.floor(journey*samples)+4)%samples];
+      const curve = next.tangent.clone().sub(prev.tangent).dot(f.side);
+      const bank = THREE.MathUtils.clamp(curve * 3.2, -.52, .52);
+      const camUp=f.up.clone(); qBank.setFromAxisAngle(f.tangent, bank); camUp.applyQuaternion(qBank);
+      const aheadT=(journey+.006)%1, ahead=path.getPointAt(aheadT);
+      const rideSpeed=0.029 + Math.max(0, (f.p.y-10)*.00009) + Math.abs(curve)*.012;
+      journey=(journey+rideSpeed*dt)%1;
+      const bob=Math.sin(elapsed*15)*.018;
+      camera.position.copy(f.p).addScaledVector(camUp, .74+bob);
+      camera.up.copy(camUp); camera.lookAt(ahead.addScaledVector(camUp,.25));
+      const kph=Math.round(62+rideSpeed*850+Math.max(0,20-f.p.y)*.7);
+      speedEl.textContent=String(kph).padStart(3,'0')+' km/h';
+      altitudeEl.textContent=String(Math.max(0,Math.round(f.p.y-groundHeight(f.p.x,f.p.z)))).padStart(3,'0')+' m';
+      const pc=journey*100; percentEl.textContent=pc.toFixed(1).padStart(4,'0')+'%'; progressEl.style.width=pc+'%';
+      renderer.render(scene,camera);
+    }
+    addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+    animate();
+  })();
+  </script>
+</body>
+</html>

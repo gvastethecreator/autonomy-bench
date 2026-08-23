@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 — 2026-08-23
+
+- Browser Autonomy Suite v1.3.0: every C prompt now defines a benchmark-specific, self-running animated showcase. Replace all Infinite Maze prompts with autonomous traversal and invalidate its previous A/B/C takes.
+- Published C and Infinite Maze takes keep a single prompt revision (v1). The current showcase C prompts and the current autonomous maze prompts are v1. Stub folders without `promptSha256` are not a second revision.
+- Add `SECURITY.md`, slim the README, and split CLI plus gallery viewer detail into `docs/`.
+- Browser Autonomy Suite v1.2.0: prompt C is a finished automatic showcase instead of a polished interactive experience. Published C takes and ledger C cells were removed and must be re-run.
+- Gallery title follows the selected benchmark (`Rollercoaster Bench`).
+- Catalog indexes every published take: prompt revisions from `promptSha256`, execution dates, defaulting to the latest of each.
+- Replace the evidence modal with independent source and receipt drawers, prompt copy + toast, HTML syntax highlighting, and column/grid/row + fill/fit layouts.
+- Move the catalog filmstrip into a left sidebar that can compact to an icon rail (`[` or Compact).
+- Animate gallery text changes with Anime.js scrambleText (only the glyphs that differ) and drive source/receipt drawers plus the compact rail with Anime.js (drawer curve on panels, ease-in-out on the sidebar).
+- Restyle prompt, month, run, and experiment dropdowns as the same outlined chips as the rest of the chrome, with an in-app menu instead of the OS select.
+- Cover take swaps with a stage loader; scramble chrome first, then replace iframes so project changes do not stutter.
+- Load take HTML behind a loader and assign iframe `src` one at a time so Models and A/B/C do not boot every WebGL take at once.
+- Group gallery takes by month so a month can show every model that landed in it; when a month has more than one run, a second select switches between those runs.
+
 ## 0.3.1 — 2026-08-23
 
 - Update toolchain and dependencies: `pnpm@11.22.0`, `vitest@4.1.11`.
