@@ -22,6 +22,8 @@ Do not attach live secrets, private keys, or full `.env` files.
 
 Workers and CLIs need their own provider credentials. Do not commit API keys, tokens, or `.env` files.
 
+GitHub Actions deploys with repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Do not put those values in the tree.
+
 Receipts record observable facts only. Unknown values stay `not captured`.
 
 If a secret lands in git, rotate it, then open a private report. Do not paste the value.

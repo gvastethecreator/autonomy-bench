@@ -8,7 +8,7 @@ This is not a typical coding test. It measures what a model adds when the prompt
 
 The suite is **showcase-first, interaction-optional** as an evaluation lens: a strong result should communicate and demonstrate its idea from the initial state, while interaction may still enrich the experience. This is not a hidden implementation requirement unless the prompt itself says so.
 
-Live gallery: [benchmark.gvaste.dev](https://benchmark.gvaste.dev).
+Live gallery: [benchmark.gvaste.dev](https://benchmark.gvaste.dev). A push to `main` deploys it after CI.
 
 ## Quick start
 

@@ -59,6 +59,8 @@ vp run dev
 vp run deploy
 ```
 
+A push to `main` deploys after CI validates. Use local `vp run deploy` only when you need to publish without that push. The deploy job needs repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+
 `gallery --run` copies each publishable A/B/C take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus `gallery/vendor/anime.esm.min.js`.
 
 Local votes need the D1 schema once:
