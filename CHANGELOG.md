@@ -3,6 +3,7 @@
 ## 0.7.3 — 2026-08-24
 
 - Show vendor brand marks for models and harnesses in the gallery (Gemini, DeepSeek, GLM/Z.ai, Kimi, Qwen, Hunyuan, Meta, OpenCode, Antigravity). Fallback stays the generic brain when no mark exists.
+- Sort gallery model lists alphabetically (sidebar, Models view, and Table).
 - Deploy the gallery Worker from GitHub Actions on push to `main` after CI validates.
 
 ## 0.7.2 — 2026-08-24
