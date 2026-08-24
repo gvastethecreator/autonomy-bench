@@ -25,18 +25,18 @@ Final gates: `vp check` pass. `vp test` 109 pass. `bench doctor` OK. Viewer chec
 
 Parent: https://github.com/gvastethecreator/autonomy-bench/issues/3
 
-| ID | Issue | Status |
-|---|---|---|
-| ARC-01 | #4 Share run ledger IO | Completed |
-| ARC-02 | #5 Share cell identity | Completed |
-| ARC-03 | #6 Share receipt status rules | Completed |
-| ARC-10 | #7 Make planner and finalize testable | Completed |
-| ARC-05 | #8 Split path layout from catalog | Completed |
-| ARC-04 | #9 Publish playable gallery takes | Completed |
+| ID     | Issue                                           | Status    |
+| ------ | ----------------------------------------------- | --------- |
+| ARC-01 | #4 Share run ledger IO                          | Completed |
+| ARC-02 | #5 Share cell identity                          | Completed |
+| ARC-03 | #6 Share receipt status rules                   | Completed |
+| ARC-10 | #7 Make planner and finalize testable           | Completed |
+| ARC-05 | #8 Split path layout from catalog               | Completed |
+| ARC-04 | #9 Publish playable gallery takes               | Completed |
 | ARC-08 | #10 Add thinking fields without renaming models | Completed |
-| ARC-09 | #11 Import viewer helpers as ESM | Completed |
-| ARC-07 | #12 Use shared catalog query in the viewer | Completed |
-| ARC-06 | #13 Slim catalog first-paint payload | Completed |
+| ARC-09 | #11 Import viewer helpers as ESM                | Completed |
+| ARC-07 | #12 Use shared catalog query in the viewer      | Completed |
+| ARC-06 | #13 Slim catalog first-paint payload            | Completed |
 
 ### ARC-01. Shared run IO
 
