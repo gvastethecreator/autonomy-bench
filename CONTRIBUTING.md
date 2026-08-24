@@ -19,7 +19,7 @@ Until another login is passed, new planned cells default to `gvastethecreator`. 
 
 ## Add or revise a suite benchmark
 
-`suites/browser-autonomy/suite.json` is the source of truth. The suite README table must stay in sync.
+`suites/browser-autonomy/suite.json` is the source of truth for the **live** benches. The suite README table must stay in sync. Shelved v2.0.0 benches are not in this tree. Keep their frozen prompts byte-for-byte until they are restored.
 
 Browser Autonomy v2 uses a controlled prompt ladder. A benchmark-specific prompt should only define the raw A task. B and C must use the suite-wide fixed suffixes exactly:
 
@@ -28,7 +28,7 @@ Browser Autonomy v2 uses a controlled prompt ladder. A benchmark-specific prompt
 
 The suite tests verify those exact constructions and word deltas.
 
-1. Add a new `id`. Never reuse an existing id.
+1. Add a new `id`, or restore a previously live v2.0.0 bench from the local frozen snapshot. Never reuse an existing live id.
 2. Write a Raw A prompt that follows [docs/METHODOLOGY.md](docs/METHODOLOGY.md): enough to make the task clear without prescribing architecture, visual treatment, interaction design, optional polish, or unnecessary quality adjectives.
 3. Preserve interaction wording only when interaction is part of the benchmark's semantic identity. Showcase-first is an evaluator lens, not text that must be appended to every A prompt.
 4. Derive B and C with the fixed suite suffixes. Do not write benchmark-specific B/C guidance.

@@ -19,6 +19,10 @@ One category label (`bug` or `enhancement`) and one triage label (`needs-triage`
 
 Single-context: root `CONTEXT.md` plus `docs/adr/` when those files exist. See `docs/agents/domain.md`. `/grill-with-docs` creates them when terms or decisions resolve.
 
+### Local archive
+
+Shelved v2.0.0 benches and retired gallery takes live under `.scratch/archive/` (gitignored). Read that folder's `MANIFEST.md` before restore. Do not put them in tracked `docs/` or `archive/`.
+
 ## Hard rules
 
 - Never expand a frozen prompt before dispatch.

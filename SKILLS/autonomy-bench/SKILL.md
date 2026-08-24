@@ -11,7 +11,7 @@ Autonomy Bench is a **benchmark coordinator**, not a design treatment. It freeze
 
 - Never improve, clarify, or secretly expand a benchmark prompt before dispatch.
 - Never let one benchmark cell see sibling outputs, scores, critiques, or coordinator preferences.
-- Browser Autonomy v2 has frozen A/B/C prompts for every benchmark. A is Raw; B is A plus the fixed 20-word autonomy suffix; C is B plus the fixed 20-word showcase suffix.
+- Browser Autonomy v2 has frozen A/B/C prompts for every **live** benchmark. A is Raw; B is A plus the fixed 20-word autonomy suffix; C is B plus the fixed 20-word showcase suffix.
 - Do not continue a conversation from one cell into another.
 - Record only observable provenance. Unknown values stay `not captured`.
 - Do not request or store hidden chain-of-thought. Evaluation records conclusions, evidence, and concise rationales only.

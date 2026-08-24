@@ -8,6 +8,40 @@ const suite = JSON.parse(
   readFileSync(join(root, 'suites', 'browser-autonomy', 'suite.json'), 'utf8'),
 );
 
+const SHELVED_V2_IDS = [
+  'solar-system',
+  'procedural-city',
+  'endless-driving',
+  'cloth-simulation',
+  'fluid-simulation',
+  'ecosystem',
+  'traffic-simulation',
+  'music-player',
+  'node-editor',
+  'image-editor',
+  'music-sequencer',
+  'shader-playground',
+  'asteroids',
+  'tower-defense',
+  'dungeon-crawler',
+  'physics-sandbox',
+  'system-dashboard',
+  'network-visualization',
+  'warehouse',
+  'elevator',
+  'airport',
+  'crowd-evacuation',
+  'automated-factory',
+  'clock',
+  'loading-screen',
+  'satisfying-button',
+  'cursor-experiment',
+  'interactive-404',
+  'medieval-city',
+  'infinite-maze',
+  'procedural-biped',
+];
+
 function wordCount(value: string) {
   return String(value || '')
     .trim()
@@ -19,7 +53,7 @@ describe('browser-autonomy suite', () => {
   it('has unique ids and a complete frozen A/B/C ladder', () => {
     const ids = new Set<string>();
     expect(suite.id).toBe('browser-autonomy-v2');
-    expect(suite.version).toBe('2.0.0');
+    expect(suite.version).toBe('2.1.0');
     expect(suite.promptLevels.A.name).toBe('Raw');
     expect(suite.promptLevels.B.name).toBe('Autonomous');
     expect(suite.promptLevels.C.name).toBe('Showcase');
@@ -31,13 +65,16 @@ describe('browser-autonomy suite', () => {
       expect(String(benchmark.prompts?.B || '').trim().length).toBeGreaterThan(0);
       expect(String(benchmark.prompts?.C || '').trim().length).toBeGreaterThan(0);
     }
-    expect(suite.benchmarks).toHaveLength(32);
+    expect(suite.benchmarks).toHaveLength(1);
+    expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).toEqual([
+      'rollercoaster',
+    ]);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
       'terrain-explorer',
     );
   });
 
-  it('uses the same exact +20 / +20 suffix ladder for every benchmark', () => {
+  it('uses the same exact +20 / +20 suffix ladder for every live benchmark', () => {
     const autonomousSuffix = suite.promptLadder.autonomousSuffix;
     const showcaseSuffix = suite.promptLadder.showcaseSuffix;
 
@@ -65,32 +102,6 @@ describe('browser-autonomy suite', () => {
     );
   });
 
-  it('neutralizes unnecessary interaction and quality pressure in Raw prompts', () => {
-    const forbidden =
-      /\b(polished|exceptional|exceptionally|creative|playful|playable|explorable)\b/i;
-    const interactiveIds = suite.benchmarks
-      .filter((benchmark: { prompts: { A: string } }) =>
-        /\binteractive\b/i.test(benchmark.prompts.A),
-      )
-      .map((benchmark: { id: string }) => benchmark.id);
-
-    for (const benchmark of suite.benchmarks) {
-      expect(benchmark.prompts.A).not.toMatch(forbidden);
-    }
-
-    expect(interactiveIds).toEqual(['cursor-experiment']);
-  });
-
-  it('keeps Infinite Maze autonomous while removing redundant input instructions', () => {
-    const maze = suite.benchmarks.find(
-      (benchmark: { id: string }) => benchmark.id === 'infinite-maze',
-    );
-
-    expect(maze.prompts.A).toBe(
-      'Create a continuously self-navigating infinite first-person maze in a single HTML file using Three.js.',
-    );
-  });
-
   it('declares the expanded evaluation profile', () => {
     expect(suite.defaultEvaluationAxes).toEqual([
       'completion',
@@ -102,5 +113,15 @@ describe('browser-autonomy suite', () => {
       'ambition',
       'coherence',
     ]);
+  });
+});
+
+describe('shelved v2.0.0 benches', () => {
+  it('keeps the frozen 31-bench set off the live suite', () => {
+    const liveIds = new Set(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id));
+    expect(SHELVED_V2_IDS).toHaveLength(31);
+    expect(SHELVED_V2_IDS).not.toContain('rollercoaster');
+    expect(SHELVED_V2_IDS).not.toContain('terrain-explorer');
+    for (const id of SHELVED_V2_IDS) expect(liveIds.has(id)).toBe(false);
   });
 });

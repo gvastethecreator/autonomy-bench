@@ -2,7 +2,7 @@
 
 Receipt-driven benchmark for how coding models handle underspecified single-HTML browser tasks.
 
-32 tasks with a frozen A/B/C prompt ladder. A is the raw task. B adds 20 words of autonomy. C adds 20 words of showcase pressure. The model still chooses architecture, interaction, look, and scope.
+The live suite is **Rollercoaster** with a frozen A/B/C prompt ladder. A is the raw task. B adds 20 words of autonomy. C adds 20 words of showcase pressure. The model still chooses architecture, interaction, look, and scope. More benches can be restored or added later without changing that ladder.
 
 Live gallery: [benchmark.gvaste.dev](https://benchmark.gvaste.dev).
 

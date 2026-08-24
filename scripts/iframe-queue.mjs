@@ -1,5 +1,33 @@
 export const IFRAME_LOAD_TIMEOUT_MS = 8000;
 export const IFRAME_STAGGER_GAP_MS = 120;
+export const IFRAME_LIVE_BUDGET = 8;
+export const IFRAME_BLANK_SRC = 'about:blank';
+
+export function isHotIframeSrc(src) {
+  const value = String(src || '').trim();
+  return Boolean(value) && value !== IFRAME_BLANK_SRC;
+}
+
+export function pickLiveIframes(items, budget = IFRAME_LIVE_BUDGET) {
+  const cap = Math.max(0, Number(budget) || 0);
+  return items
+    .map((item, index) => ({
+      index,
+      visible: Boolean(item && item.visible),
+      ratio: Number(item && item.ratio) || 0,
+      live: Boolean(item && item.live),
+      pin: Number(item && item.pin) || 0,
+    }))
+    .sort((a, b) => {
+      if (a.pin !== b.pin) return b.pin - a.pin;
+      if (a.visible !== b.visible) return a.visible ? -1 : 1;
+      if (a.ratio !== b.ratio) return b.ratio - a.ratio;
+      if (a.live !== b.live) return a.live ? -1 : 1;
+      return a.index - b.index;
+    })
+    .slice(0, cap)
+    .map((item) => item.index);
+}
 
 export function iframeLoadJobs(root) {
   return [...root.querySelectorAll('iframe[data-src]')];

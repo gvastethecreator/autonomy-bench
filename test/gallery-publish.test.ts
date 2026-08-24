@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vite-plus/test';
@@ -195,5 +195,24 @@ describe('publishRun', () => {
       '<html></html>',
     );
     expect(stripRetiredGalleryBenchmarks(galleryDir, suite)).toBe(1);
+  });
+
+  it('moves retired benchmark folders into an archive instead of deleting them', () => {
+    const galleryDir = tempDir();
+    const archiveDir = tempDir();
+    mkdirSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000', 'index.html'),
+      '<html></html>',
+    );
+    expect(stripRetiredGalleryBenchmarks(galleryDir, suite, archiveDir)).toBe(1);
+    expect(
+      existsSync(
+        join(archiveDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000', 'index.html'),
+      ),
+    ).toBe(true);
+    expect(existsSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A'))).toBe(false);
   });
 });
