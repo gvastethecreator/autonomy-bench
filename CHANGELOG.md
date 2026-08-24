@@ -4,7 +4,10 @@
 
 - Show vendor brand marks for models and harnesses in the gallery (Gemini, DeepSeek, GLM/Z.ai, Kimi, Qwen, Hunyuan, Meta, OpenCode, Antigravity). Fallback stays the generic brain when no mark exists.
 - Sort gallery model lists alphabetically (sidebar, Models view, and Table).
+- Move **Vote for this** next to **Reload** and **Copy prompt** on each take toolbar. Reload refreshes that take.
 - Deploy the gallery Worker from GitHub Actions on push to `main` after CI validates.
+- Catalog cells are an index plus `glance`. Prompt text lives on prompt revisions. The receipt panel loads `receipt.json` on demand.
+- Share run IO, cell identity, receipt status, planner, catalog query, and viewer ESM helpers behind smaller modules.
 
 ## 0.7.2 — 2026-08-24
 

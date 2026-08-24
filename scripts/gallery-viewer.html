@@ -777,7 +777,6 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .frame-bar .tag .frame-act[data-act="vote"] { flex-shrink: 0; }
     .frame-bar {
       display: flex;
       align-items: center;
@@ -1702,14 +1701,26 @@
   <div id="tip" class="tip" role="tooltip" hidden></div>
   <script type="module">
     import { animate, scrambleText, remove, cubicBezier, createLayout } from './vendor/anime.esm.min.js';
-    /* __HIGHLIGHT_HTML__ */
-    /* __BRANDS__ */
-    /* __SCRAMBLE_SPAN__ */
-    /* __STACK_PANELS__ */
-    /* __IFRAME_QUEUE__ */
-    /* __RUN_MONTH__ */
-    /* __VOTES__ */
-    /* __STAFF_PICKS__ */
+    import { highlightHtml } from './vendor/highlight-html.mjs';
+    import { brandIcon, harnessBrand, modelBrand } from './vendor/brands.mjs';
+    import { canScrambleText, splitChangedText } from './vendor/scramble-span.mjs';
+    import { nextPanelKeys, receiptBindKey, stackHeading } from './vendor/stack-panels.mjs';
+    import {
+      IFRAME_LOAD_TIMEOUT_MS,
+      IFRAME_STAGGER_GAP_MS,
+      iframeLoadJobs,
+      loadIframesStaggered,
+      loaderIdentity,
+      loaderProgressLabel,
+      yieldMain
+    } from './vendor/iframe-queue.mjs';
+    import { datesInMonth, formatMonth, formatRunInMonth, monthKey, monthsFromDates } from './vendor/run-month.mjs';
+    import { votePromptId, voteStateFromPayload } from './vendor/votes.mjs';
+    import { staffPickModel } from './vendor/staff-picks.mjs';
+    import { findCell, maxPromptRevision } from './vendor/catalog.mjs';
+    import { formatDateStamp } from './vendor/layout.mjs';
+    import { DEFAULT_CONTRIBUTOR_GITHUB, resolveContributor } from './vendor/contributor.mjs';
+    import { formatTokenUsage } from './vendor/model-meta.mjs';
     let CATALOG = { models: [], experiments: [], cells: [], promptRevisions: [], dates: [] };
     const q = new URLSearchParams(location.search);
     const sourceCache = new Map();
@@ -2283,7 +2294,8 @@
       filter: '<path d="M4 4h16l-6 7.5V18l-4 2v-8.5z"/>',
       clock: '<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 7v5l3 3"/>',
       tokens: '<path d="M5 9h14"/><path d="M5 15h14"/><path d="M11 4l-4 16"/><path d="M17 4l-4 16"/>',
-      cli: '<path d="M5 8l4 4-4 4"/><path d="M12 16h7"/>'
+      cli: '<path d="M5 8l4 4-4 4"/><path d="M12 16h7"/>',
+      reload: '<path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/>'
     };
     function icon(name) {
       return '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' + (ICON[name] || '') + '</svg>';
@@ -2566,20 +2578,7 @@
       return String(Math.round(n));
     }
     function fmtTokens(usage) {
-      if (usage == null || usage === '') return '—';
-      if (typeof usage === 'string' && usage.trim().toLowerCase() === 'not captured') return '—';
-      if (typeof usage === 'number' && Number.isFinite(usage)) return fmtCount(usage);
-      if (typeof usage === 'object') {
-        const total = usage.total ?? usage.tokens;
-        if (Number.isFinite(Number(total))) return fmtCount(Number(total));
-        const inn = Number(usage.input ?? usage.promptTokens ?? usage.prompt);
-        const out = Number(usage.output ?? usage.completionTokens ?? usage.completion);
-        if (Number.isFinite(inn) || Number.isFinite(out)) {
-          return fmtCount((Number.isFinite(inn) ? inn : 0) + (Number.isFinite(out) ? out : 0));
-        }
-      }
-      const n = Number(usage);
-      return Number.isFinite(n) ? fmtCount(n) : '—';
+      return formatTokenUsage(usage) || '—';
     }
     function fmtOutputTokens(cell) {
       const n = cell && cell.outputTokensApprox;
@@ -2602,13 +2601,7 @@
     function oneLine(value) {
       return String(value || '').replace(/\s+/g, ' ').trim();
     }
-    function formatDateStamp(stamp) {
-      const full = String(stamp || '').match(/^(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})(\d{2})(?:-a(\d+))?$/);
-      if (!full) return String(stamp || '');
-      let out = full[1] + ' ' + full[2] + ':' + full[3];
-      if (full[5]) out += ' a' + full[5];
-      return out;
-    }
+
     function defaultsForMode(mode) {
       if (mode === 'ladder') return { arrange: 'columns', scale: 'fit' };
       if (mode === 'models') return { arrange: 'grid', scale: 'fit' };
@@ -2619,7 +2612,7 @@
       return (CATALOG.promptRevisions || []).filter(r => r.experiment === experiment && r.level === level);
     }
     function maxRevision(experiment, level) {
-      return revisionsFor(experiment, level).reduce((n, r) => Math.max(n, r.revision), 0) || 1;
+      return maxPromptRevision(CATALOG.promptRevisions, experiment, level);
     }
     function datesFor(experiment, level, revision) {
       const dates = CATALOG.cells
@@ -2628,24 +2621,8 @@
         .filter(Boolean);
       return [...new Set(dates)].sort((a, b) => b.localeCompare(a));
     }
-    function cellAt({ model, experiment, level, promptRevision, date, month } = {}) {
-      const lvl = level == null ? null : String(level).toUpperCase();
-      const rev = promptRevision == null ? null : Number(promptRevision);
-      const pin = date == null || date === '' ? null : date;
-      const matches = CATALOG.cells.filter(c => {
-        if (model != null && c.model !== model && c.modelKey !== model) return false;
-        if (experiment != null && c.experiment !== experiment) return false;
-        if (lvl != null && c.level !== lvl) return false;
-        if (rev != null && Number(c.promptRevision) !== rev) return false;
-        if (pin != null && c.date !== pin) return false;
-        return true;
-      });
-      if (pin != null) return matches[0] || null;
-      if (month) return pickCellForMonth(matches, month);
-      return matches[0] || null;
-    }
     function currentCell() {
-      return cellAt({
+      return findCell(CATALOG.cells, {
         model: state.model,
         experiment: state.experiment,
         level: state.level,
@@ -2654,11 +2631,20 @@
         month: state.month
       });
     }
-    function currentPromptText() {
-      const cell = currentCell();
+    function promptTextFor(cell) {
       if (cell && cell.prompt) return cell.prompt;
-      const rev = revisionsFor(state.experiment, state.level).find(r => r.revision === state.promptRevision);
-      return (rev && rev.prompt) || '';
+      if (cell) {
+        const rev = revisionsFor(cell.experiment, cell.level).find(r => Number(r.revision) === Number(cell.promptRevision));
+        if (rev && rev.prompt) return rev.prompt;
+      }
+      const fallback = revisionsFor(state.experiment, state.level).find(r => r.revision === state.promptRevision);
+      return (fallback && fallback.prompt) || '';
+    }
+    function currentPromptText() {
+      return promptTextFor(currentCell());
+    }
+    function hasReceipt(cell) {
+      return Boolean(cell && (cell.receiptSrc || cell.receipt));
     }
     function snapFilters() {
       if (!revisionsFor(state.experiment, state.level).some(r => r.revision === state.promptRevision)) {
@@ -2694,7 +2680,7 @@
     function modelPlayable(modelId) {
       if (state.mode === 'ladder') {
         return PROMPT_LEVELS.some(level => {
-          const cell = cellAt({
+          const cell = findCell(CATALOG.cells, {
             model: modelId,
             experiment: state.experiment,
             level,
@@ -2705,7 +2691,7 @@
           return Boolean(cell && cell.src);
         });
       }
-      const cell = cellAt({
+      const cell = findCell(CATALOG.cells, {
         model: modelId,
         experiment: state.experiment,
         level: state.level,
@@ -2798,7 +2784,7 @@
     function cellForKey(key) {
       const { model, level } = parseStackKey(key);
       const focused = level === state.level;
-      return cellAt({
+      return findCell(CATALOG.cells, {
         model: model || state.model,
         experiment: state.experiment,
         level,
@@ -2809,6 +2795,22 @@
     }
     function cellForModel(modelId) {
       return cellForKey(stackKey(modelId || state.model, state.level));
+    }
+    function reloadTake(frame, cell) {
+      const iframe = frame && frame.querySelector('iframe');
+      const src = (iframe && (iframe.getAttribute('src') || iframe.getAttribute('data-src'))) || (cell && cell.src) || '';
+      if (!iframe || !src) return;
+      const token = stageToken;
+      frame.setAttribute('aria-busy', 'true');
+      frame.classList.remove('is-ready');
+      const loader = frame.querySelector('.frame-loader');
+      if (loader) loader.hidden = false;
+      iframe.removeAttribute('src');
+      iframe.setAttribute('data-src', src);
+      waitIframeSettled(iframe, token, IFRAME_LOAD_TIMEOUT_MS).then(reason => {
+        if (reason === 'aborted' || token !== stageToken) return;
+        markFrameReady(iframe);
+      });
     }
     function voteButton(cell, model, level) {
       const voted = Boolean(voteRecord(level).mine && voteRecord(level).mine === model);
@@ -2821,7 +2823,7 @@
       const model = modelId || (cell && cell.model) || '';
       const level = levelId || (cell && cell.level) || state.level || '';
       const key = stackKey(model, level);
-      const prompt = cell && cell.prompt;
+      const prompt = promptTextFor(cell);
       const htmlOn = state.htmlOpen.includes(key);
       const recOn = state.receiptOpenKeys.includes(key);
       const keyAttr = ' data-model="' + esc(model) + '" data-level="' + esc(level) + '" data-stack="' + esc(key) + '"';
@@ -2831,11 +2833,14 @@
           + '<span class="label">Full size</span></button>';
       return '<div class="frame-tools">'
         + fullBtn
+        + voteButton(cell, model, level)
+        + '<button type="button" class="frame-act" data-act="reload"' + keyAttr + ' data-icon="reload" data-tip="Reload" aria-label="Reload"' + (cell && cell.src ? '' : ' disabled') + '>'
+        + '<span class="label">Reload</span></button>'
         + '<button type="button" class="frame-act" data-act="prompt"' + keyAttr + ' data-icon="copy" data-tip="Copy prompt" aria-label="Copy prompt"' + (prompt ? '' : ' disabled') + '>'
         + '<span class="label">Copy prompt</span></button>'
         + '<button type="button" class="frame-act' + (htmlOn ? ' active' : '') + '" data-act="html"' + keyAttr + ' data-icon="html" data-tip="HTML" aria-label="HTML" aria-pressed="' + (htmlOn ? 'true' : 'false') + '"' + (cell && cell.src ? '' : ' disabled') + '>'
         + '<span class="label">HTML</span></button>'
-        + '<button type="button" class="frame-act' + (recOn ? ' active' : '') + '" data-act="receipt"' + keyAttr + ' data-icon="receipt" data-tip="Receipt" aria-label="Receipt" aria-pressed="' + (recOn ? 'true' : 'false') + '"' + (cell && cell.receipt ? '' : ' disabled') + '>'
+        + '<button type="button" class="frame-act' + (recOn ? ' active' : '') + '" data-act="receipt"' + keyAttr + ' data-icon="receipt" data-tip="Receipt" aria-label="Receipt" aria-pressed="' + (recOn ? 'true' : 'false') + '"' + (hasReceipt(cell) ? '' : ' disabled') + '>'
         + '<span class="label">Receipt</span></button>'
         + '</div>';
     }
@@ -2848,8 +2853,8 @@
       return '<span class="stat stat-harness" data-tip="' + esc(tip) + '" aria-label="' + esc(tip) + '">' + mark + '</span>';
     }
     function frameStatus(cell) {
-      const rec = cell && cell.receipt;
-      const who = contributorOf(rec);
+      const rec = cell && (cell.glance || cell.receipt);
+      const who = resolveContributor(rec && rec.contributor, DEFAULT_CONTRIBUTOR_GITHUB);
       const dur = rec ? compactDuration(rec.durationMs) : '—';
       const tok = fmtOutputTokens(cell);
       return '<footer class="frame-status">'
@@ -2866,19 +2871,20 @@
       const modelAttr = model ? ' data-model="' + esc(model) + '"' : '';
       const compact = compactModelCards();
       const brand = state.mode === 'models' || state.mode === 'ladder' ? brandIcon(modelBrand(model)) : '';
-      const promptRaw = cell && cell.prompt ? cell.prompt : 'No prompt on file for this cell.';
-      const promptLine = cell && cell.prompt ? oneLine(cell.prompt) : 'No prompt on file for this cell.';
+      const promptRaw = promptTextFor(cell) || 'No prompt on file for this cell.';
+      const promptLine = promptTextFor(cell) ? oneLine(promptTextFor(cell)) : 'No prompt on file for this cell.';
       const promptBlock = '<p class="frame-prompt" title="' + esc(promptRaw) + '">' + esc(promptLine) + '</p>';
-      const tag = '<div class="tag">' + brand + '<span class="tag-title">' + esc(title) + '</span>' + voteButton(cell, model, level) + '</div>';
+      const tag = '<div class="tag">' + brand + '<span class="tag-title">' + esc(title) + '</span></div>';
       const tools = frameTools(cell, model, level);
       const bar = compact
         ? '<header class="frame-bar"><div class="frame-bar-row">' + tag + tools + '</div>' + promptBlock + '</header>'
         : '<header class="frame-bar">' + tag + promptBlock + tools + '</header>';
       const status = compact ? frameStatus(cell) : '';
       if (!cell || !cell.src) {
-        const prompt = cell && cell.prompt ? esc(cell.prompt) : 'No prompt on file for this cell.';
-        const why = cell && cell.receipt && cell.receipt.limitations && cell.receipt.limitations.length
-          ? esc(cell.receipt.limitations.join(' '))
+        const prompt = promptTextFor(cell) ? esc(promptTextFor(cell)) : 'No prompt on file for this cell.';
+        const limits = cell && ((cell.glance && cell.glance.limitations) || (cell.receipt && cell.receipt.limitations));
+        const why = limits && limits.length
+          ? esc(limits.join(' '))
           : 'This take has no playable HTML.';
         return '<article class="frame"' + levelAttr + modelAttr + '>' + bar + status + '<div class="unshot"><p class="kicker">' + icon('play') + ' Take not landed</p><p class="script">' + prompt + '</p><p class="why">' + why + '</p></div></article>';
       }
@@ -2895,7 +2901,7 @@
       if (state.mode === 'ladder') {
         return PROMPT_LEVELS.map(level => ({
           title: level,
-          cell: cellAt({
+          cell: findCell(CATALOG.cells, {
             model: state.model,
             experiment: state.experiment,
             level,
@@ -2907,7 +2913,7 @@
       }
       return visibleModels().map(m => ({
         title: m.id,
-        cell: cellAt({
+        cell: findCell(CATALOG.cells, {
           model: m.id,
           experiment: state.experiment,
           level: state.level,
@@ -2917,27 +2923,17 @@
         })
       }));
     }
-    function contributorOf(receipt) {
-      const raw = receipt && receipt.contributor;
-      const github = String((raw && (raw.github || raw.login)) || 'gvastethecreator').replace(/^@/, '').trim() || 'gvastethecreator';
-      let avatarUrl = String((raw && raw.avatarUrl) || '').trim();
-      try {
-        const u = new URL(avatarUrl);
-        if (u.protocol !== 'https:' || (u.hostname !== 'github.com' && u.hostname !== 'avatars.githubusercontent.com')) avatarUrl = '';
-      } catch (err) {
-        avatarUrl = '';
-      }
-      if (!avatarUrl) avatarUrl = 'https://github.com/' + encodeURIComponent(github) + '.png';
-      return { github, avatarUrl };
-    }
     function receiptMarkup(cell) {
       if (!cell) return '<p class="empty">No cell selected.</p>';
       const receipt = cell.receipt;
-      if (!receipt) return '<p class="empty">No receipt.json for this cell.</p>';
+      if (!receipt) {
+        if (cell.receiptSrc) return '<p class="empty">Loading receipt</p>';
+        return '<p class="empty">No receipt.json for this cell.</p>';
+      }
       const iso = receipt.isolation || {};
       const hashes = receipt.outputHashes || {};
       const hash = hashes['output/index.html'] || Object.values(hashes)[0];
-      const who = contributorOf(receipt);
+      const who = resolveContributor(receipt.contributor, DEFAULT_CONTRIBUTOR_GITHUB);
       const whoHtml = '<span class="who"><img src="' + esc(who.avatarUrl) + '" alt="" width="22" height="22">'
         + '<a href="https://github.com/' + esc(who.github) + '">@' + esc(who.github) + '</a></span>';
       const row = (label, value, html) => '<dt>' + label + '</dt><dd>' + (html ? value : esc(fmt(value))) + '</dd>';
@@ -3239,17 +3235,37 @@
       if (!panel) return;
       scrambleTo(panel.querySelector('h2'), stackHeading(kind, stackLabel(key)), 'label');
     }
+    async function loadReceiptIntoPanel(panel, cell) {
+      const body = panel.querySelector('.drawer-body');
+      if (!body) return;
+      if (cell && cell.receipt) {
+        body.innerHTML = receiptMarkup(cell);
+        paintIcons(body);
+        return;
+      }
+      if (!cell || !cell.receiptSrc) {
+        body.innerHTML = '<p class="empty">No receipt.json for this cell.</p>';
+        return;
+      }
+      body.innerHTML = '<p class="empty">Loading receipt</p>';
+      try {
+        const res = await fetch(cell.receiptSrc);
+        if (!res.ok) throw new Error(String(res.status));
+        cell.receipt = await res.json();
+        if (!panel.isConnected) return;
+        body.innerHTML = receiptMarkup(cell);
+        paintIcons(body);
+      } catch (err) {
+        if (!panel.isConnected) return;
+        body.innerHTML = '<p class="empty">Unable to load receipt. Try Reload or open the receipt file.</p>';
+      }
+    }
     function bindReceiptPanel(panel, key) {
       const cell = cellForKey(key);
       const sig = receiptBindKey(cell, stackLabel(key));
-      if (panel.dataset.bind === sig) return;
-      const first = panel.dataset.bind == null;
+      if (panel.dataset.bind === sig && cell && cell.receipt) return;
       panel.dataset.bind = sig;
-      if (first) return;
-      const body = panel.querySelector('.drawer-body');
-      if (!body) return;
-      body.innerHTML = receiptMarkup(cell);
-      paintIcons(body);
+      loadReceiptIntoPanel(panel, cell);
     }
     function syncStack(kind, keys) {
       const el = document.getElementById('stack-' + kind);
@@ -3283,7 +3299,6 @@
         paintStackHeading(panel, kind, key);
         const cell = cellForKey(key);
         if (kind === 'html') loadHtmlIntoPanel(panel, cell && cell.src);
-        else if (created) panel.dataset.bind = receiptBindKey(cell, stackLabel(key));
         else bindReceiptPanel(panel, key);
       });
       el.classList.toggle('open', open);
@@ -3299,7 +3314,7 @@
       });
       state.receiptOpenKeys = state.receiptOpenKeys.filter(key => {
         const c = cellForKey(key);
-        return Boolean(c && c.receipt);
+        return hasReceipt(c);
       });
       syncStack('html', state.htmlOpen);
       syncStack('receipt', state.receiptOpenKeys);
@@ -3932,8 +3947,12 @@
         onMode('single');
         return;
       }
+      if (act.dataset.act === 'reload') {
+        reloadTake(frame, cell);
+        return;
+      }
       if (act.dataset.act === 'prompt') {
-        copyText(cell && cell.prompt, act, 'Prompt copied');
+        copyText(promptTextFor(cell), act, 'Prompt copied');
         return;
       }
       if (act.dataset.act === 'vote') {
@@ -3952,7 +3971,7 @@
         return;
       }
       if (act.dataset.act === 'receipt') {
-        if (!cell || !cell.receipt) return;
+        if (!hasReceipt(cell)) return;
         if (state.receiptOpenKeys.includes(key)) state.receiptOpenKeys = state.receiptOpenKeys.filter(k => k !== key);
         else state.receiptOpenKeys.push(key);
         renderStacks();
@@ -3988,7 +4007,7 @@
         e.preventDefault();
         const cell = currentCell();
         const btn = document.querySelector('.frame-act[data-act="prompt"][data-stack="' + CSS.escape(stackKey(state.model, state.level)) + '"]');
-        copyText(cell && cell.prompt, btn, 'Prompt copied');
+        copyText(promptTextFor(cell), btn, 'Prompt copied');
       }
       if (e.key === 'h' || e.key === 'H') {
         const cell = currentCell();
@@ -3998,7 +4017,7 @@
       }
       if (e.key === 'r' || e.key === 'R') {
         const cell = currentCell();
-        if (!cell || !cell.receipt) return;
+        if (!hasReceipt(cell)) return;
         e.preventDefault();
         setDrawer('receipt', !state.receiptOpenKeys.includes(stackKey(state.model, state.level)));
       }
@@ -4025,7 +4044,11 @@
         snapFilters();
         render();
       })
-      .catch(() => {
+      .catch((err) => {
+        if ((CATALOG.cells || []).length) {
+          console.error(err);
+          return;
+        }
         document.getElementById('frames').innerHTML = '<p class="empty">Could not load catalog.json.</p>';
         hideLoader(++stageToken);
       });

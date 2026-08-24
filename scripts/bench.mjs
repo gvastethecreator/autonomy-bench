@@ -1,43 +1,31 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveContributor } from './contributor.mjs';
-import { cellRelPath, slug } from './layout.mjs';
+import {
+  declaredLevels,
+  finalizeRun,
+  frozenLevels,
+  getBenchmark,
+  hasPrompt,
+  planRun,
+  statusRun,
+} from './plan.mjs';
+import { slug } from './layout.mjs';
+import { ensureDir, findRun, readJson, writeJson } from './run-io.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SUITE = join(ROOT, 'suites', 'browser-autonomy', 'suite.json');
 
-function sha256(data) {
-  return createHash('sha256').update(data).digest('hex');
-}
-function fileHash(path) {
-  return sha256(readFileSync(path));
-}
 function json(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
+  return readJson(path);
 }
 function ensure(path) {
-  mkdirSync(path, { recursive: true });
-  return path;
+  return ensureDir(path);
 }
 function isoNow() {
   return new Date().toISOString();
-}
-function localParts() {
-  const d = new Date();
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(d);
-  return Object.fromEntries(parts.map((p) => [p.type, p.value]));
 }
 function parse(argv) {
   const [command = 'help', ...rest] = argv;
@@ -57,50 +45,8 @@ function parse(argv) {
   }
   return { command, args };
 }
-function hasPrompt(benchmark, level) {
-  return Boolean(String(benchmark?.prompts?.[level] || '').trim());
-}
-function declaredLevels(s) {
-  const keys = Object.keys(s.promptLevels || { A: true });
-  return keys.length ? keys : ['A'];
-}
-function frozenLevels(s) {
-  return declaredLevels(s).filter((level) => s.benchmarks.every((b) => hasPrompt(b, level)));
-}
-function csv(value, fallback = []) {
-  return value
-    ? String(value)
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean)
-    : fallback;
-}
 function suite(path = DEFAULT_SUITE) {
   return json(resolve(path));
-}
-function getBenchmark(s, id) {
-  const b = s.benchmarks.find((x) => x.id === id);
-  if (!b) throw new Error(`Unknown benchmark: ${id}`);
-  return b;
-}
-function walk(dir) {
-  const out = [];
-  if (!existsSync(dir)) return out;
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    const st = statSync(p);
-    if (st.isDirectory()) out.push(...walk(p));
-    else out.push(p);
-  }
-  return out;
-}
-function findRun(id) {
-  const base = join(ROOT, 'runs');
-  for (const p of walk(base).filter((p) => basename(p) === 'manifest.json')) {
-    const m = json(p);
-    if (m.runId === id || dirname(p).endsWith(id)) return dirname(p);
-  }
-  throw new Error(`Run not found: ${id}`);
 }
 function help() {
   console.log(
@@ -138,166 +84,22 @@ function cmdShow(args) {
     console.log(`${level} — ${name}\n${text}\n`);
   }
 }
-function receiptTemplate({ runId, cell, adapter, harness, promptSha, contributor }) {
-  return {
-    schemaVersion: 1,
-    runId,
-    cellId: cell.cellId,
-    benchmarkId: cell.benchmarkId,
-    promptLevel: cell.promptLevel,
-    attempt: cell.attempt,
-    requestedModel: cell.requestedModel,
-    contributor,
-    effectiveModel: 'not captured',
-    effectiveModelSource: 'not-captured',
-    reasoning: 'not captured',
-    promptSha256: promptSha,
-    status: 'complete',
-    adapter,
-    harness,
-    startedAt: 'not captured',
-    completedAt: 'not captured',
-    durationMs: 'not captured',
-    isolation: {
-      capability: 'fresh-context-no-sibling-outputs',
-      adapter: 'not captured',
-      inheritedHistory: 'not captured',
-      coordinatorContextExposed: 'not captured',
-      evidence: 'not captured',
-    },
-    tokenUsage: 'not captured',
-    toolCalls: 'not captured',
-    outputPaths: [],
-    outputHashes: {},
-    externalReceipts: [],
-    limitations: [],
-    errors: [],
-  };
-}
 function cmdPlan(args) {
-  const sPath = resolve(args.suite || DEFAULT_SUITE);
-  const s = suite(sPath);
-  const models = csv(args.models);
-  if (!models.length) throw new Error('plan requires --models model-a,model-b');
-  const requestedBench = csv(args.benchmarks, ['all']);
-  const benches = requestedBench.includes('all')
-    ? s.benchmarks
-    : requestedBench.map((id) => getBenchmark(s, id));
-  const allowed = declaredLevels(s);
-  const levels = csv(args.levels, frozenLevels(s)).map((x) => x.toUpperCase());
-  for (const l of levels) if (!allowed.includes(l)) throw new Error(`Unknown level ${l}`);
-  const attempts = Math.max(1, Number(args.attempts || 1));
-  const adapter = args.adapter || 'manual';
-  if (!['manual', 'agent', 'prototype-lab'].includes(adapter))
-    throw new Error(`Unknown adapter ${adapter}`);
-  const harness = String(args.harness || '').trim() || 'not captured';
-  const contributor = resolveContributor({ github: args.contributor });
-  const lp = localParts();
-  const date = `${lp.year}-${lp.month}-${lp.day}`;
-  const seed = JSON.stringify({
-    suite: s.id,
-    version: s.version,
-    models,
-    benches: benches.map((b) => b.id),
-    levels,
-    attempts,
-    adapter,
-    harness,
-    label: args.label || '',
+  const planned = planRun({
+    root: ROOT,
+    suitePath: resolve(args.suite || DEFAULT_SUITE),
+    args,
   });
-  const runId = `${lp.year}${lp.month}${lp.day}-${lp.hour}${lp.minute}${lp.second}-${slug(args.label || 'run')}-${sha256(seed).slice(0, 8)}`;
-  const runDir = ensure(join(ROOT, 'runs', lp.year, lp.month, lp.day, runId));
-  const cells = [];
-  for (const b of benches)
-    for (const level of levels)
-      for (const model of models)
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-          const cellId = `${b.id}--${level.toLowerCase()}--${slug(model)}--a${String(attempt).padStart(2, '0')}`;
-          const rel = cellRelPath({ model, benchmarkId: b.id, promptLevel: level, attempt });
-          const cellDir = ensure(join(runDir, rel));
-          ensure(join(cellDir, 'output'));
-          const prompt = b.prompts[level];
-          if (!hasPrompt(b, level)) throw new Error(`${b.id} has no ${level} prompt yet`);
-          writeFileSync(join(cellDir, 'prompt.md'), prompt + '\n');
-          const promptSha = sha256(prompt + '\n');
-          const cell = {
-            cellId,
-            benchmarkId: b.id,
-            benchmarkTitle: b.title,
-            promptLevel: level,
-            attempt,
-            requestedModel: model,
-            promptPath: `${rel}/prompt.md`,
-            promptSha256: promptSha,
-            receiptPath: `${rel}/receipt.json`,
-            outputPath: `${rel}/output`,
-          };
-          cells.push(cell);
-          writeFileSync(
-            join(cellDir, 'receipt.template.json'),
-            JSON.stringify(
-              receiptTemplate({ runId, cell, adapter, harness, promptSha, contributor }),
-              null,
-              2,
-            ) + '\n',
-          );
-        }
-  const manifest = {
-    schemaVersion: 1,
-    runId,
-    label: args.label || null,
-    createdAt: isoNow(),
-    date,
-    adapter,
-    harness,
-    claimClass: attempts === 1 ? 'exploratory-n1' : 'replicated',
-    suite: {
-      id: s.id,
-      version: s.version,
-      path: relative(ROOT, sPath).replaceAll('\\', '/'),
-      sha256: fileHash(sPath),
-    },
-    selection: { models, benchmarks: benches.map((b) => b.id), levels, attempts },
-    cells,
-  };
-  writeFileSync(join(runDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-  console.log(runId);
-  console.log(relative(ROOT, runDir).replaceAll('\\', '/'));
-  console.log(`${cells.length} cells planned`);
+  console.log(planned.runId);
+  console.log(relative(ROOT, planned.runDir).replaceAll('\\', '/'));
+  console.log(`${planned.cells.length} cells planned`);
 }
 function cmdStatus(args) {
-  if (!args.run) throw new Error('status requires --run');
-  const dir = findRun(args.run);
-  const m = json(join(dir, 'manifest.json'));
-  const counts = {
-    planned: m.cells.length,
-    complete: 0,
-    blocked: 0,
-    unavailable: 0,
-    failed: 0,
-    missing: 0,
-  };
-  for (const c of m.cells) {
-    const rp = join(dir, c.receiptPath);
-    if (!existsSync(rp)) {
-      counts.missing++;
-      continue;
-    }
-    const r = json(rp);
-    if (counts[r.status] === undefined) counts[r.status] = 0;
-    counts[r.status]++;
-  }
-  console.log(
-    JSON.stringify(
-      { runId: m.runId, ...counts, finalized: existsSync(join(dir, 'completion-receipt.json')) },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify(statusRun({ root: ROOT, runId: args.run }), null, 2));
 }
 function cmdExportPrototypeLab(args) {
   if (!args.run) throw new Error('export-prototype-lab requires --run');
-  const dir = findRun(args.run);
+  const dir = findRun(ROOT, args.run);
   const m = json(join(dir, 'manifest.json'));
   const outDir = ensure(join(ROOT, 'exports', 'prototype-lab', m.runId));
   const groups = new Map();
@@ -346,62 +148,16 @@ function cmdExportPrototypeLab(args) {
       cells: cells.map((c) => c.cellId),
     });
   }
-  writeFileSync(
-    join(outDir, 'mapping.json'),
-    JSON.stringify({ runId: m.runId, generatedAt: isoNow(), specs: index }, null, 2) + '\n',
-  );
+  writeJson(join(outDir, 'mapping.json'), {
+    runId: m.runId,
+    generatedAt: isoNow(),
+    specs: index,
+  });
   console.log(relative(ROOT, outDir).replaceAll('\\', '/'));
   console.log(`${index.length} Prototype Lab specs exported`);
 }
 function cmdFinalize(args) {
-  if (!args.run) throw new Error('finalize requires --run');
-  const dir = findRun(args.run);
-  const m = json(join(dir, 'manifest.json'));
-  if (existsSync(join(dir, 'completion-receipt.json')))
-    throw new Error('Run is already finalized; create a new run or explicit amendment instead.');
-  const terminal = new Set(['complete', 'blocked', 'unavailable', 'failed']);
-  const counts = { complete: 0, blocked: 0, unavailable: 0, failed: 0 };
-  const missing = [];
-  for (const c of m.cells) {
-    const rp = join(dir, c.receiptPath);
-    if (!existsSync(rp)) {
-      missing.push(c.cellId);
-      continue;
-    }
-    const r = json(rp);
-    if (!terminal.has(r.status)) missing.push(c.cellId);
-    else counts[r.status]++;
-  }
-  if (missing.length)
-    throw new Error(
-      `Cannot finalize: ${missing.length} cells lack terminal receipts. First: ${missing.slice(0, 5).join(', ')}`,
-    );
-  const files = walk(dir)
-    .filter((p) => !['completion-receipt.json', 'integrity-manifest.json'].includes(basename(p)))
-    .sort();
-  const integrity = {
-    schemaVersion: 1,
-    runId: m.runId,
-    generatedAt: isoNow(),
-    files: Object.fromEntries(
-      files.map((p) => [relative(dir, p).replaceAll('\\', '/'), fileHash(p)]),
-    ),
-  };
-  const integrityPath = join(dir, 'integrity-manifest.json');
-  writeFileSync(integrityPath, JSON.stringify(integrity, null, 2) + '\n');
-  const completion = {
-    schemaVersion: 1,
-    runId: m.runId,
-    completedAt: isoNow(),
-    status: 'finalized',
-    claimClass: m.claimClass,
-    manifestSha256: fileHash(join(dir, 'manifest.json')),
-    suiteSha256: m.suite.sha256,
-    integrityManifestSha256: fileHash(integrityPath),
-    counts,
-    limitations: ['Finalization certifies terminal bookkeeping and integrity, not output quality.'],
-  };
-  writeFileSync(join(dir, 'completion-receipt.json'), JSON.stringify(completion, null, 2) + '\n');
+  const completion = finalizeRun({ root: ROOT, runId: args.run });
   console.log(JSON.stringify(completion, null, 2));
 }
 function cmdGallery(args) {
