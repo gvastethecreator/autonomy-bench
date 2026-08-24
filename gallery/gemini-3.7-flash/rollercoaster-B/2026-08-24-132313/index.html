@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HyperCoaster 3D · Autonomous Experience</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { background: #1a202c; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+
+    #hud {
+      position: absolute; top: 20px; left: 20px; right: 20px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      pointer-events: none;
+    }
+    .panel {
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px;
+      padding: 10px 18px; pointer-events: auto;
+    }
+    .stats { display: flex; gap: 16px; }
+    .stat { display: flex; flex-direction: column; align-items: flex-end; }
+    .stat-val { font-size: 24px; font-weight: 700; font-family: monospace; color: #38bdf8; line-height: 1; }
+    .stat-lbl { font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-top: 3px; }
+
+    #start-card {
+      position: absolute; inset: 0; background: rgba(15, 23, 42, 0.8);
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 100; cursor: pointer;
+    }
+    .card {
+      background: rgba(30, 41, 59, 0.95); border: 1px solid #38bdf8; border-radius: 12px;
+      padding: 24px 36px; text-align: center; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+    .card h2 { font-size: 20px; color: #38bdf8; margin-bottom: 6px; }
+    .card p { font-size: 13px; color: #94a3b8; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="start-card" onclick="initAudio()">
+    <div class="card">
+      <h2>🎢 START HYPERCOASTER</h2>
+      <p>Click anywhere to launch ride & sound engine</p>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div class="panel">
+      <div style="font-size: 14px; font-weight: 700; color: #38bdf8;">HYPERCOASTER 3D</div>
+      <div style="font-size: 11px; color: #94a3b8;" id="sectionText">Chain Lift Hill</div>
+    </div>
+
+    <div class="panel stats">
+      <div class="stat">
+        <div class="stat-val" id="speedText">0</div>
+        <div class="stat-lbl">Speed (MPH)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val" style="color: #f59e0b;" id="gText">1.0</div>
+        <div class="stat-lbl">G-Force</div>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    /* Procedural Audio Engine */
+    let actx = null, audioInit = false;
+    let windGain = null, windFilter = null, chainInterval = null;
+
+    function initAudio() {
+      if (audioInit) return;
+      audioInit = true;
+      document.getElementById('start-card').style.display = 'none';
+
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        actx = new AC();
+
+        const bSize = actx.sampleRate * 2;
+        const nBuf = actx.createBuffer(1, bSize, actx.sampleRate);
+        const out = nBuf.getChannelData(0);
+        for (let i = 0; i < bSize; i++) out[i] = (Math.random() * 2 - 1) * 0.3;
+
+        const noise = actx.createBufferSource();
+        noise.buffer = nBuf; noise.loop = true;
+
+        windFilter = actx.createBiquadFilter();
+        windFilter.type = 'lowpass'; windFilter.frequency.value = 250;
+
+        windGain = actx.createGain(); windGain.gain.value = 0.03;
+
+        noise.connect(windFilter); windFilter.connect(windGain); windGain.connect(actx.destination);
+        noise.start();
+      } catch (e) {}
+    }
+
+    function playClick() {
+      if (!actx || !audioInit) return;
+      try {
+        const osc = actx.createOscillator();
+        const g = actx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(120 + Math.random() * 20, actx.currentTime);
+        g.gain.setValueAtTime(0.04, actx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.06);
+        osc.connect(g); g.connect(actx.destination);
+        osc.start(); osc.stop(actx.currentTime + 0.07);
+      } catch (e) {}
+    }
+
+    /* Three.js Scene Setup */
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x60a5fa);
+    scene.fog = new THREE.FogExp2(0x60a5fa, 0.002);
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2500);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const sun = new THREE.DirectionalLight(0xfffbeb, 0.95);
+    sun.position.set(200, 400, 150);
+    scene.add(sun);
+
+    // Ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(2500, 2500).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({ color: 0x15803d })
+    );
+    scene.add(ground);
+
+    // Coaster Track Spline (Lift, Drop, Loop, Corkscrew, Brake)
+    const splinePoints = [
+      new THREE.Vector3(0, 10, 0),
+      new THREE.Vector3(20, 30, 80),   // Lift hill
+      new THREE.Vector3(45, 75, 180),
+      new THREE.Vector3(70, 125, 280), // Summit (125m)
+      new THREE.Vector3(95, 110, 340),
+      new THREE.Vector3(110, 18, 400),  // 85° Drop
+      new THREE.Vector3(145, 55, 460),  // Vertical Inversion Loop
+      new THREE.Vector3(175, 90, 440),
+      new THREE.Vector3(195, 45, 380),
+      new THREE.Vector3(220, 18, 300),
+      new THREE.Vector3(240, 50, 220),  // Banked Turn
+      new THREE.Vector3(220, 65, 120),
+      new THREE.Vector3(170, 40, 40),
+      new THREE.Vector3(100, 20, -10),
+      new THREE.Vector3(30, 12, -20)
+    ];
+
+    const trackCurve = new THREE.CatmullRomCurve3(splinePoints, true, 'centripetal', 0.5);
+
+    // Track Geometry
+    const SEGS = 900;
+    const trackPts = trackCurve.getSpacedPoints(SEGS);
+    const trackGroup = new THREE.Group();
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.8, roughness: 0.2 });
+    const spineMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.6, roughness: 0.4 });
+    const pilMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.4, roughness: 0.6 });
+
+    const lPts = [], rPts = [], sPts = [];
+    const rOff = 0.9;
+
+    for (let i = 0; i <= SEGS; i++) {
+      const t = i / SEGS;
+      const pt = trackPts[i];
+      const tang = trackCurve.getTangentAt(t).normalize();
+      let up = new THREE.Vector3(0, 1, 0);
+
+      // Loop inversion banking
+      if (t > 0.35 && t < 0.55) {
+        up.applyAxisAngle(tang, Math.sin(((t - 0.35) / 0.2) * Math.PI) * Math.PI);
+      }
+
+      const binorm = new THREE.Vector3().crossVectors(tang, up).normalize();
+      const norm = new THREE.Vector3().crossVectors(binorm, tang).normalize();
+
+      lPts.push(pt.clone().addScaledVector(binorm, -rOff));
+      rPts.push(pt.clone().addScaledVector(binorm, rOff));
+      sPts.push(pt.clone().addScaledVector(norm, -0.4));
+
+      if (i % 18 === 0 && pt.y > 3) {
+        const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, pt.y, 8), pilMat);
+        pil.position.set(pt.x, pt.y / 2, pt.z);
+        trackGroup.add(pil);
+      }
+    }
+
+    trackGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lPts, true), 600, 0.14, 6, true), railMat));
+    trackGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rPts, true), 600, 0.14, 6, true), railMat));
+    trackGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sPts, true), 600, 0.22, 6, true), spineMat));
+    scene.add(trackGroup);
+
+    // Train Nose Model
+    const train = new THREE.Group();
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.6, 2.6), new THREE.MeshStandardMaterial({ color: 0x0284c7 }));
+    nose.position.set(0, 0.4, 1.2);
+    train.add(nose);
+    scene.add(train);
+
+    // Continuous Playback Animation
+    let progress = 0.0;
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      const pt = trackCurve.getPointAt(progress);
+      const tang = trackCurve.getTangentAt(progress).normalize();
+
+      const isLift = progress < 0.28;
+      let speed = 0;
+      if (isLift) {
+        speed = 18;
+        if (!chainInterval) chainInterval = setInterval(playClick, 180);
+      } else {
+        if (chainInterval) { clearInterval(chainInterval); chainInterval = null; }
+        speed = Math.max(Math.sqrt(Math.max(125 - pt.y, 4)) * 7.8, 25);
+      }
+
+      const pDelta = (speed * 0.447) / trackCurve.getLength() * dt;
+      progress = (progress + pDelta) % 1.0;
+
+      let up = new THREE.Vector3(0, 1, 0);
+      if (progress > 0.35 && progress < 0.55) {
+        up.applyAxisAngle(tang, Math.sin(((progress - 0.35) / 0.2) * Math.PI) * Math.PI);
+      }
+
+      const binorm = new THREE.Vector3().crossVectors(tang, up).normalize();
+      const norm = new THREE.Vector3().crossVectors(binorm, tang).normalize();
+
+      train.position.copy(pt);
+      train.rotation.setFromRotationMatrix(new THREE.Matrix4().makeBasis(binorm, norm, tang));
+
+      const eye = pt.clone().addScaledVector(norm, 1.15);
+      camera.position.copy(eye);
+      camera.up.copy(norm);
+      camera.lookAt(eye.clone().addScaledVector(tang, 16));
+
+      // Audio update
+      if (windFilter && windGain && actx) {
+        windFilter.frequency.setTargetAtTime(200 + (speed / 85) * 1600, actx.currentTime, 0.05);
+        windGain.gain.setTargetAtTime(0.02 + (speed / 85) * 0.1, actx.currentTime, 0.05);
+      }
+
+      // UI
+      document.getElementById('speedText').textContent = Math.round(speed);
+      document.getElementById('gText').textContent = (isLift ? 1.0 : (1.0 + (125 - pt.y) * 0.02 + Math.abs(tang.y) * 0.8)).toFixed(1);
+      document.getElementById('sectionText').textContent = isLift ? "Chain Lift Hill" : (progress < 0.55 ? "Vertical Inversion Loop" : "Banked High-G Turn");
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

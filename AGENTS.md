@@ -24,5 +24,5 @@ Single-context: root `CONTEXT.md` plus `docs/adr/` when those files exist. See `
 - Never expand a frozen prompt before dispatch.
 - One fresh context per cell. Cells do not share a conversation.
 - Record only observable provenance. Unknown stays `not captured`.
-- Do not invent token counts, timings, or isolation evidence.
+- Measure generation time (`startedAt`, `completedAt`, `durationMs`) and token spend (`tokenUsage`) from the harness or CLI. Do not invent those numbers.
 - Preserve unrelated dirty-tree changes.

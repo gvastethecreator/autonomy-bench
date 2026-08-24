@@ -1,18 +1,18 @@
 # Code map · autonomy-bench
 
-generated: 2026-08-23T19:30:00Z
-commit: efc97193722d
+generated: 2026-08-24T15:44:20Z
+commit: 2c9c0d8995ad
 scope: .
 
 counts: 6 nodes · 3 edges · 0 flows · 0 unknown
 
 ## Modules
 
-- `external-dependencies` · `.wrangler/tmp/bundle-G5l4jd/middleware-insertion-facade.js` · external · External
-  callers: vite-config (imports), wrangler (imports)
+- `external-dependencies` · `vite.config.ts` · external · External
+  callers: vite-config (imports)
   callees: (none)
   tests: (none)
-  entry: .wrangler/tmp/bundle-G5l4jd/middleware-insertion-facade.js:X:\\autonomy-bench\\node_modules\\.pnpm\\wrangler@4.125.0\\node_modules\\wrangler\\templates\\no-op-worker.js
+  entry: vite.config.ts:vite-plus
 
 - `repository` · `package.json` · module · Repository
   callers: (none)
@@ -21,9 +21,9 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
   entry: package.json:{
 
 - `scripts` · `scripts` · service · Scripts
-  callers: repository (calls)
+  callers: repository (calls), workers (imports)
   callees: (none)
-  tests: test/highlight-html.test.ts, test/iframe-queue.test.ts, test/layout.test.ts, test/model-meta.test.ts, test/run-month.test.ts
+  tests: test/contributor.test.ts, test/highlight-html.test.ts, test/iframe-queue.test.ts, test/layout.test.ts, test/model-meta.test.ts
   entry: scripts/bench.mjs:sha256
 
 - `skills` · `SKILLS` · module · Skills
@@ -38,17 +38,17 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
   tests: (none)
   entry: vite.config.ts:generated
 
-- `wrangler` · `.wrangler` · module · .Wrangler
+- `workers` · `workers` · queue · Workers
   callers: (none)
-  callees: external-dependencies (imports)
+  callees: scripts (imports)
   tests: (none)
-  entry: .wrangler/tmp/bundle-G5l4jd/middleware-insertion-facade.js:MIDDLEWARE_TEST_INJECT
+  entry: workers/gallery.ts:json
 
 ## Edges
 
 - repository -> scripts · calls
 - vite-config -> external-dependencies · imports
-- wrangler -> external-dependencies · imports
+- workers -> scripts · imports
 
 ## Unknown
 

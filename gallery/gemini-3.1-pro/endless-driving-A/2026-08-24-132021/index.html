@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Endless Night Driving 3.1</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #020205;
+      font-family: monospace;
+      color: #fff;
+    }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+    #info {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      font-size: 14px;
+      letter-spacing: 1px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px 12px;
+      border-radius: 4px;
+    }
+    #controls {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: #888;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="info">
+    SPEED: <span id="speed">60</span> MPH | DIST: <span id="dist">0.0</span> MI
+  </div>
+  <div id="controls">WASD / Arrow Keys to Drive</div>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x020205, 50, 300);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    scene.add(new THREE.AmbientLight(0x222233));
+
+    // Stars
+    const starGeo = new THREE.BufferGeometry();
+    const stars = [];
+    for (let i = 0; i < 500; i++) {
+      stars.push((Math.random() - 0.5) * 1000, Math.random() * 200 + 20, (Math.random() - 0.5) * 1000);
+    }
+    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(stars, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1 })));
+
+    // Road
+    const ROAD_W = 12;
+    const ROAD_SEGS = 40;
+    const SEG_LEN = 15;
+    const roadGroup = new THREE.Group();
+    const segments = [];
+
+    const roadMat = new THREE.MeshLambertMaterial({ color: 0x111115 });
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xeeaa00 });
+
+    for (let i = 0; i < ROAD_SEGS; i++) {
+      const seg = new THREE.Group();
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, SEG_LEN).rotateX(-Math.PI / 2), roadMat);
+      seg.add(plane);
+
+      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.2, SEG_LEN * 0.5).rotateX(-Math.PI / 2), lineMat);
+      stripe.position.y = 0.01;
+      seg.add(stripe);
+
+      seg.position.z = i * SEG_LEN;
+      roadGroup.add(seg);
+      segments.push(seg);
+    }
+    scene.add(roadGroup);
+
+    // Car & Headlights
+    const car = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 3.0), new THREE.MeshLambertMaterial({ color: 0x333344 }));
+    body.position.y = 0.4;
+    car.add(body);
+
+    const lightL = new THREE.SpotLight(0xffffff, 4.0, 150, Math.PI / 6, 0.4);
+    lightL.position.set(-0.6, 0.5, 2.0);
+    const targetL = new THREE.Object3D(); targetL.position.set(-0.6, 0.1, 30);
+    car.add(lightL); car.add(targetL); lightL.target = targetL;
+
+    const lightR = new THREE.SpotLight(0xffffff, 4.0, 150, Math.PI / 6, 0.4);
+    lightR.position.set(0.6, 0.5, 2.0);
+    const targetR = new THREE.Object3D(); targetR.position.set(0.6, 0.1, 30);
+    car.add(lightR); car.add(targetR); lightR.target = targetR;
+
+    scene.add(car);
+
+    // Controls
+    const keys = { left: false, right: false, up: false, down: false };
+    window.addEventListener('keydown', e => {
+      if (e.key === 'a' || e.key === 'ArrowLeft') keys.left = true;
+      if (e.key === 'd' || e.key === 'ArrowRight') keys.right = true;
+      if (e.key === 'w' || e.key === 'ArrowUp') keys.up = true;
+      if (e.key === 's' || e.key === 'ArrowDown') keys.down = true;
+    });
+    window.addEventListener('keyup', e => {
+      if (e.key === 'a' || e.key === 'ArrowLeft') keys.left = false;
+      if (e.key === 'd' || e.key === 'ArrowRight') keys.right = false;
+      if (e.key === 'w' || e.key === 'ArrowUp') keys.up = false;
+      if (e.key === 's' || e.key === 'ArrowDown') keys.down = false;
+    });
+
+    let speed = 60;
+    let carX = 0;
+    let distance = 0;
+    const speedEl = document.getElementById('speed');
+    const distEl = document.getElementById('dist');
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      if (keys.up) speed = Math.min(speed + 25 * dt, 100);
+      else if (keys.down) speed = Math.max(speed - 35 * dt, 15);
+      else speed = Math.max(speed - 4 * dt, 50);
+
+      if (keys.left) carX = Math.max(carX - 7 * dt, -ROAD_W / 2 + 1.2);
+      if (keys.right) carX = Math.min(carX + 7 * dt, ROAD_W / 2 - 1.2);
+
+      car.position.x = carX;
+
+      const move = (speed * 0.447) * dt * 4.0;
+      distance += (speed * dt) / 3600;
+
+      for (let i = 0; i < ROAD_SEGS; i++) {
+        segments[i].position.z -= move;
+        if (segments[i].position.z < -SEG_LEN) {
+          segments[i].position.z += ROAD_SEGS * SEG_LEN;
+        }
+      }
+
+      camera.position.set(carX * 0.7, 1.3, -0.5);
+      camera.lookAt(carX * 0.4, 1.0, 30);
+
+      speedEl.textContent = Math.round(speed);
+      distEl.textContent = distance.toFixed(1);
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

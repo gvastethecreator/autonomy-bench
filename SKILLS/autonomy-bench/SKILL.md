@@ -47,7 +47,7 @@ Then choose an execution adapter: `manual`, `agent`, or `prototype-lab`.
 2. Freeze a run with `bench plan`. Keep the generated `manifest.json` immutable. Pass `--levels` explicitly when controlling ladder scope matters.
 3. Dispatch every cell in a fresh context using only its `prompt.md` and permitted execution envelope.
 4. Save model-produced files under that cell's `output/` directory.
-5. Fill `receipt.json` from the supplied template. Preserve requested/effective model distinction, harness (program), contributor GitHub login, timing, token usage when visible, isolation evidence, tool visibility, limitations, and output hashes. Unknown stays `not captured`.
+5. Fill `receipt.json` from the supplied template. Record generation time (`startedAt`, `completedAt`, `durationMs`) and token spend (`tokenUsage`) from the harness or CLI. Also preserve requested/effective model distinction, harness, contributor GitHub login, isolation evidence, tool visibility, limitations, and output hashes. Unknown stays `not captured`. Do not invent numbers. Done when time and tokens are filled from observable facts, or those fields are explicit `not captured`.
 6. Evaluate only after raw outputs are frozen. Prefer blind evaluation when comparing models.
 7. Run `bench status`; resolve missing receipts or record blockers explicitly.
 8. Run `bench gallery --run <run-id>` to copy HTML, prompts, and receipts into `gallery/<model>/<prompt-V>/<fecha>/` and rebuild the public catalog from that tree. Serve `gallery/` (`vp run dev`) and publish that folder.

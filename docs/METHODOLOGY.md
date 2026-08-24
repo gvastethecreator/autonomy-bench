@@ -60,7 +60,7 @@ Autonomy and judgment are deliberately separate. A model can make many unsolicit
 2. One fresh context or worker per cell. Cells never share a conversation.
 3. Never expose sibling outputs, evaluator criteria beyond the actual worker prompt, or coordinator preferences to a worker.
 4. Record requested model separately from effective model. Unknown stays `not captured`.
-5. Do not invent token counts, tool calls, reasoning settings, or isolation evidence.
+5. Measure generation time (`durationMs`) and token spend (`tokenUsage`) from observable harness or CLI output. Do not invent token counts, timings, tool calls, reasoning settings, or isolation evidence.
 6. `n=1` is exploratory. Use at least two independent attempts per cell before claiming a stable model effect.
 7. Score completion, autonomy, judgment, technical quality, UX/visual quality, showcase quality, ambition, and coherence separately.
 8. Keep raw output and factual receipts separate from later evaluator opinions.
