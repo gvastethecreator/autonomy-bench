@@ -53,6 +53,8 @@ Adapters:
 ## Gallery publish
 
 ```powershell
+vp run bench -- gallery --run <run-id>
+vp run gallery
 vp run gallery -- --run <run-id>
 vp run gallery -- --viewer
 vp run dev
@@ -61,7 +63,7 @@ vp run deploy
 
 A push to `main` deploys after CI validates. Use local `vp run deploy` only when you need to publish without that push. The deploy job needs repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
-`gallery --run` copies each publishable A/B/C take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus `gallery/vendor/anime.esm.min.js`.
+`vp run bench -- gallery --run <run-id>` publishes one run. `vp run gallery` with no flags publishes every run, then rebuilds the catalog and viewer. `gallery --run` copies each publishable A/B/C take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus helper modules under `gallery/vendor/`.
 
 Local votes need the D1 schema once:
 
@@ -71,9 +73,9 @@ npx wrangler d1 migrations apply benchmark-votes --local
 
 Production votes need the same command with `--remote` after the first deploy that binds `benchmark-votes`.
 
-`--viewer` rebuilds `catalog.json` from the published gallery tree, then rewrites the viewer and the Anime.js bundle.
+`--viewer` rebuilds `catalog.json` from the published gallery tree, then rewrites the viewer, helper `.mjs` files, and the Anime.js bundle.
 
-The viewer fetches `catalog.json`. It does not inline the catalog. Prompt revisions come from each cell's frozen `promptSha256`. Cells without a hash are not a separate revision. Dates are folder stamps. Defaults are the latest revision and the latest month.
+The viewer fetches `catalog.json`. It does not inline the catalog. Catalog cells are an index plus a short `glance` (duration, harness, contributor, limitations). Prompt text lives on `promptRevisions`. The receipt panel loads `receipt.json` on demand. Prompt revisions come from each cell's frozen `promptSha256`. Cells without a hash are not a separate revision. Dates are folder stamps. Defaults are the latest revision and the latest month.
 
 Do not publish folders that have only `prompt.md`.
 

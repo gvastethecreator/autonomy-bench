@@ -1,0 +1,186 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vite-plus/test';
+import {
+  galleryCommand,
+  indexPublishedCells,
+  parseGalleryArgs,
+  publishRun,
+  stripRetiredGalleryBenchmarks,
+  writeCatalogFile,
+} from '../scripts/gallery-publish.mjs';
+import { writeJson } from '../scripts/run-io.mjs';
+
+const suite = {
+  promptLevels: { A: { name: 'Raw' } },
+  benchmarks: [{ id: 'rollercoaster', title: 'Rollercoaster' }],
+};
+
+function tempDir() {
+  return mkdtempSync(join(tmpdir(), 'ab-gal-'));
+}
+
+describe('parseGalleryArgs', () => {
+  it('selects all-runs when no flags are passed', () => {
+    expect(galleryCommand(parseGalleryArgs([]))).toBe('all');
+  });
+
+  it('selects one run', () => {
+    expect(galleryCommand(parseGalleryArgs(['--run', 'abc']))).toBe('run');
+  });
+
+  it('selects viewer rebuild', () => {
+    expect(galleryCommand(parseGalleryArgs(['--viewer']))).toBe('viewer');
+  });
+});
+
+describe('publishRun', () => {
+  it('copies html, receipt, and prompt for a complete take', () => {
+    const root = tempDir();
+    const runDir = join(root, 'run');
+    const galleryDir = join(root, 'gallery');
+    mkdirSync(join(runDir, 'cells', 'grok-4.6', 'rollercoaster-A', 'output'), { recursive: true });
+    writeJson(join(runDir, 'manifest.json'), {
+      runId: '20260824-010000-mini-aaaaaaaa',
+      date: '2026-08-24',
+      cells: [
+        {
+          cellId: 'rollercoaster--a--grok-4.6--a01',
+          benchmarkId: 'rollercoaster',
+          promptLevel: 'A',
+          requestedModel: 'grok-4.6',
+          attempt: 1,
+          outputPath: 'cells/grok-4.6/rollercoaster-A/output',
+          receiptPath: 'cells/grok-4.6/rollercoaster-A/receipt.json',
+          promptPath: 'cells/grok-4.6/rollercoaster-A/prompt.md',
+        },
+      ],
+    });
+    writeFileSync(
+      join(runDir, 'cells/grok-4.6/rollercoaster-A/output/index.html'),
+      '<html></html>',
+    );
+    writeFileSync(join(runDir, 'cells/grok-4.6/rollercoaster-A/prompt.md'), 'Create a ride.\n');
+    writeJson(join(runDir, 'cells/grok-4.6/rollercoaster-A/receipt.json'), {
+      schemaVersion: 1,
+      runId: '20260824-010000-mini-aaaaaaaa',
+      cellId: 'rollercoaster--a--grok-4.6--a01',
+      benchmarkId: 'rollercoaster',
+      promptLevel: 'A',
+      attempt: 1,
+      requestedModel: 'grok-4.6',
+      promptSha256: 'aaa',
+      status: 'complete',
+      adapter: 'agent',
+      harness: 'cursor',
+      startedAt: 'not captured',
+      completedAt: 'not captured',
+      durationMs: 1200,
+      tokenUsage: 'not captured',
+      contributor: {
+        github: 'gvastethecreator',
+        avatarUrl: 'https://github.com/gvastethecreator.png',
+      },
+    });
+    const published = publishRun({ runDir, galleryDir, suite });
+    expect(published.copiedHtml).toBe(1);
+    expect(published.copiedReceipts).toBe(1);
+    expect(published.copiedPrompts).toBe(1);
+    const cells = indexPublishedCells(galleryDir, suite);
+    expect(cells).toHaveLength(1);
+    expect(cells[0].src).toContain('index.html');
+    expect(cells[0].glance.durationMs).toBe(1200);
+    expect(cells[0].glance.harness).toBe('cursor');
+    const catalog = writeCatalogFile(galleryDir, suite);
+    expect(catalog.cells[0].prompt).toBeUndefined();
+    expect(catalog.cells[0].receipt).toBeUndefined();
+    expect(catalog.promptRevisions[0].prompt).toContain('Create a ride');
+  });
+
+  it('publishes html-only takes as pending and playable', () => {
+    const root = tempDir();
+    const runDir = join(root, 'run');
+    const galleryDir = join(root, 'gallery');
+    mkdirSync(join(runDir, 'cells', 'grok-4.6', 'rollercoaster-A', 'output'), { recursive: true });
+    writeJson(join(runDir, 'manifest.json'), {
+      runId: '20260824-010000-mini-bbbbbbbb',
+      date: '2026-08-24',
+      cells: [
+        {
+          benchmarkId: 'rollercoaster',
+          promptLevel: 'A',
+          requestedModel: 'grok-4.6',
+          attempt: 1,
+          outputPath: 'cells/grok-4.6/rollercoaster-A/output',
+          receiptPath: 'cells/grok-4.6/rollercoaster-A/receipt.json',
+          promptPath: 'cells/grok-4.6/rollercoaster-A/prompt.md',
+        },
+      ],
+    });
+    writeFileSync(
+      join(runDir, 'cells/grok-4.6/rollercoaster-A/output/index.html'),
+      '<html></html>',
+    );
+    const published = publishRun({ runDir, galleryDir, suite });
+    expect(published.copiedHtml).toBe(1);
+    const cells = indexPublishedCells(galleryDir, suite);
+    expect(cells[0].status).toBe('pending');
+    expect(cells[0].src).toBeTruthy();
+  });
+
+  it('does not set src when a receipt has no html', () => {
+    const root = tempDir();
+    const runDir = join(root, 'run');
+    const galleryDir = join(root, 'gallery');
+    mkdirSync(join(runDir, 'cells', 'grok-4.6', 'rollercoaster-A'), { recursive: true });
+    writeJson(join(runDir, 'manifest.json'), {
+      runId: '20260824-010000-mini-cccccccc',
+      date: '2026-08-24',
+      cells: [
+        {
+          benchmarkId: 'rollercoaster',
+          promptLevel: 'A',
+          requestedModel: 'grok-4.6',
+          attempt: 1,
+          outputPath: 'cells/grok-4.6/rollercoaster-A/output',
+          receiptPath: 'cells/grok-4.6/rollercoaster-A/receipt.json',
+          promptPath: 'cells/grok-4.6/rollercoaster-A/prompt.md',
+        },
+      ],
+    });
+    writeJson(join(runDir, 'cells/grok-4.6/rollercoaster-A/receipt.json'), {
+      schemaVersion: 1,
+      runId: 'r',
+      cellId: 'c',
+      benchmarkId: 'rollercoaster',
+      promptLevel: 'A',
+      attempt: 1,
+      requestedModel: 'grok-4.6',
+      promptSha256: 'x',
+      status: 'unavailable',
+      adapter: 'agent',
+      harness: 'cursor',
+      startedAt: 'not captured',
+      completedAt: 'not captured',
+      durationMs: 'not captured',
+      tokenUsage: 'not captured',
+    });
+    publishRun({ runDir, galleryDir, suite });
+    const cells = indexPublishedCells(galleryDir, suite);
+    expect(cells[0].src).toBeNull();
+    expect(cells[0].receiptSrc).toBeTruthy();
+  });
+
+  it('removes retired benchmark folders', () => {
+    const galleryDir = tempDir();
+    mkdirSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000', 'index.html'),
+      '<html></html>',
+    );
+    expect(stripRetiredGalleryBenchmarks(galleryDir, suite)).toBe(1);
+  });
+});

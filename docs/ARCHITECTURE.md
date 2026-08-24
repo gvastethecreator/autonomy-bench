@@ -33,8 +33,11 @@ gallery/
 exports/prototype-lab/<run-id>/ generated Prototype Lab specs
 receipts/YYYY/MM/DD/            workflow receipts
 SKILLS/autonomy-bench/          coordinator skill
-scripts/bench.mjs               plan / status / finalize
-scripts/gallery.mjs             publish takes into gallery/
+scripts/bench.mjs               CLI over plan / status / finalize
+scripts/plan.mjs                plan, status, finalize
+scripts/gallery.mjs             CLI over gallery publish
+scripts/gallery-publish.mjs     copy takes, index catalog, write viewer
+scripts/catalog.mjs             catalog index and cell query
 scripts/staff-picks.mjs         staff-chosen model per prompt-V
 workers/gallery.ts              vote API in front of gallery assets
 migrations/                     D1 schema for gallery votes

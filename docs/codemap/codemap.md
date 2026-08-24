@@ -1,7 +1,7 @@
 # Code map · autonomy-bench
 
-generated: 2026-08-24T15:44:20Z
-commit: 2c9c0d8995ad
+generated: 2026-08-24T20:05:00Z
+commit: 029f5510c1b5
 scope: .
 
 counts: 6 nodes · 3 edges · 0 flows · 0 unknown
@@ -23,8 +23,8 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
 - `scripts` · `scripts` · service · Scripts
   callers: repository (calls), workers (imports)
   callees: (none)
-  tests: test/contributor.test.ts, test/highlight-html.test.ts, test/iframe-queue.test.ts, test/layout.test.ts, test/model-meta.test.ts
-  entry: scripts/bench.mjs:sha256
+  tests: test/brands.test.ts, test/contributor.test.ts, test/highlight-html.test.ts, test/iframe-queue.test.ts, test/layout.test.ts
+  entry: scripts/bench.mjs:json
 
 - `skills` · `SKILLS` · module · Skills
   callers: (none)
