@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ecosphere — Self-Sustaining Ecosystem</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: #0a1210; font-family: 'Segoe UI', system-ui, sans-serif; color: #d4e8dc; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 18px; background: linear-gradient(180deg, #142018 0%, #0f1814 100%);
+    border-bottom: 1px solid #1e3028; flex-shrink: 0;
+  }
+  header h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: 0.04em; color: #7ec8a0; }
+  header h1 span { color: #4a7a5e; font-weight: 400; font-size: 0.82rem; margin-left: 8px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls button, .controls select {
+    background: #1a2820; border: 1px solid #2a4034; color: #a8d4b8;
+    padding: 5px 12px; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .controls button:hover, .controls select:hover { background: #243830; border-color: #3a5848; }
+  .controls button.active { background: #2a5040; border-color: #4a8868; color: #c8f0d8; }
+  .speed-label { font-size: 0.72rem; color: #5a8070; margin-right: 2px; }
+  #main { display: flex; flex: 1; min-height: 0; }
+  #canvas-wrap { flex: 1; position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #sidebar {
+    width: 220px; flex-shrink: 0; background: #0e1612;
+    border-left: 1px solid #1e3028; padding: 14px 12px;
+    overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+  }
+  .panel { background: #121e18; border: 1px solid #1e3028; border-radius: 8px; padding: 10px; }
+  .panel h2 { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: #4a7a5e; margin-bottom: 8px; }
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 0.78rem; }
+  .stat-row .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; display: inline-block; }
+  .stat-row .name { display: flex; align-items: center; color: #8ab89a; }
+  .stat-row .val { font-variant-numeric: tabular-nums; color: #c8e8d0; font-weight: 600; }
+  #graph-canvas { width: 100%; height: 80px; border-radius: 4px; background: #0a1210; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .legend-item { display: flex; align-items: center; gap: 3px; font-size: 0.62rem; color: #6a9880; }
+  .legend-item i { width: 10px; height: 3px; border-radius: 1px; display: inline-block; }
+  .time-display { font-size: 0.72rem; color: #5a8070; text-align: center; }
+  .time-display strong { color: #8ac8a0; font-size: 0.85rem; }
+  .hint { font-size: 0.65rem; color: #3a5848; line-height: 1.4; margin-top: auto; }
+  #overlay-msg {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(10,18,16,0.75); pointer-events: none; opacity: 0;
+    transition: opacity 0.4s; font-size: 1.1rem; color: #7ec8a0; letter-spacing: 0.05em;
+  }
+  #overlay-msg.show { opacity: 1; }
+  @media (max-width: 700px) {
+    #sidebar { display: none; }
+    header h1 span { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🌍 Ecosphere <span>self-sustaining simulation</span></h1>
+    <div class="controls">
+      <span class="speed-label">Speed</span>
+      <button id="btn-slow" title="0.5×">½×</button>
+      <button id="btn-norm" class="active" title="1×">1×</button>
+      <button id="btn-fast" title="3×">3×</button>
+      <button id="btn-rain" title="Trigger rainfall">🌧 Rain</button>
+      <button id="btn-reset" title="Reset ecosystem">↺ Reset</button>
+    </div>
+  </header>
+  <div id="main">
+    <div id="canvas-wrap">
+      <canvas id="world"></canvas>
+      <div id="overlay-msg"></div>
+    </div>
+    <aside id="sidebar">
+      <div class="panel">
+        <div class="time-display">Day <strong id="day-count">1</strong> · <span id="phase-label">Dawn</span></div>
+      </div>
+      <div class="panel">
+        <h2>Populations</h2>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#4ade80"></i>Grass</span><span class="val" id="s-grass">0</span></div>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#166534"></i>Trees</span><span class="val" id="s-trees">0</span></div>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#fbbf24"></i>Rabbits</span><span class="val" id="s-rabbits">0</span></div>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#ef4444"></i>Foxes</span><span class="val" id="s-foxes">0</span></div>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#a78bfa"></i>Insects</span><span class="val" id="s-insects">0</span></div>
+        <div class="stat-row"><span class="name"><i class="dot" style="background:#78716c"></i>Decomposers</span><span class="val" id="s-decomp">0</span></div>
+      </div>
+      <div class="panel">
+        <h2>Environment</h2>
+        <div class="stat-row"><span class="name">Soil nutrients</span><span class="val" id="s-nutrients">0%</span></div>
+        <div class="stat-row"><span class="name">Water level</span><span class="val" id="s-water">0%</span></div>
+        <div class="stat-row"><span class="name">Sunlight</span><span class="val" id="s-sun">0%</span></div>
+        <div class="stat-row"><span class="name">Temperature</span><span class="val" id="s-temp">0°C</span></div>
+      </div>
+      <div class="panel">
+        <h2>Population History</h2>
+        <canvas id="graph-canvas"></canvas>
+        <div class="legend">
+          <span class="legend-item"><i style="background:#4ade80"></i>Grass</span>
+          <span class="legend-item"><i style="background:#fbbf24"></i>Rabbits</span>
+          <span class="legend-item"><i style="background:#ef4444"></i>Foxes</span>
+        </div>
+      </div>
+      <p class="hint">Click to plant grass · Shift+click to drop water · The ecosystem self-regulates through predator-prey cycles, nutrient recycling, and weather.</p>
+    </aside>
+  </div>
+</div>
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('world');
+  const ctx = canvas.getContext('2d');
+  const graphCanvas = document.getElementById('graph-canvas');
+  const gctx = graphCanvas.getContext('2d');
+
+  let W, H, scale;
+  const SIM_W = 1200, SIM_H = 800;
+
+  function resize() {
+    const wrap = document.getElementById('canvas-wrap');
+    W = wrap.clientWidth; H = wrap.clientHeight;
+    canvas.width = W; canvas.height = H;
+    scale = Math.min(W / SIM_W, H / SIM_H);
+    graphCanvas.width = graphCanvas.clientWidth * devicePixelRatio;
+    graphCanvas.height = graphCanvas.clientHeight * devicePixelRatio;
+    gctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ── Simulation State ── */
+  const GRID = 60;
+  const CELL = SIM_W / GRID;
+  let tick = 0, day = 1, timeOfDay = 0.25;
+  let speed = 1;
+  let raining = false, rainTimer = 0;
+  let paused = false;
+
+  const soil = new Float32Array(GRID * GRID);
+  const water = new Float32Array(GRID * GRID);
+  const grass = new Uint8Array(GRID * GRID);
+  const trees = [];
+
+  const rabbits = [];
+  const foxes = [];
+  const insects = [];
+  const decomposers = [];
+  const particles = [];
+  const corpses = [];
+
+  const history = { grass: [], rabbits: [], foxes: [], maxLen: 200 };
+
+  const PHASES = ['Night', 'Dawn', 'Day', 'Dusk'];
+  function getPhase() {
+    if (timeOfDay < 0.2 || timeOfDay > 0.85) return 0;
+    if (timeOfDay < 0.3) return 1;
+    if (timeOfDay < 0.75) return 2;
+    return 3;
+  }
+  function sunIntensity() {
+    const t = timeOfDay;
+    if (t < 0.2) return 0.05 + t * 0.5;
+    if (t < 0.3) return 0.15 + (t - 0.2) * 8.5;
+    if (t < 0.7) return 1;
+    if (t < 0.85) return 1 - (t - 0.7) * 6.67;
+    return Math.max(0.05, 0.05 - (t - 0.85) * 0.3);
+  }
+  function temperature() {
+    const base = 12 + sunIntensity() * 18;
+    return base + (raining ? -4 : 0) + (Math.sin(tick * 0.001) * 2);
+  }
+
+  function idx(gx, gy) { return gy * GRID + gx; }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+  function dist(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
+
+  function worldPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / scale;
+    const my = (e.clientY - rect.top) / scale;
+    return { x: mx, y: my, gx: clamp(Math.floor(mx / CELL), 0, GRID - 1), gy: clamp(Math.floor(my / CELL), 0, GRID - 1) };
+  }
+
+  /* ── Entities ── */
+  let nextId = 1;
+  function makeAgent(type, x, y, extra = {}) {
+    return { id: nextId++, type, x, y, vx: 0, vy: 0, energy: 80, age: 0, maxAge: 3000, ...extra };
+  }
+
+  function spawnTree(gx, gy) {
+    if (trees.length >= 80) return;
+    const i = idx(gx, gy);
+    if (grass[i] > 0 || trees.some(t => t.gx === gx && t.gy === gy)) return;
+    trees.push({ gx, gy, health: 100, age: 0, seeds: 0, id: nextId++ });
+  }
+
+  function spawnRabbit(x, y) {
+    if (rabbits.length >= 120) return;
+    rabbits.push(makeAgent('rabbit', x, y, { energy: 60, speed: rand(1.2, 2), maxAge: rand(2500, 4000) }));
+  }
+  function spawnFox(x, y) {
+    if (foxes.length >= 40) return;
+    foxes.push(makeAgent('fox', x, y, { energy: 90, speed: rand(1.8, 2.8), maxAge: rand(3500, 5500) }));
+  }
+  function spawnInsect(x, y) {
+    if (insects.length >= 200) return;
+    insects.push(makeAgent('insect', x, y, { energy: 30, speed: rand(0.8, 1.5), maxAge: rand(800, 1500) }));
+  }
+  function spawnDecomposer(x, y) {
+    if (decomposers.length >= 100) return;
+    decomposers.push(makeAgent('decomp', x, y, { energy: 20, speed: rand(0.3, 0.7), maxAge: rand(1500, 2500) }));
+  }
+
+  /* ── Initialization ── */
+  function initWorld() {
+    tick = 0; day = 1; timeOfDay = 0.3; raining = false; rainTimer = 0;
+    rabbits.length = 0; foxes.length = 0; insects.length = 0;
+    decomposers.length = 0; trees.length = 0; particles.length = 0; corpses.length = 0;
+    history.grass.length = 0; history.rabbits.length = 0; history.foxes.length = 0;
+
+    for (let i = 0; i < GRID * GRID; i++) {
+      soil[i] = rand(0.3, 0.7);
+      water[i] = rand(0.2, 0.5);
+      grass[i] = 0;
+    }
+
+    for (let n = 0; n < 400; n++) {
+      const gx = randInt(0, GRID - 1), gy = randInt(0, GRID - 1);
+      grass[idx(gx, gy)] = randInt(40, 100);
+    }
+
+    for (let n = 0; n < 25; n++) spawnTree(randInt(5, GRID - 6), randInt(5, GRID - 6));
+
+    for (let n = 0; n < 18; n++) spawnRabbit(rand(100, SIM_W - 100), rand(100, SIM_H - 100));
+    for (let n = 0; n < 5; n++) spawnFox(rand(100, SIM_W - 100), rand(100, SIM_H - 100));
+    for (let n = 0; n < 40; n++) spawnInsect(rand(50, SIM_W - 50), rand(50, SIM_H - 50));
+    for (let n = 0; n < 20; n++) spawnDecomposer(rand(50, SIM_W - 50), rand(50, SIM_H - 50));
+
+    showOverlay('Ecosystem initialized');
+  }
+
+  function showOverlay(msg) {
+    const el = document.getElementById('overlay-msg');
+    el.textContent = msg; el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
+  /* ── Simulation Logic ── */
+  function diffuse(field, rate) {
+    const tmp = new Float32Array(field.length);
+    for (let gy = 1; gy < GRID - 1; gy++) {
+      for (let gx = 1; gx < GRID - 1; gx++) {
+        const i = idx(gx, gy);
+        const avg = (field[idx(gx-1,gy)] + field[idx(gx+1,gy)] + field[idx(gx,gy-1)] + field[idx(gx,gy+1)]) * 0.25;
+        tmp[i] = field[i] + (avg - field[i]) * rate;
+      }
+    }
+    for (let i = 0; i < field.length; i++) field[i] = tmp[i] || field[i];
+  }
+
+  function updateEnvironment() {
+    timeOfDay += 0.0004 * speed;
+    if (timeOfDay >= 1) { timeOfDay -= 1; day++; }
+
+    if (raining) {
+      rainTimer--;
+      if (rainTimer <= 0) raining = false;
+      for (let i = 0; i < GRID * GRID; i++) {
+        water[i] = clamp(water[i] + rand(0.005, 0.015), 0, 1);
+      }
+      if (Math.random() < 0.3) {
+        particles.push({ x: rand(0, SIM_W), y: -5, vy: rand(8, 14), life: 60, type: 'rain' });
+      }
+    }
+
+    diffuse(water, 0.08);
+    diffuse(soil, 0.02);
+
+    const sun = sunIntensity();
+    const temp = temperature();
+
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const i = idx(gx, gy);
+        water[i] = clamp(water[i] - 0.0003 * sun * (1 + temp * 0.02), 0, 1);
+
+        if (grass[i] > 0) {
+          const growth = sun * 0.15 * soil[i] * (0.3 + water[i] * 0.7) * (temp > 5 && temp < 38 ? 1 : 0.3);
+          grass[i] = clamp(grass[i] + growth - 0.02, 0, 100);
+          soil[i] = clamp(soil[i] - growth * 0.003, 0.05, 1);
+        }
+      }
+    }
+
+    for (const t of trees) {
+      t.age++;
+      const i = idx(t.gx, t.gy);
+      const localSun = sun * (1 - trees.filter(o => o !== t && dist({x:t.gx*CELL,y:t.gy*CELL},{x:o.gx*CELL,y:o.gy*CELL}) < CELL*3).length * 0.08);
+      t.health = clamp(t.health + localSun * 0.08 * soil[i] * water[i] - 0.03, 0, 150);
+      t.seeds += localSun * 0.02;
+      soil[i] = clamp(soil[i] - 0.001, 0.05, 1);
+
+      if (t.seeds > 8 && Math.random() < 0.002) {
+        t.seeds = 0;
+        const ngx = t.gx + randInt(-3, 3), ngy = t.gy + randInt(-3, 3);
+        if (ngx >= 0 && ngx < GRID && ngy >= 0 && ngy < GRID) spawnTree(ngx, ngy);
+      }
+      if (t.health <= 0) {
+        corpses.push({ x: t.gx * CELL + CELL/2, y: t.gy * CELL + CELL/2, energy: 60, type: 'tree' });
+        grass[i] = clamp(grass[i] + 20, 0, 100);
+        soil[i] = clamp(soil[i] + 0.15, 0, 1);
+      }
+    }
+    for (let j = trees.length - 1; j >= 0; j--) if (trees[j].health <= 0) trees.splice(j, 1);
+
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const i = idx(gx, gy);
+        if (grass[i] < 5 && grass[i] > 0 && soil[i] > 0.25 && water[i] > 0.15 && Math.random() < 0.0008 * sun) {
+          const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+          const [dx, dy] = dirs[randInt(0, 3)];
+          const nx = gx + dx, ny = gy + dy;
+          if (nx >= 0 && nx < GRID && ny >= 0 && ny < GRID && grass[idx(nx, ny)] === 0) {
+            grass[idx(nx, ny)] = clamp(grass[i] * 0.5, 10, 60);
+          }
+        }
+      }
+    }
+  }
+
+  function wander(agent, turnRate) {
+    agent.vx += rand(-turnRate, turnRate);
+    agent.vy += rand(-turnRate, turnRate);
+    const sp = Math.sqrt(agent.vx * agent.vx + agent.vy * agent.vy) || 1;
+    const maxSp = agent.speed;
+    agent.vx = (agent.vx / sp) * maxSp;
+    agent.vy = (agent.vy / sp) * maxSp;
+    agent.x += agent.vx * speed;
+    agent.y += agent.vy * speed;
+    agent.x = clamp(agent.x, 10, SIM_W - 10);
+    agent.y = clamp(agent.y, 10, SIM_H - 10);
+    if (agent.x <= 10 || agent.x >= SIM_W - 10) agent.vx *= -1;
+    if (agent.y <= 10 || agent.y >= SIM_H - 10) agent.vy *= -1;
+  }
+
+  function findNearest(list, x, y, maxD) {
+    let best = null, bestD = maxD;
+    for (const e of list) {
+      const d = dist(e, { x, y });
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
+  }
+
+  function seek(agent, target, strength) {
+    const d = dist(agent, target);
+    if (d < 1) return;
+    agent.vx += ((target.x - agent.x) / d) * strength;
+    agent.vy += ((target.y - agent.y) / d) * strength;
+  }
+
+  function updateRabbits() {
+    for (let i = rabbits.length - 1; i >= 0; i--) {
+      const r = rabbits[i];
+      r.age++; r.energy -= 0.04 * speed;
+
+      const gx = Math.floor(r.x / CELL), gy = Math.floor(r.y / CELL);
+      const gi = idx(clamp(gx,0,GRID-1), clamp(gy,0,GRID-1));
+
+      const fox = findNearest(foxes, r.x, r.y, 120);
+      if (fox) {
+        seek(r, { x: r.x + (r.x - fox.x), y: r.y + (r.y - fox.y) }, 0.5);
+      } else {
+        let bestGx = -1, bestGy = -1, bestG = 0;
+        for (let dy = -4; dy <= 4; dy++) {
+          for (let dx = -4; dx <= 4; dx++) {
+            const nx = gx + dx, ny = gy + dy;
+            if (nx < 0 || nx >= GRID || ny < 0 || ny >= GRID) continue;
+            if (grass[idx(nx, ny)] > bestG) { bestG = grass[idx(nx, ny)]; bestGx = nx; bestGy = ny; }
+          }
+        }
+        if (bestG > 15) seek(r, { x: bestGx * CELL + CELL/2, y: bestGy * CELL + CELL/2 }, 0.3);
+        else wander(r, 0.15);
+      }
+
+      if (grass[gi] > 20) {
+        const eaten = Math.min(grass[gi], 8);
+        grass[gi] -= eaten;
+        r.energy += eaten * 0.6;
+        soil[gi] = clamp(soil[gi] + eaten * 0.005, 0, 1);
+      }
+
+      const corpse = findNearest(corpses, r.x, r.y, 15);
+      if (corpse && r.energy < 50) {
+        seek(r, corpse, 0.4);
+        if (dist(r, corpse) < 10) {
+          r.energy += corpse.energy * 0.3;
+          corpse.energy *= 0.7;
+        }
+      }
+
+      if (r.energy > 85 && rabbits.length < 120 && Math.random() < 0.003) {
+        r.energy *= 0.55;
+        spawnRabbit(r.x + rand(-20, 20), r.y + rand(-20, 20));
+      }
+
+      if (r.energy <= 0 || r.age > r.maxAge) {
+        corpses.push({ x: r.x, y: r.y, energy: 25, type: 'rabbit' });
+        rabbits.splice(i, 1);
+      }
+    }
+  }
+
+  function updateFoxes() {
+    for (let i = foxes.length - 1; i >= 0; i--) {
+      const f = foxes[i];
+      f.age++; f.energy -= 0.06 * speed;
+
+      const prey = findNearest(rabbits, f.x, f.y, 150);
+      if (prey) {
+        seek(f, prey, 0.45);
+        if (dist(f, prey) < 12) {
+          f.energy += 45;
+          prey.energy = -1;
+          particles.push({ x: prey.x, y: prey.y, vx: rand(-2,2), vy: rand(-3,-1), life: 20, type: 'poof' });
+        }
+      } else {
+        wander(f, 0.1);
+      }
+
+      if (f.energy > 100 && foxes.length < 40 && Math.random() < 0.002) {
+        f.energy *= 0.5;
+        spawnFox(f.x + rand(-30, 30), f.y + rand(-30, 30));
+      }
+
+      if (f.energy <= 0 || f.age > f.maxAge) {
+        corpses.push({ x: f.x, y: f.y, energy: 35, type: 'fox' });
+        foxes.splice(i, 1);
+      }
+    }
+  }
+
+  function updateInsects() {
+    for (let i = insects.length - 1; i >= 0; i--) {
+      const ins = insects[i];
+      ins.age++; ins.energy -= 0.025 * speed;
+
+      const gx = Math.floor(ins.x / CELL), gy = Math.floor(ins.y / CELL);
+      const gi = idx(clamp(gx,0,GRID-1), clamp(gy,0,GRID-1));
+
+      let target = null;
+      for (const t of trees) {
+        const tx = t.gx * CELL + CELL/2, ty = t.gy * CELL + CELL/2;
+        if (dist(ins, {x:tx,y:ty}) < 80 && t.health > 20) { target = {x:tx,y:ty}; break; }
+      }
+      if (!target && grass[gi] > 30) target = { x: gx * CELL + CELL/2, y: gy * CELL + CELL/2 };
+
+      if (target) seek(ins, target, 0.25);
+      else wander(ins, 0.2);
+
+      if (grass[gi] > 10) {
+        grass[gi] = clamp(grass[gi] - 0.5, 0, 100);
+        ins.energy += 0.3;
+        soil[gi] = clamp(soil[gi] + 0.002, 0, 1);
+      }
+
+      for (const t of trees) {
+        if (dist(ins, {x:t.gx*CELL+CELL/2,y:t.gy*CELL+CELL/2}) < 8) {
+          t.health = clamp(t.health - 0.05, 0, 150);
+          ins.energy += 0.2;
+        }
+      }
+
+      if (ins.energy > 40 && insects.length < 200 && Math.random() < 0.004) {
+        ins.energy *= 0.6;
+        spawnInsect(ins.x + rand(-10,10), ins.y + rand(-10,10));
+      }
+
+      if (ins.energy <= 0 || ins.age > ins.maxAge) {
+        corpses.push({ x: ins.x, y: ins.y, energy: 8, type: 'insect' });
+        insects.splice(i, 1);
+      }
+    }
+  }
+
+  function updateDecomposers() {
+    for (let i = decomposers.length - 1; i >= 0; i--) {
+      const d = decomposers[i];
+      d.age++; d.energy -= 0.015 * speed;
+
+      const corpse = findNearest(corpses.filter(c => c.energy > 1), d.x, d.y, 100);
+      if (corpse) {
+        seek(d, corpse, 0.2);
+        if (dist(d, corpse) < 8) {
+          const consumed = Math.min(corpse.energy, 5);
+          corpse.energy -= consumed;
+          d.energy += consumed * 0.8;
+          const gx = Math.floor(corpse.x / CELL), gy = Math.floor(corpse.y / CELL);
+          if (gx >= 0 && gx < GRID && gy >= 0 && gy < GRID) {
+            soil[idx(gx, gy)] = clamp(soil[idx(gx, gy)] + consumed * 0.015, 0, 1);
+            water[idx(gx, gy)] = clamp(water[idx(gx, gy)] + consumed * 0.005, 0, 1);
+          }
+        }
+      } else {
+        wander(d, 0.08);
+      }
+
+      if (d.energy > 35 && decomposers.length < 100 && Math.random() < 0.003) {
+        d.energy *= 0.55;
+        spawnDecomposer(d.x + rand(-15,15), d.y + rand(-15,15));
+      }
+
+      if (d.energy <= 0 || d.age > d.maxAge) decomposers.splice(i, 1);
+    }
+
+    for (let i = corpses.length - 1; i >= 0; i--) {
+      if (corpses[i].energy <= 0.5) corpses.splice(i, 1);
+      else corpses[i].energy *= 0.999;
+    }
+  }
+
+  function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life--;
+      if (p.type === 'rain') { p.y += p.vy * speed; p.x += Math.sin(tick * 0.1 + p.x) * 0.5; }
+      else { p.x += p.vx; p.y += p.vy; p.vy += 0.1; }
+      if (p.life <= 0 || p.y > SIM_H + 10) particles.splice(i, 1);
+    }
+  }
+
+  function countGrass() {
+    let c = 0;
+    for (let i = 0; i < grass.length; i++) if (grass[i] > 10) c++;
+    return c;
+  }
+
+  function avgField(field) {
+    let s = 0;
+    for (let i = 0; i < field.length; i++) s += field[i];
+    return s / field.length;
+  }
+
+  function recordHistory() {
+    if (tick % 15 !== 0) return;
+    history.grass.push(countGrass());
+    history.rabbits.push(rabbits.length);
+    history.foxes.push(foxes.length);
+    if (history.grass.length > history.maxLen) {
+      history.grass.shift(); history.rabbits.shift(); history.foxes.shift();
+    }
+  }
+
+  function autoBalance() {
+    if (tick % 300 !== 0) return;
+    const gc = countGrass();
+    if (rabbits.length === 0 && gc > 50) {
+      for (let n = 0; n < 5; n++) spawnRabbit(rand(100, SIM_W-100), rand(100, SIM_H-100));
+    }
+    if (foxes.length === 0 && rabbits.length > 8) {
+      spawnFox(rand(100, SIM_W-100), rand(100, SIM_H-100));
+    }
+    if (gc < 30) {
+      for (let n = 0; n < 20; n++) {
+        const gx = randInt(0, GRID-1), gy = randInt(0, GRID-1);
+        grass[idx(gx, gy)] = clamp(grass[idx(gx, gy)] + randInt(20, 60), 0, 100);
+      }
+    }
+    if (decomposers.length < 5 && corpses.length > 3) {
+      for (let n = 0; n < 5; n++) spawnDecomposer(rand(50, SIM_W-50), rand(50, SIM_H-50));
+    }
+    if (insects.length < 10 && trees.length > 3) {
+      for (let n = 0; n < 10; n++) spawnInsect(rand(50, SIM_W-50), rand(50, SIM_H-50));
+    }
+  }
+
+  function simulate() {
+    tick++;
+    updateEnvironment();
+    updateRabbits();
+    updateFoxes();
+    updateInsects();
+    updateDecomposers();
+    updateParticles();
+    recordHistory();
+    autoBalance();
+  }
+
+  /* ── Rendering ── */
+  function drawWorld() {
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+    ctx.translate((W - SIM_W * scale) / 2, (H - SIM_H * scale) / 2);
+    ctx.scale(scale, scale);
+
+    const sun = sunIntensity();
+    const phase = getPhase();
+    const skyColors = [
+      ['#0a1420','#0f1a12'],
+      ['#1a2840','#1a3020'],
+      ['#4a90c8','#6ab060'],
+      ['#2a4060','#2a4830']
+    ];
+    const [skyTop, skyBot] = skyColors[phase];
+    const grad = ctx.createLinearGradient(0, 0, 0, SIM_H);
+    grad.addColorStop(0, skyTop);
+    grad.addColorStop(1, skyBot);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, SIM_W, SIM_H);
+
+    if (sun > 0.3 && phase === 2) {
+      ctx.beginPath();
+      ctx.arc(SIM_W * 0.82, SIM_H * 0.12, 35, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 240, 180, ${sun * 0.9})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(SIM_W * 0.82, SIM_H * 0.12, 55, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 230, 150, ${sun * 0.15})`;
+      ctx.fill();
+    }
+
+    if (phase === 0) {
+      for (let s = 0; s < 40; s++) {
+        const sx = (s * 137.5 + tick * 0.01) % SIM_W;
+        const sy = (s * 97.3) % (SIM_H * 0.5);
+        ctx.fillStyle = `rgba(255,255,255,${0.3 + Math.sin(tick * 0.02 + s) * 0.2})`;
+        ctx.fillRect(sx, sy, 1.5, 1.5);
+      }
+    }
+
+    for (let gy = 0; gy < GRID; gy++) {
+      for (let gx = 0; gx < GRID; gx++) {
+        const i = idx(gx, gy);
+        const x = gx * CELL, y = gy * CELL;
+        const soilC = soil[i];
+        const waterC = water[i];
+        const baseG = Math.floor(18 + soilC * 20);
+        const baseB = Math.floor(12 + waterC * 30);
+        ctx.fillStyle = `rgb(${Math.floor(baseG*0.6)}, ${baseG}, ${baseB})`;
+        ctx.fillRect(x, y, CELL + 0.5, CELL + 0.5);
+
+        if (grass[i] > 5) {
+          const g = grass[i] / 100;
+          const h = g * CELL * 0.7;
+          ctx.fillStyle = `rgba(${Math.floor(40+ g*30)}, ${Math.floor(140+g*80)}, ${Math.floor(40+g*20)}, ${0.4+g*0.5})`;
+          ctx.fillRect(x + CELL*0.3, y + CELL - h, CELL*0.4, h);
+          if (g > 0.5) {
+            ctx.beginPath();
+            ctx.arc(x + CELL*0.5, y + CELL - h, CELL*0.25*g, 0, Math.PI*2);
+            ctx.fillStyle = `rgba(60, ${Math.floor(160+g*60)}, 50, ${g*0.6})`;
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    for (const t of trees) {
+      const x = t.gx * CELL + CELL/2, y = t.gy * CELL + CELL/2;
+      const h = 20 + Math.min(t.age * 0.05, 40) * (t.health / 100);
+      const w = h * 0.6;
+      ctx.fillStyle = '#4a3020';
+      ctx.fillRect(x - 3, y - h * 0.3, 6, h * 0.35);
+      ctx.beginPath();
+      ctx.arc(x, y - h * 0.35, w, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(20, ${Math.floor(80 + t.health)}, 30, ${0.6 + t.health/200})`;
+      ctx.fill();
+    }
+
+    for (const c of corpses) {
+      ctx.globalAlpha = clamp(c.energy / 30, 0.1, 0.6);
+      ctx.fillStyle = '#5a4a3a';
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 4 + c.energy * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    for (const ins of insects) {
+      ctx.fillStyle = '#a78bfa';
+      ctx.beginPath();
+      ctx.arc(ins.x, ins.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(167,139,250,0.3)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(ins.x - 3, ins.y); ctx.lineTo(ins.x + 3, ins.y);
+      ctx.stroke();
+    }
+
+    for (const d of decomposers) {
+      ctx.fillStyle = '#78716c';
+      ctx.beginPath();
+      for (let a = 0; a < 5; a++) {
+        const ang = a * Math.PI * 2 / 5 + tick * 0.05;
+        ctx.arc(d.x + Math.cos(ang)*3, d.y + Math.sin(ang)*3, 1.5, 0, Math.PI*2);
+      }
+      ctx.fill();
+    }
+
+    for (const r of rabbits) {
+      const bob = Math.sin(tick * 0.15 + r.id) * 1.5;
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.ellipse(r.x, r.y + bob, 5, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fde68a';
+      ctx.beginPath();
+      ctx.arc(r.x + 4, r.y + bob - 2, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(r.x + 6, r.y + bob - 5, 2, 5);
+      ctx.fillRect(r.x + 8, r.y + bob - 5, 2, 5);
+    }
+
+    for (const f of foxes) {
+      const dir = Math.atan2(f.vy, f.vx);
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.rotate(dir);
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 8, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fca5a5';
+      ctx.beginPath();
+      ctx.moveTo(7, 0); ctx.lineTo(12, -3); ctx.lineTo(12, 3);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(5, -2, 1.5, 0, Math.PI*2);
+      ctx.arc(5, 2, 1.5, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.arc(5.5, -2, 0.7, 0, Math.PI*2);
+      ctx.arc(5.5, 2, 0.7, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    for (const p of particles) {
+      if (p.type === 'rain') {
+        ctx.strokeStyle = 'rgba(150, 200, 255, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + 2, p.y + 8);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = `rgba(200,180,140,${p.life/20})`;
+        ctx.fillRect(p.x, p.y, 3, 3);
+      }
+    }
+
+    if (raining) {
+      ctx.fillStyle = 'rgba(100, 140, 200, 0.08)';
+      ctx.fillRect(0, 0, SIM_W, SIM_H);
+    }
+
+    ctx.restore();
+  }
+
+  function drawGraph() {
+    const gw = graphCanvas.clientWidth, gh = graphCanvas.clientHeight;
+    gctx.clearRect(0, 0, gw, gh);
+
+    const datasets = [
+      { data: history.grass, color: '#4ade80' },
+      { data: history.rabbits, color: '#fbbf24' },
+      { data: history.foxes, color: '#ef4444' }
+    ];
+    let maxVal = 10;
+    for (const ds of datasets) for (const v of ds.data) if (v > maxVal) maxVal = v;
+    maxVal *= 1.1;
+
+    gctx.strokeStyle = '#1e3028';
+    gctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = gh - (i / 4) * gh;
+      gctx.beginPath(); gctx.moveTo(0, y); gctx.lineTo(gw, y); gctx.stroke();
+    }
+
+    for (const ds of datasets) {
+      if (ds.data.length < 2) continue;
+      gctx.strokeStyle = ds.color;
+      gctx.lineWidth = 1.5;
+      gctx.beginPath();
+      for (let i = 0; i < ds.data.length; i++) {
+        const x = (i / (history.maxLen - 1)) * gw;
+        const y = gh - (ds.data[i] / maxVal) * gh;
+        if (i === 0) gctx.moveTo(x, y); else gctx.lineTo(x, y);
+      }
+      gctx.stroke();
+    }
+  }
+
+  function updateUI() {
+    document.getElementById('day-count').textContent = day;
+    document.getElementById('phase-label').textContent = PHASES[getPhase()];
+    document.getElementById('s-grass').textContent = countGrass();
+    document.getElementById('s-trees').textContent = trees.length;
+    document.getElementById('s-rabbits').textContent = rabbits.length;
+    document.getElementById('s-foxes').textContent = foxes.length;
+    document.getElementById('s-insects').textContent = insects.length;
+    document.getElementById('s-decomp').textContent = decomposers.length;
+    document.getElementById('s-nutrients').textContent = Math.round(avgField(soil) * 100) + '%';
+    document.getElementById('s-water').textContent = Math.round(avgField(water) * 100) + '%';
+    document.getElementById('s-sun').textContent = Math.round(sunIntensity() * 100) + '%';
+    document.getElementById('s-temp').textContent = Math.round(temperature()) + '°C';
+  }
+
+  let lastTime = 0;
+  let accumulator = 0;
+  const STEP = 1000 / 30;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (paused) { drawWorld(); return; }
+    const dt = Math.min(now - lastTime, 100);
+    lastTime = now;
+    accumulator += dt * speed;
+    while (accumulator >= STEP) {
+      simulate();
+      accumulator -= STEP;
+    }
+    drawWorld();
+    if (tick % 5 === 0) { updateUI(); drawGraph(); }
+  }
+
+  /* ── Input ── */
+  canvas.addEventListener('click', e => {
+    const { gx, gy, x, y } = worldPos(e);
+    if (e.shiftKey) {
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const nx = gx+dx, ny = gy+dy;
+        if (nx >= 0 && nx < GRID && ny >= 0 && ny < GRID)
+          water[idx(nx, ny)] = clamp(water[idx(nx, ny)] + 0.3, 0, 1);
+      }
+      for (let i = 0; i < 10; i++) particles.push({ x: x+rand(-20,20), y: y-10, vy: rand(6,10), life: 40, type: 'rain' });
+    } else {
+      grass[idx(gx, gy)] = clamp(grass[idx(gx, gy)] + 50, 0, 100);
+      soil[idx(gx, gy)] = clamp(soil[idx(gx, gy)] + 0.05, 0, 1);
+    }
+  });
+
+  document.getElementById('btn-slow').addEventListener('click', () => { speed = 0.5; setActive('btn-slow'); });
+  document.getElementById('btn-norm').addEventListener('click', () => { speed = 1; setActive('btn-norm'); });
+  document.getElementById('btn-fast').addEventListener('click', () => { speed = 3; setActive('btn-fast'); });
+  document.getElementById('btn-rain').addEventListener('click', () => { raining = true; rainTimer = 400; showOverlay('Rainfall begins'); });
+  document.getElementById('btn-reset').addEventListener('click', () => initWorld());
+
+  function setActive(id) {
+    document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  initWorld();
+  requestAnimationFrame(t => { lastTime = t; loop(t); });
+})();
+</script>
+</body>
+</html>

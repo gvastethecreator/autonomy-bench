@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cursor Experiment — Field Study</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --fg: #e8e4df;
+    --accent: #ff6b4a;
+    --accent2: #4ecdc4;
+    --accent3: #ffe66d;
+    --muted: rgba(232, 228, 223, 0.35);
+    --glass: rgba(255, 255, 255, 0.04);
+    --glass-border: rgba(255, 255, 255, 0.08);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    cursor: none;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  canvas#field {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+  }
+
+  .cursor-ring {
+    position: fixed;
+    pointer-events: none;
+    z-index: 1000;
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+
+  .cursor-core {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--fg);
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.3s, height 0.3s, background 0.4s;
+  }
+
+  .cursor-outer {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.25);
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                height 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.4s, opacity 0.3s;
+  }
+
+  .cursor-outer::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    transition: inset 0.4s;
+  }
+
+  body.mode-gravity .cursor-core { background: var(--accent); width: 10px; height: 10px; }
+  body.mode-gravity .cursor-outer { width: 56px; height: 56px; border-color: rgba(255, 107, 74, 0.4); }
+
+  body.mode-ripple .cursor-core { background: var(--accent2); width: 6px; height: 6px; }
+  body.mode-ripple .cursor-outer { width: 32px; height: 32px; border-color: rgba(78, 205, 196, 0.5); }
+
+  body.mode-weave .cursor-core { background: var(--accent3); width: 5px; height: 5px; }
+  body.mode-weave .cursor-outer { width: 48px; height: 48px; border-color: rgba(255, 230, 109, 0.35); }
+
+  body.mode-void .cursor-core { background: #fff; width: 3px; height: 3px; box-shadow: 0 0 12px rgba(255,255,255,0.8); }
+  body.mode-void .cursor-outer { width: 64px; height: 64px; border-color: rgba(255, 255, 255, 0.15); }
+
+  body.clicking .cursor-outer { width: 28px !important; height: 28px !important; opacity: 0.6; }
+
+  .ui {
+    position: fixed;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  .header {
+    top: 0; left: 0; right: 0;
+    padding: 2rem 2.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .title-block h1 {
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .title-block .mode-name {
+    font-size: 2.4rem;
+    font-weight: 200;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    transition: opacity 0.5s, transform 0.5s;
+  }
+
+  .title-block .mode-desc {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.6rem;
+    max-width: 320px;
+    line-height: 1.5;
+    transition: opacity 0.5s;
+  }
+
+  .counter {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .counter .num {
+    font-size: 3rem;
+    font-weight: 100;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    opacity: 0.15;
+    transition: opacity 0.5s;
+  }
+
+  .counter .label {
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 0.3rem;
+  }
+
+  .footer {
+    bottom: 0; left: 0; right: 0;
+    padding: 2rem 2.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .mode-dots {
+    display: flex;
+    gap: 0.75rem;
+    pointer-events: auto;
+  }
+
+  .mode-dot {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    cursor: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    color: var(--muted);
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    backdrop-filter: blur(8px);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .mode-dot::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.35s;
+  }
+
+  .mode-dot[data-mode="gravity"]::before { background: radial-gradient(circle, rgba(255,107,74,0.3), transparent 70%); }
+  .mode-dot[data-mode="ripple"]::before { background: radial-gradient(circle, rgba(78,205,196,0.3), transparent 70%); }
+  .mode-dot[data-mode="weave"]::before { background: radial-gradient(circle, rgba(255,230,109,0.3), transparent 70%); }
+  .mode-dot[data-mode="void"]::before { background: radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%); }
+
+  .mode-dot.active {
+    border-color: rgba(255,255,255,0.25);
+    transform: scale(1.15);
+    color: var(--fg);
+  }
+
+  .mode-dot.active::before { opacity: 1; }
+
+  .hint {
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.8;
+  }
+
+  .hint kbd {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.65rem;
+    background: var(--glass);
+    margin: 0 0.1em;
+  }
+
+  .intro-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 1.2s cubic-bezier(0.16, 1, 0.3, 1),
+                visibility 1.2s;
+    pointer-events: auto;
+    cursor: none;
+  }
+
+  .intro-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .intro-overlay h2 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 100;
+    letter-spacing: -0.03em;
+    margin-bottom: 1rem;
+    opacity: 0;
+    animation: riseIn 1s 0.3s forwards;
+  }
+
+  .intro-overlay p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    max-width: 400px;
+    text-align: center;
+    line-height: 1.7;
+    opacity: 0;
+    animation: riseIn 1s 0.6s forwards;
+  }
+
+  .intro-overlay .enter-btn {
+    margin-top: 2.5rem;
+    padding: 0.9rem 2.5rem;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    color: var(--fg);
+    font-size: 0.75rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    border-radius: 100px;
+    cursor: none;
+    backdrop-filter: blur(12px);
+    opacity: 0;
+    animation: riseIn 1s 0.9s forwards;
+    transition: background 0.3s, border-color 0.3s, transform 0.3s;
+  }
+
+  .intro-overlay .enter-btn:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.2);
+    transform: scale(1.04);
+  }
+
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .vignette {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%);
+  }
+
+  .scanline {
+    position: fixed;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    opacity: 0.03;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255,255,255,0.03) 2px,
+      rgba(255,255,255,0.03) 4px
+    );
+  }
+
+  @media (max-width: 600px) {
+    .header, .footer { padding: 1.2rem; }
+    .title-block .mode-name { font-size: 1.6rem; }
+    .counter .num { font-size: 2rem; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body class="mode-gravity">
+
+<canvas id="field"></canvas>
+<div class="vignette"></div>
+<div class="scanline"></div>
+
+<div class="cursor-ring" id="cursorRing">
+  <div class="cursor-outer"></div>
+  <div class="cursor-core"></div>
+</div>
+
+<div class="intro-overlay" id="intro">
+  <h2>Field Study</h2>
+  <p>An interactive exploration of cursor physics. Move, click, and hold to discover four distinct force fields.</p>
+  <button class="enter-btn" id="enterBtn">Enter the field</button>
+</div>
+
+<div class="ui header">
+  <div class="title-block">
+    <h1>Cursor Experiment</h1>
+    <div class="mode-name" id="modeName">Gravity Well</div>
+    <div class="mode-desc" id="modeDesc">Particles orbit your cursor like a miniature solar system. Click to spawn new bodies.</div>
+  </div>
+  <div class="counter">
+    <div class="num" id="modeIndex">01</div>
+    <div class="label">Mode</div>
+  </div>
+</div>
+
+<div class="ui footer">
+  <div class="mode-dots" id="modeDots">
+    <button class="mode-dot active" data-mode="gravity" data-index="0" aria-label="Gravity mode">G</button>
+    <button class="mode-dot" data-mode="ripple" data-index="1" aria-label="Ripple mode">R</button>
+    <button class="mode-dot" data-mode="weave" data-index="2" aria-label="Weave mode">W</button>
+    <button class="mode-dot" data-mode="void" data-index="3" aria-label="Void mode">V</button>
+  </div>
+  <div class="hint">
+    <kbd>1</kbd>–<kbd>4</kbd> switch modes<br>
+    click &amp; hold to intensify
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const MODES = [
+    {
+      id: 'gravity',
+      name: 'Gravity Well',
+      desc: 'Particles orbit your cursor like a miniature solar system. Click to spawn new bodies.',
+      color: [255, 107, 74]
+    },
+    {
+      id: 'ripple',
+      name: 'Liquid Surface',
+      desc: 'Your cursor disturbs a calm fluid plane. Ripples propagate and interfere with each other.',
+      color: [78, 205, 196]
+    },
+    {
+      id: 'weave',
+      name: 'Thread Weave',
+      desc: 'Silken threads connect nearby particles. Move to restructure the living tapestry.',
+      color: [255, 230, 109]
+    },
+    {
+      id: 'void',
+      name: 'Void Lens',
+      desc: 'A gravitational lens bends starlight. Hold click to increase distortion depth.',
+      color: [200, 200, 220]
+    }
+  ];
+
+  const canvas = document.getElementById('field');
+  const ctx = canvas.getContext('2d');
+  const cursorRing = document.getElementById('cursorRing');
+  const modeNameEl = document.getElementById('modeName');
+  const modeDescEl = document.getElementById('modeDesc');
+  const modeIndexEl = document.getElementById('modeIndex');
+  const intro = document.getElementById('intro');
+  const enterBtn = document.getElementById('enterBtn');
+  const modeDots = document.querySelectorAll('.mode-dot');
+
+  let W, H, dpr;
+  let mode = 0;
+  let transitioning = false;
+  let transitionT = 0;
+  let mouse = { x: 0, y: 0, px: 0, py: 0, down: false, active: false };
+  let time = 0;
+  let started = false;
+
+  /* ── Resize ── */
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    initModeState(mode, true);
+  }
+
+  /* ── Gravity particles ── */
+  let gravityParticles = [];
+
+  function initGravity() {
+    gravityParticles = [];
+    const count = Math.min(180, Math.floor((W * H) / 8000));
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 60 + Math.random() * Math.min(W, H) * 0.4;
+      gravityParticles.push({
+        x: W / 2 + Math.cos(angle) * dist,
+        y: H / 2 + Math.sin(angle) * dist,
+        vx: Math.cos(angle + Math.PI / 2) * (1 + Math.random() * 2),
+        vy: Math.sin(angle + Math.PI / 2) * (1 + Math.random() * 2),
+        r: 1 + Math.random() * 2.5,
+        hue: 15 + Math.random() * 20,
+        alpha: 0.3 + Math.random() * 0.7,
+        trail: []
+      });
+    }
+  }
+
+  function spawnGravityParticle(x, y) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 4;
+    gravityParticles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 1.5 + Math.random() * 2,
+      hue: 10 + Math.random() * 30,
+      alpha: 0.8,
+      trail: []
+    });
+    if (gravityParticles.length > 300) gravityParticles.shift();
+  }
+
+  function updateGravity() {
+    const cx = mouse.active ? mouse.x : W / 2;
+    const cy = mouse.active ? mouse.y : H / 2;
+    const G = mouse.down ? 0.8 : 0.35;
+    const damp = 0.998;
+
+    for (const p of gravityParticles) {
+      const dx = cx - p.x;
+      const dy = cy - p.y;
+      const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 20);
+      const force = G * 800 / (dist * dist);
+      p.vx += (dx / dist) * force;
+      p.vy += (dy / dist) * force;
+      p.vx *= damp;
+      p.vy *= damp;
+      p.trail.push({ x: p.x, y: p.y });
+      if (p.trail.length > 12) p.trail.shift();
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < -50 || p.x > W + 50 || p.y < -50 || p.y > H + 50) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.min(W, H) * 0.45;
+        p.x = cx + Math.cos(a) * d;
+        p.y = cy + Math.sin(a) * d;
+        p.vx = Math.cos(a + Math.PI / 2) * 2;
+        p.vy = Math.sin(a + Math.PI / 2) * 2;
+        p.trail = [];
+      }
+    }
+  }
+
+  function drawGravity() {
+    const [r, g, b] = MODES[0].color;
+
+    for (const p of gravityParticles) {
+      if (p.trail.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(p.trail[0].x, p.trail[0].y);
+        for (let i = 1; i < p.trail.length; i++) {
+          ctx.lineTo(p.trail[i].x, p.trail[i].y);
+        }
+        ctx.strokeStyle = `rgba(${r},${g},${b},${p.alpha * 0.15})`;
+        ctx.lineWidth = p.r * 0.5;
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${b},${p.alpha})`;
+      ctx.fill();
+    }
+
+    if (mouse.active) {
+      const grad = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, mouse.down ? 120 : 80);
+      grad.addColorStop(0, `rgba(${r},${g},${b},${mouse.down ? 0.25 : 0.12})`);
+      grad.addColorStop(1, 'rgba(255,107,74,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(mouse.x - 150, mouse.y - 150, 300, 300);
+    }
+  }
+
+  /* ── Ripple grid ── */
+  let rippleGrid = [];
+  let rippleCols, rippleRows, rippleCell;
+
+  function initRipple() {
+    rippleCell = 8;
+    rippleCols = Math.ceil(W / rippleCell) + 2;
+    rippleRows = Math.ceil(H / rippleCell) + 2;
+    rippleGrid = new Float32Array(rippleCols * rippleRows * 2);
+  }
+
+  function updateRipple() {
+    const strength = mouse.down ? 3 : 1.5;
+    if (mouse.active) {
+      const gx = Math.floor(mouse.x / rippleCell);
+      const gy = Math.floor(mouse.y / rippleCell);
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const cx = gx + dx;
+          const cy = gy + dy;
+          if (cx < 1 || cx >= rippleCols - 1 || cy < 1 || cy >= rippleRows - 1) continue;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist <= 3) {
+            const idx = (cy * rippleCols + cx) * 2;
+            rippleGrid[idx] += strength * (1 - dist / 4) * (mouse.down ? 2 : 1);
+          }
+        }
+      }
+    }
+
+    for (let y = 1; y < rippleRows - 1; y++) {
+      for (let x = 1; x < rippleCols - 1; x++) {
+        const idx = (y * rippleCols + x) * 2;
+        const avg = (
+          rippleGrid[((y - 1) * rippleCols + x) * 2] +
+          rippleGrid[((y + 1) * rippleCols + x) * 2] +
+          rippleGrid[(y * rippleCols + x - 1) * 2] +
+          rippleGrid[(y * rippleCols + x + 1) * 2]
+        ) * 0.25;
+        rippleGrid[idx + 1] += (avg - rippleGrid[idx]) * 0.04;
+        rippleGrid[idx + 1] *= 0.985;
+        rippleGrid[idx] += rippleGrid[idx + 1];
+        rippleGrid[idx] *= 0.995;
+      }
+    }
+  }
+
+  function drawRipple() {
+    const [r, g, b] = MODES[1].color;
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.08)`;
+    ctx.lineWidth = 0.5;
+
+    for (let y = 1; y < rippleRows - 1; y++) {
+      ctx.beginPath();
+      for (let x = 0; x < rippleCols; x++) {
+        const idx = (y * rippleCols + x) * 2;
+        const h = rippleGrid[idx];
+        const px = x * rippleCell;
+        const py = y * rippleCell + h * 3;
+        if (x === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    for (let x = 1; x < rippleCols - 1; x++) {
+      ctx.beginPath();
+      for (let y = 0; y < rippleRows; y++) {
+        const idx = (y * rippleCols + x) * 2;
+        const h = rippleGrid[idx];
+        const px = x * rippleCell + h * 3;
+        const py = y * rippleCell;
+        if (y === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    if (mouse.active) {
+      const grad = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 60);
+      grad.addColorStop(0, `rgba(${r},${g},${b},0.15)`);
+      grad.addColorStop(1, 'rgba(78,205,196,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, 60, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /* ── Weave particles ── */
+  let weaveParticles = [];
+
+  function initWeave() {
+    weaveParticles = [];
+    const count = Math.min(120, Math.floor((W * H) / 12000));
+    for (let i = 0; i < count; i++) {
+      weaveParticles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: (Math.random() - 0.5) * 0.5,
+        r: 1.5 + Math.random()
+      });
+    }
+  }
+
+  function updateWeave() {
+    const repel = mouse.down ? 120 : 80;
+    const attract = 0.02;
+
+    for (const p of weaveParticles) {
+      if (mouse.active) {
+        const dx = mouse.x - p.x;
+        const dy = mouse.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < repel && dist > 1) {
+          p.vx -= (dx / dist) * 0.5;
+          p.vy -= (dy / dist) * 0.5;
+        } else if (dist > repel) {
+          p.vx += dx * attract * 0.001;
+          p.vy += dy * attract * 0.001;
+        }
+      }
+      p.vx += (Math.random() - 0.5) * 0.02;
+      p.vy += (Math.random() - 0.5) * 0.02;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < 0) p.x = W;
+      if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H;
+      if (p.y > H) p.y = 0;
+    }
+  }
+
+  function drawWeave() {
+    const [r, g, b] = MODES[2].color;
+    const maxDist = 100;
+
+    for (let i = 0; i < weaveParticles.length; i++) {
+      for (let j = i + 1; j < weaveParticles.length; j++) {
+        const a = weaveParticles[i];
+        const bb = weaveParticles[j];
+        const dx = a.x - bb.x;
+        const dy = a.y - bb.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < maxDist) {
+          const alpha = (1 - dist / maxDist) * 0.25;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(bb.x, bb.y);
+          ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+      }
+    }
+
+    for (const p of weaveParticles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${b},0.7)`;
+      ctx.fill();
+    }
+
+    if (mouse.active) {
+      ctx.beginPath();
+      ctx.arc(mouse.x, mouse.y, mouse.down ? 100 : 60, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${r},${g},${b},0.1)`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  /* ── Void stars ── */
+  let voidStars = [];
+
+  function initVoid() {
+    voidStars = [];
+    const count = Math.min(400, Math.floor((W * H) / 4000));
+    for (let i = 0; i < count; i++) {
+      voidStars.push({
+        ox: Math.random() * W,
+        oy: Math.random() * H,
+        x: Math.random() * W,
+        y: Math.random() * H,
+        size: 0.5 + Math.random() * 1.5,
+        twinkle: Math.random() * Math.PI * 2,
+        speed: 0.5 + Math.random()
+      });
+    }
+  }
+
+  function updateVoid() {
+    const lensStr = mouse.down ? 0.7 : 0.35;
+    const lensR = mouse.down ? 250 : 180;
+
+    for (const s of voidStars) {
+      s.twinkle += 0.02 * s.speed;
+      if (mouse.active) {
+        const dx = s.ox - mouse.x;
+        const dy = s.oy - mouse.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < lensR && dist > 1) {
+          const bend = lensStr * (1 - dist / lensR) * (lensR / dist);
+          s.x = s.ox + dx * bend * 0.5;
+          s.y = s.oy + dy * bend * 0.5;
+        } else {
+          s.x += (s.ox - s.x) * 0.08;
+          s.y += (s.oy - s.y) * 0.08;
+        }
+      } else {
+        s.x = s.ox;
+        s.y = s.oy;
+      }
+    }
+  }
+
+  function drawVoid() {
+    const cx = mouse.active ? mouse.x : W / 2;
+    const cy = mouse.active ? mouse.y : H / 2;
+    const lensR = mouse.down ? 250 : 180;
+
+    if (mouse.active) {
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, lensR);
+      grad.addColorStop(0, 'rgba(0,0,0,0.85)');
+      grad.addColorStop(0.3, 'rgba(0,0,0,0.3)');
+      grad.addColorStop(0.7, 'rgba(10,10,20,0.1)');
+      grad.addColorStop(1, 'rgba(10,10,20,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(cx - lensR, cy - lensR, lensR * 2, lensR * 2);
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, lensR * 0.15, 0, Math.PI * 2);
+      const ringGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, lensR * 0.15);
+      ringGrad.addColorStop(0, 'rgba(255,255,255,0)');
+      ringGrad.addColorStop(0.7, 'rgba(255,255,255,0.08)');
+      ringGrad.addColorStop(1, 'rgba(255,255,255,0.2)');
+      ctx.strokeStyle = ringGrad;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, lensR, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    for (const s of voidStars) {
+      const alpha = 0.3 + Math.sin(s.twinkle) * 0.3 + 0.2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(220,220,240,${alpha})`;
+      ctx.fill();
+
+      if (s.size > 1.2) {
+        ctx.beginPath();
+        ctx.moveTo(s.x - s.size * 3, s.y);
+        ctx.lineTo(s.x + s.size * 3, s.y);
+        ctx.moveTo(s.x, s.y - s.size * 3);
+        ctx.lineTo(s.x, s.y + s.size * 3);
+        ctx.strokeStyle = `rgba(220,220,240,${alpha * 0.3})`;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+    }
+  }
+
+  /* ── Background ── */
+  function drawBackground() {
+    const m = MODES[mode];
+    const [r, g, b] = m.color;
+    const grad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.03)`);
+    grad.addColorStop(0.5, 'rgba(10,10,15,0.5)');
+    grad.addColorStop(1, '#0a0a0f');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    const gridAlpha = 0.015;
+    ctx.strokeStyle = `rgba(255,255,255,${gridAlpha})`;
+    ctx.lineWidth = 0.5;
+    const spacing = 80;
+    for (let x = 0; x < W; x += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+    for (let y = 0; y < H; y += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+  }
+
+  /* ── Mode management ── */
+  function initModeState(m, force) {
+    if (m === 0 || force) initGravity();
+    if (m === 1 || force) initRipple();
+    if (m === 2 || force) initWeave();
+    if (m === 3 || force) initVoid();
+  }
+
+  function setMode(idx) {
+    if (idx === mode || transitioning) return;
+    transitioning = true;
+    transitionT = 0;
+    const prev = mode;
+    mode = idx;
+
+    document.body.className = 'mode-' + MODES[idx].id;
+    modeDots.forEach(d => d.classList.toggle('active', +d.dataset.index === idx));
+
+    modeNameEl.style.opacity = '0';
+    modeNameEl.style.transform = 'translateY(8px)';
+    modeDescEl.style.opacity = '0';
+    modeIndexEl.style.opacity = '0';
+
+    setTimeout(() => {
+      modeNameEl.textContent = MODES[idx].name;
+      modeDescEl.textContent = MODES[idx].desc;
+      modeIndexEl.textContent = String(idx + 1).padStart(2, '0');
+      initModeState(idx);
+      modeNameEl.style.opacity = '1';
+      modeNameEl.style.transform = 'translateY(0)';
+      modeDescEl.style.opacity = '1';
+      modeIndexEl.style.opacity = '0.15';
+      transitioning = false;
+    }, 400);
+  }
+
+  /* ── Render loop ── */
+  function render() {
+    time += 0.016;
+
+    ctx.clearRect(0, 0, W, H);
+    drawBackground();
+
+    if (transitioning) {
+      transitionT += 0.05;
+      ctx.fillStyle = `rgba(10,10,15,${Math.min(transitionT, 1) * 0.6})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    switch (mode) {
+      case 0: updateGravity(); drawGravity(); break;
+      case 1: updateRipple(); drawRipple(); break;
+      case 2: updateWeave(); drawWeave(); break;
+      case 3: updateVoid(); drawVoid(); break;
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  /* ── Cursor ring follow ── */
+  let ringX = 0, ringY = 0;
+  function updateCursorRing() {
+    ringX += (mouse.x - ringX) * 0.18;
+    ringY += (mouse.y - ringY) * 0.18;
+    cursorRing.style.left = ringX + 'px';
+    cursorRing.style.top = ringY + 'px';
+    requestAnimationFrame(updateCursorRing);
+  }
+
+  /* ── Events ── */
+  function onMove(e) {
+    mouse.px = mouse.x;
+    mouse.py = mouse.y;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.active = true;
+  }
+
+  function onDown(e) {
+    mouse.down = true;
+    document.body.classList.add('clicking');
+    if (mode === 0) spawnGravityParticle(e.clientX, e.clientY);
+  }
+
+  function onUp() {
+    mouse.down = false;
+    document.body.classList.remove('clicking');
+  }
+
+  function startExperience() {
+    if (started) return;
+    started = true;
+    intro.classList.add('hidden');
+    mouse.x = W / 2;
+    mouse.y = H / 2;
+    mouse.active = true;
+  }
+
+  enterBtn.addEventListener('click', startExperience);
+  enterBtn.addEventListener('mouseenter', () => { mouse.active = true; });
+
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mousedown', onDown);
+  window.addEventListener('mouseup', onUp);
+  window.addEventListener('resize', resize);
+
+  window.addEventListener('keydown', (e) => {
+    if (!started && e.key === 'Enter') { startExperience(); return; }
+    const n = parseInt(e.key);
+    if (n >= 1 && n <= 4) setMode(n - 1);
+  });
+
+  modeDots.forEach(dot => {
+    dot.addEventListener('click', () => setMode(+dot.dataset.index));
+  });
+
+  document.addEventListener('mouseleave', () => { mouse.active = false; });
+  document.addEventListener('mouseenter', () => { mouse.active = true; });
+
+  /* ── Init ── */
+  resize();
+  mouse.x = W / 2;
+  mouse.y = H / 2;
+  ringX = mouse.x;
+  ringY = mouse.y;
+  updateCursorRing();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crowd Evacuation Simulation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0c10;
+    --panel: rgba(14, 18, 26, 0.82);
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #e8ecf4;
+    --muted: #7a8499;
+    --accent: #3ecf8e;
+    --danger: #ff5c4d;
+    --warn: #ffb347;
+    --exit: #4ade80;
+    --glow: rgba(62, 207, 142, 0.35);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: var(--text);
+  }
+
+  #app {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .vignette {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%);
+    z-index: 2;
+  }
+
+  .grain {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0.04;
+    z-index: 3;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hud {
+    position: absolute;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  .hud > * { pointer-events: auto; }
+
+  .top-bar {
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 20px 24px;
+    gap: 16px;
+  }
+
+  .title-block h1 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  .title-block p {
+    margin-top: 4px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+
+  .stats-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .stat {
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 16px;
+    min-width: 100px;
+    text-align: center;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+
+  .stat.danger { border-color: rgba(255, 92, 77, 0.35); box-shadow: 0 0 24px rgba(255, 92, 77, 0.12); }
+  .stat.success { border-color: rgba(74, 222, 128, 0.35); box-shadow: 0 0 24px rgba(74, 222, 128, 0.12); }
+
+  .stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.35rem;
+    font-weight: 500;
+    margin-top: 2px;
+    line-height: 1.2;
+  }
+
+  .stat-value small {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  .bottom-bar {
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 20px 24px;
+    gap: 16px;
+  }
+
+  .panel {
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 18px;
+  }
+
+  .legend {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 10px 18px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+  }
+
+  button:hover {
+    background: rgba(255,255,255,0.1);
+    border-color: rgba(255,255,255,0.15);
+  }
+
+  button:active { transform: scale(0.97); }
+
+  button.primary {
+    background: linear-gradient(135deg, #2a9d6a, #3ecf8e);
+    border-color: rgba(62, 207, 142, 0.5);
+    color: #041208;
+    box-shadow: 0 4px 20px var(--glow);
+  }
+
+  button.primary:hover {
+    box-shadow: 0 6px 28px rgba(62, 207, 142, 0.45);
+  }
+
+  button.danger-btn {
+    background: rgba(255, 92, 77, 0.15);
+    border-color: rgba(255, 92, 77, 0.4);
+    color: #ff8a7f;
+  }
+
+  .slider-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    padding: 0 4px;
+  }
+
+  .slider-group input[type=range] {
+    width: 90px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .alert-banner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
+    z-index: 20;
+    background: rgba(10, 12, 16, 0.92);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 92, 77, 0.4);
+    border-radius: 20px;
+    padding: 36px 48px;
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.5s, transform 0.5s;
+  }
+
+  .alert-banner.visible {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    pointer-events: auto;
+  }
+
+  .alert-banner h2 {
+    font-size: 1.6rem;
+    color: var(--danger);
+    margin-bottom: 8px;
+  }
+
+  .alert-banner p {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+  }
+
+  .phase-indicator {
+    position: absolute;
+    top: 50%;
+    left: 24px;
+    transform: translateY(-50%);
+    z-index: 10;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.25);
+    font-weight: 600;
+  }
+
+  @media (max-width: 700px) {
+    .top-bar, .bottom-bar { padding: 12px; }
+    .title-block h1 { font-size: 1.1rem; }
+    .stat { min-width: 80px; padding: 8px 12px; }
+    .stat-value { font-size: 1.1rem; }
+    .legend { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="canvas"></canvas>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+
+  <div class="hud top-bar">
+    <div class="title-block">
+      <h1>Emergency Evacuation</h1>
+      <p>Office floor · 847 occupants · Real-time crowd dynamics</p>
+    </div>
+    <div class="stats-row">
+      <div class="stat" id="stat-time">
+        <div class="stat-label">Elapsed</div>
+        <div class="stat-value" id="time-val">0:00</div>
+      </div>
+      <div class="stat" id="stat-remaining">
+        <div class="stat-label">Inside</div>
+        <div class="stat-value" id="remaining-val">847</div>
+      </div>
+      <div class="stat success" id="stat-evacuated">
+        <div class="stat-label">Evacuated</div>
+        <div class="stat-value" id="evacuated-val">0</div>
+      </div>
+      <div class="stat danger" id="stat-panic">
+        <div class="stat-label">Panic Level</div>
+        <div class="stat-value" id="panic-val">0<small>%</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-indicator" id="phase-label">Standby</div>
+
+  <div class="hud bottom-bar">
+    <div class="panel legend">
+      <div class="legend-item"><span class="legend-dot" style="background:#4ade80"></span> Exit routes</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#ff5c4d"></span> Fire / smoke</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#60a5fa"></span> Occupants</div>
+      <div class="legend-item"><span class="legend-dot" style="background:#fbbf24"></span> Stairs bottleneck</div>
+    </div>
+    <div class="panel controls">
+      <button class="primary" id="btn-start">Begin Evacuation</button>
+      <button id="btn-reset">Reset</button>
+      <button class="danger-btn" id="btn-fire">Ignite Fire</button>
+      <div class="slider-group">
+        <label>Crowd</label>
+        <input type="range" id="crowd-slider" min="200" max="1200" value="847" step="50">
+      </div>
+    </div>
+  </div>
+
+  <div class="alert-banner" id="banner">
+    <h2 id="banner-title">Evacuation Complete</h2>
+    <p id="banner-text">All occupants have reached safety.</p>
+    <button class="primary" id="btn-banner">Run Again</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  let W = 0, H = 0, scale = 1, offsetX = 0, offsetY = 0;
+
+  // ── Building layout (grid cells, 1 = wall, 0 = floor, 2 = exit, 3 = stairs) ──
+  const COLS = 48, ROWS = 32;
+  const grid = new Uint8Array(COLS * ROWS);
+
+  function idx(c, r) { return r * COLS + c; }
+  function inBounds(c, r) { return c >= 0 && c < COLS && r >= 0 && r < ROWS; }
+
+  function setCell(c, r, v) { if (inBounds(c, r)) grid[idx(c, r)] = v; }
+  function getCell(c, r) { return inBounds(c, r) ? grid[idx(c, r)] : 1; }
+
+  function buildFloorPlan() {
+    grid.fill(0);
+    // Outer walls
+    for (let c = 0; c < COLS; c++) { setCell(c, 0, 1); setCell(c, ROWS - 1, 1); }
+    for (let r = 0; r < ROWS; r++) { setCell(0, r, 1); setCell(COLS - 1, r, 1); }
+
+    // Internal walls - create rooms and corridors
+    const walls = [
+      // Horizontal dividers
+      ...range(4, 44).map(c => [c, 8]),
+      ...range(4, 20).map(c => [c, 16]),
+      ...range(28, 44).map(c => [c, 16]),
+      ...range(4, 44).map(c => [c, 24]),
+      // Vertical dividers
+      ...range(9, 24).map(r => [12, r]),
+      ...range(9, 24).map(r => [24, r]),
+      ...range(9, 16).map(r => [36, r]),
+      ...range(17, 24).map(r => [36, r]),
+      // Central lobby pillars
+      [20, 12], [21, 12], [26, 12], [27, 12],
+      [20, 20], [21, 20], [26, 20], [27, 20],
+    ];
+
+    // Door gaps in walls
+    const gaps = [
+      [8, 8], [16, 8], [32, 8], [40, 8],
+      [8, 16], [16, 16], [32, 16], [40, 16],
+      [8, 24], [16, 24], [32, 24], [40, 24],
+      [12, 11], [12, 13], [24, 11], [24, 13],
+      [36, 11], [36, 13], [36, 19], [36, 21],
+    ];
+
+    walls.forEach(([c, r]) => setCell(c, r, 1));
+
+    // Stairs (bottleneck zones)
+    const stairs = [[6, 4], [7, 4], [6, 5], [7, 5], [40, 4], [41, 4], [40, 5], [41, 5],
+                    [6, 26], [7, 26], [6, 27], [7, 27], [40, 26], [41, 26], [40, 27], [41, 27]];
+    stairs.forEach(([c, r]) => setCell(c, r, 3));
+
+    // Exits
+    const exits = [[0, 14], [0, 15], [0, 16], [0, 17],
+                   [COLS - 1, 14], [COLS - 1, 15], [COLS - 1, 16], [COLS - 1, 17],
+                   [23, 0], [24, 0], [25, 0],
+                   [23, ROWS - 1], [24, ROWS - 1], [25, ROWS - 1]];
+    exits.forEach(([c, r]) => setCell(c, r, 2));
+
+    // Clear gaps
+    gaps.forEach(([c, r]) => setCell(c, r, 0));
+  }
+
+  function range(a, b) { const arr = []; for (let i = a; i <= b; i++) arr.push(i); return arr; }
+
+  buildFloorPlan();
+
+  const exits = [];
+  const stairs = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const v = grid[idx(c, r)];
+      if (v === 2) exits.push({ c, r, x: c + 0.5, y: r + 0.5 });
+      if (v === 3) stairs.push({ c, r, x: c + 0.5, y: r + 0.5 });
+    }
+
+  // Flow field for pathfinding to nearest exit
+  let flowField = null;
+  let distField = null;
+
+  function rebuildFlowField() {
+    distField = new Float32Array(COLS * ROWS);
+    distField.fill(Infinity);
+    const queue = [];
+
+    exits.forEach(e => {
+      const i = idx(e.c, e.r);
+      distField[i] = 0;
+      queue.push({ c: e.c, r: e.r });
+    });
+
+    let qi = 0;
+    while (qi < queue.length) {
+      const { c, r } = queue[qi++];
+      const d = distField[idx(c, r)];
+      for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+        const nc = c + dc, nr = r + dr;
+        if (!inBounds(nc, nr)) continue;
+        const v = getCell(nc, nr);
+        if (v === 1) continue;
+        const cost = (dc !== 0 && dr !== 0) ? 1.414 : 1;
+        const nd = d + cost;
+        const ni = idx(nc, nr);
+        if (nd < distField[ni]) {
+          distField[ni] = nd;
+          queue.push({ c: nc, r: nr });
+        }
+      }
+    }
+
+    flowField = new Float32Array(COLS * ROWS * 2);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = idx(c, r);
+        if (getCell(c, r) === 1 || distField[i] === Infinity) {
+          flowField[i * 2] = 0;
+          flowField[i * 2 + 1] = 0;
+          continue;
+        }
+        let bestD = distField[i];
+        let bx = 0, by = 0;
+        for (const [dc, dr] of [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+          const nc = c + dc, nr = r + dr;
+          if (!inBounds(nc, nr)) continue;
+          const nd = distField[idx(nc, nr)];
+          if (nd < bestD) {
+            bestD = nd;
+            bx = dc; by = dr;
+          }
+        }
+        const len = Math.hypot(bx, by) || 1;
+        flowField[i * 2] = bx / len;
+        flowField[i * 2 + 1] = by / len;
+      }
+    }
+  }
+
+  rebuildFlowField();
+
+  // ── Agents ──
+  class Agent {
+    constructor(x, y) {
+      this.x = x; this.y = y;
+      this.vx = 0; this.vy = 0;
+      this.radius = 0.18 + Math.random() * 0.08;
+      this.speed = 0.8 + Math.random() * 0.4;
+      this.panic = 0;
+      this.evacuated = false;
+      this.color = hslPerson();
+      this.wobble = Math.random() * Math.PI * 2;
+      this.trail = [];
+    }
+
+    update(agents, dt, globalPanic, smokeField) {
+      if (this.evacuated) return;
+
+      const c = Math.floor(this.x), r = Math.floor(this.y);
+      const smoke = smokeField ? smokeField[idx(c, r)] || 0 : 0;
+      this.panic = Math.min(1, this.panic * 0.995 + globalPanic * 0.005 + smoke * 0.02);
+
+      // Flow field direction
+      let fx = 0, fy = 0;
+      if (inBounds(c, r) && flowField) {
+        const fi = idx(c, r) * 2;
+        fx = flowField[fi];
+        fy = flowField[fi + 1];
+      }
+
+      // Separation
+      let sx = 0, sy = 0, count = 0;
+      const sepRadius = 0.6 + this.panic * 0.3;
+      for (const other of agents) {
+        if (other === this || other.evacuated) continue;
+        const dx = this.x - other.x, dy = this.y - other.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 0 && d < sepRadius) {
+          const f = (sepRadius - d) / sepRadius;
+          sx += (dx / d) * f;
+          sy += (dy / d) * f;
+          count++;
+        }
+      }
+      if (count) { sx /= count; sy /= count; }
+
+      // Wall avoidance
+      let wx = 0, wy = 0;
+      const look = 0.5;
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2;
+        const tx = this.x + Math.cos(ang) * look;
+        const ty = this.y + Math.sin(ang) * look;
+        const tc = Math.floor(tx), tr = Math.floor(ty);
+        if (getCell(tc, tr) === 1) {
+          wx -= Math.cos(ang);
+          wy -= Math.sin(ang);
+        }
+      }
+
+      // Combine forces
+      const panicMult = 1 + this.panic * 1.8;
+      let ax = fx * 2.5 + sx * 3.5 + wx * 4;
+      let ay = fy * 2.5 + sy * 3.5 + wy * 4;
+
+      // Stairs slowdown
+      if (getCell(c, r) === 3) {
+        ax *= 0.4; ay *= 0.4;
+        this.speed = Math.max(0.3, this.speed * 0.98);
+      }
+
+      // Smoke slows and disorients
+      if (smoke > 0.1) {
+        ax += (Math.random() - 0.5) * smoke * 2;
+        ay += (Math.random() - 0.5) * smoke * 2;
+        ax *= 1 - smoke * 0.5;
+        ay *= 1 - smoke * 0.5;
+      }
+
+      const maxSpeed = this.speed * panicMult * (1 - smoke * 0.6);
+      this.vx = this.vx * 0.7 + ax * 0.3;
+      this.vy = this.vy * 0.7 + ay * 0.3;
+      const vm = Math.hypot(this.vx, this.vy) || 1;
+      if (vm > maxSpeed) {
+        this.vx = (this.vx / vm) * maxSpeed;
+        this.vy = (this.vy / vm) * maxSpeed;
+      }
+
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.wobble += dt * (3 + this.panic * 5);
+
+      // Collision with walls
+      this.resolveWalls();
+
+      // Check evacuation
+      for (const e of exits) {
+        if (Math.hypot(this.x - e.x, this.y - e.y) < 0.8) {
+          this.evacuated = true;
+          break;
+        }
+      }
+
+      // Trail
+      if (Math.random() < 0.3) {
+        this.trail.push({ x: this.x, y: this.y, a: 0.3 });
+        if (this.trail.length > 6) this.trail.shift();
+      }
+      this.trail.forEach(t => t.a *= 0.9);
+    }
+
+    resolveWalls() {
+      const margin = this.radius;
+      for (let r = Math.floor(this.y - 1); r <= Math.ceil(this.y + 1); r++) {
+        for (let c = Math.floor(this.x - 1); c <= Math.ceil(this.x + 1); c++) {
+          if (getCell(c, r) !== 1) continue;
+          const cx = c + 0.5, cy = r + 0.5;
+          const dx = this.x - cx, dy = this.y - cy;
+          const half = 0.5 + margin;
+          const ox = Math.max(0, Math.abs(dx) - half + 0.5);
+          const oy = Math.max(0, Math.abs(dy) - half + 0.5);
+          if (ox < half && oy < half) {
+            if (ox < oy) {
+              this.x += dx > 0 ? (half - Math.abs(dx)) : -(half - Math.abs(dx));
+              this.vx *= -0.3;
+            } else {
+              this.y += dy > 0 ? (half - Math.abs(dy)) : -(half - Math.abs(dy));
+              this.vy *= -0.3;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function hslPerson() {
+    const hues = [210, 215, 220, 200, 230, 205];
+    const h = hues[Math.floor(Math.random() * hues.length)] + (Math.random() - 0.5) * 15;
+    return `hsl(${h}, ${45 + Math.random() * 20}%, ${55 + Math.random() * 15}%)`;
+  }
+
+  let agents = [];
+  let targetCount = 847;
+
+  function spawnAgents(count) {
+    agents = [];
+    let attempts = 0;
+    while (agents.length < count && attempts < count * 20) {
+      attempts++;
+      const c = 2 + Math.floor(Math.random() * (COLS - 4));
+      const r = 2 + Math.floor(Math.random() * (ROWS - 4));
+      if (getCell(c, r) !== 0) continue;
+      let ok = true;
+      for (const a of agents) {
+        if (Math.hypot(a.x - c - 0.5, a.y - r - 0.5) < 0.35) { ok = false; break; }
+      }
+      if (ok) agents.push(new Agent(c + 0.5 + (Math.random() - 0.5) * 0.3, r + 0.5 + (Math.random() - 0.5) * 0.3));
+    }
+  }
+
+  spawnAgents(targetCount);
+
+  // ── Smoke / fire ──
+  let smokeField = new Float32Array(COLS * ROWS);
+  let fireSources = [];
+  let fireActive = false;
+
+  function igniteFire() {
+    fireActive = true;
+    fireSources = [
+      { x: 30 + Math.random() * 4, y: 18 + Math.random() * 4, intensity: 1 },
+      { x: 14 + Math.random() * 3, y: 20 + Math.random() * 3, intensity: 0.7 },
+    ];
+    document.getElementById('phase-label').textContent = 'Fire Detected';
+    document.getElementById('phase-label').style.color = 'rgba(255,92,77,0.6)';
+  }
+
+  function updateSmoke(dt) {
+    if (!fireActive) return;
+    const decay = 0.992;
+    for (let i = 0; i < smokeField.length; i++) smokeField[i] *= decay;
+
+    fireSources.forEach(f => {
+      const ic = Math.floor(f.x), ir = Math.floor(f.y);
+      for (let dr = -3; dr <= 3; dr++) {
+        for (let dc = -3; dc <= 3; dc++) {
+          const c = ic + dc, r = ir + dr;
+          if (!inBounds(c, r) || getCell(c, r) === 1) continue;
+          const d = Math.hypot(dc, dr);
+          if (d > 3.5) continue;
+          const add = f.intensity * (1 - d / 4) * dt * 2.5;
+          smokeField[idx(c, r)] = Math.min(1, smokeField[idx(c, r)] + add);
+        }
+      }
+      // Drift upward-ish
+      f.x += (Math.random() - 0.5) * dt * 0.5;
+      f.y += (Math.random() - 0.3) * dt * 0.3;
+    });
+
+    // Diffuse smoke
+    const next = new Float32Array(COLS * ROWS);
+    for (let r = 1; r < ROWS - 1; r++) {
+      for (let c = 1; c < COLS - 1; c++) {
+        if (getCell(c, r) === 1) continue;
+        let sum = 0, n = 0;
+        for (const [dc, dr] of [[0,0],[1,0],[-1,0],[0,1],[0,-1]]) {
+          sum += smokeField[idx(c + dc, r + dr)];
+          n++;
+        }
+        next[idx(c, r)] = sum / n;
+      }
+    }
+    for (let i = 0; i < smokeField.length; i++) {
+      if (getCell(i % COLS, Math.floor(i / COLS)) !== 1)
+        smokeField[i] = Math.max(smokeField[i], next[i] * 0.98);
+    }
+  }
+
+  // ── Particles ──
+  const particles = [];
+  class Particle {
+    constructor(x, y, type) {
+      this.x = x; this.y = y;
+      this.type = type;
+      this.life = 1;
+      this.vx = (Math.random() - 0.5) * 0.03;
+      this.vy = type === 'ember' ? -0.02 - Math.random() * 0.04 : (Math.random() - 0.5) * 0.02;
+      this.size = type === 'ember' ? 1 + Math.random() * 2 : 0.5 + Math.random();
+    }
+    update(dt) {
+      this.x += this.vx; this.y += this.vy;
+      this.life -= dt * (this.type === 'ember' ? 0.8 : 0.4);
+      if (this.type === 'ember') this.vy -= dt * 0.01;
+    }
+  }
+
+  // ── State ──
+  let running = false;
+  let elapsed = 0;
+  let globalPanic = 0;
+  let alarmPulse = 0;
+  let camShake = 0;
+
+  function resize() {
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const pad = 40;
+    scale = Math.min((W - pad * 2) / COLS, (H - pad * 2) / ROWS);
+    offsetX = (W - COLS * scale) / 2;
+    offsetY = (H - ROWS * scale) / 2;
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+
+  function worldToScreen(x, y) {
+    return [offsetX + x * scale, offsetY + y * scale];
+  }
+
+  // ── Rendering ──
+  function drawFloor() {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const v = grid[idx(c, r)];
+        const [sx, sy] = worldToScreen(c, r);
+        const sz = scale + 0.5;
+
+        if (v === 1) {
+          ctx.fillStyle = '#1a2030';
+          ctx.fillRect(sx, sy, sz, sz);
+          ctx.fillStyle = '#252d42';
+          ctx.fillRect(sx + 1, sy + 1, sz - 2, sz - 2);
+        } else if (v === 0) {
+          const checker = (c + r) % 2;
+          ctx.fillStyle = checker ? '#12161f' : '#141a24';
+          ctx.fillRect(sx, sy, sz, sz);
+        } else if (v === 2) {
+          ctx.fillStyle = '#0d2818';
+          ctx.fillRect(sx, sy, sz, sz);
+          const pulse = 0.5 + Math.sin(elapsed * 4 + c) * 0.5;
+          ctx.fillStyle = `rgba(74, 222, 128, ${0.15 + pulse * 0.25})`;
+          ctx.fillRect(sx, sy, sz, sz);
+        } else if (v === 3) {
+          ctx.fillStyle = '#1a1810';
+          ctx.fillRect(sx, sy, sz, sz);
+          ctx.fillStyle = 'rgba(251, 191, 36, 0.12)';
+          ctx.fillRect(sx, sy, sz, sz);
+        }
+      }
+    }
+  }
+
+  function drawSmoke() {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const s = smokeField[idx(c, r)];
+        if (s < 0.02) continue;
+        const [sx, sy] = worldToScreen(c, r);
+        const alpha = s * 0.55;
+        const r_val = 80 + s * 120, g = 30 + s * 40, b = 20;
+        ctx.fillStyle = `rgba(${r_val},${g},${b},${alpha})`;
+        ctx.fillRect(sx, sy, scale, scale);
+      }
+    }
+  }
+
+  function drawFire() {
+    if (!fireActive) return;
+    fireSources.forEach(f => {
+      const [sx, sy] = worldToScreen(f.x, f.y);
+      const flicker = 0.7 + Math.sin(elapsed * 12 + f.x) * 0.3;
+      const rad = scale * 2.5 * flicker;
+
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad);
+      grad.addColorStop(0, `rgba(255, 220, 100, ${0.9 * f.intensity})`);
+      grad.addColorStop(0.3, `rgba(255, 100, 40, ${0.6 * f.intensity})`);
+      grad.addColorStop(0.7, `rgba(200, 40, 20, ${0.2 * f.intensity})`);
+      grad.addColorStop(1, 'rgba(100, 20, 10, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (Math.random() < 0.4) {
+        particles.push(new Particle(f.x + (Math.random() - 0.5), f.y + (Math.random() - 0.5), 'ember'));
+      }
+    });
+  }
+
+  function drawExits() {
+    exits.forEach(e => {
+      const [sx, sy] = worldToScreen(e.x, e.y);
+      const pulse = 0.6 + Math.sin(elapsed * 3 + e.c * 0.5) * 0.4;
+      ctx.save();
+      ctx.shadowColor = '#4ade80';
+      ctx.shadowBlur = 12 * pulse;
+      ctx.fillStyle = `rgba(74, 222, 128, ${0.5 + pulse * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, scale * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawAgents() {
+    const sorted = [...agents].filter(a => !a.evacuated).sort((a, b) => a.y - b.y);
+    sorted.forEach(a => {
+      const [sx, sy] = worldToScreen(a.x, a.y);
+      const r = a.radius * scale;
+      const panicGlow = a.panic * 0.5;
+
+      // Trail
+      a.trail.forEach(t => {
+        const [tx, ty] = worldToScreen(t.x, t.y);
+        ctx.fillStyle = `rgba(96, 165, 250, ${t.a * 0.3})`;
+        ctx.beginPath();
+        ctx.arc(tx, ty, r * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.ellipse(sx + 1, sy + r * 0.3, r * 0.9, r * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Body
+      const wobbleOff = Math.sin(a.wobble) * r * 0.08 * (1 + a.panic);
+      ctx.fillStyle = a.color;
+      ctx.beginPath();
+      ctx.arc(sx + wobbleOff, sy - r * 0.1, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Panic tint
+      if (panicGlow > 0.1) {
+        ctx.fillStyle = `rgba(255, 92, 77, ${panicGlow * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Head
+      ctx.fillStyle = `color-mix(in srgb, ${a.color} 80%, white)`;
+      ctx.beginPath();
+      ctx.arc(sx + wobbleOff, sy - r * 1.1, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function drawAlarmOverlay() {
+    if (!running) return;
+    const intensity = fireActive ? 0.04 + Math.sin(elapsed * 6) * 0.03 : 0.01;
+    ctx.fillStyle = `rgba(255, 40, 30, ${intensity})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawLabels() {
+    ctx.font = `600 ${Math.max(9, scale * 0.35)}px 'DM Sans', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const labels = [
+      { c: 8, r: 4, t: 'Open Office' },
+      { c: 32, r: 4, t: 'Conference' },
+      { c: 8, r: 12, t: 'Workstations' },
+      { c: 30, r: 12, t: 'Break Room' },
+      { c: 8, r: 20, t: 'Storage' },
+      { c: 30, r: 20, t: 'Server Room' },
+      { c: 23, r: 16, t: 'LOBBY' },
+    ];
+
+    labels.forEach(l => {
+      if (getCell(l.c, l.r) === 1) return;
+      const [sx, sy] = worldToScreen(l.c + 0.5, l.r + 0.5);
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillText(l.t, sx, sy);
+    });
+
+    // Exit signs
+    ctx.font = `700 ${Math.max(8, scale * 0.28)}px 'DM Sans', sans-serif`;
+    exits.forEach(e => {
+      const [sx, sy] = worldToScreen(e.x, e.y);
+      ctx.fillStyle = `rgba(74, 222, 128, ${0.5 + Math.sin(elapsed * 4) * 0.2})`;
+      ctx.fillText('EXIT', sx, sy - scale * 0.6);
+    });
+  }
+
+  function drawParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.update(1/60);
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      const [sx, sy] = worldToScreen(p.x, p.y);
+      if (p.type === 'ember') {
+        ctx.fillStyle = `rgba(255, ${150 + Math.random() * 100}, 50, ${p.life})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function updateUI() {
+    const remaining = agents.filter(a => !a.evacuated).length;
+    const evacuated = agents.length - remaining;
+    const mins = Math.floor(elapsed / 60);
+    const secs = Math.floor(elapsed % 60).toString().padStart(2, '0');
+
+    document.getElementById('time-val').textContent = `${mins}:${secs}`;
+    document.getElementById('remaining-val').textContent = remaining;
+    document.getElementById('evacuated-val').textContent = evacuated;
+    document.getElementById('panic-val').innerHTML = `${Math.round(globalPanic * 100)}<small>%</small>`;
+
+    if (running && remaining === 0 && agents.length > 0) {
+      showBanner('Evacuation Complete', `All ${agents.length} occupants reached safety in ${mins}:${secs}.`);
+      running = false;
+    }
+  }
+
+  function showBanner(title, text) {
+    document.getElementById('banner-title').textContent = title;
+    document.getElementById('banner-text').textContent = text;
+    document.getElementById('banner').classList.add('visible');
+    document.getElementById('phase-label').textContent = 'Complete';
+    document.getElementById('phase-label').style.color = 'rgba(62,207,142,0.6)';
+  }
+
+  // ── Main loop ──
+  let lastTime = performance.now();
+
+  function tick(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    if (running) {
+      elapsed += dt;
+      globalPanic = Math.min(1, globalPanic + dt * (fireActive ? 0.08 : 0.02));
+      alarmPulse = Math.sin(elapsed * 8) * 0.5 + 0.5;
+
+      updateSmoke(dt);
+
+      const spatialGrid = buildSpatialGrid();
+      agents.forEach(a => {
+        if (a.evacuated) return;
+        a.update(agents, dt, globalPanic, smokeField);
+      });
+
+      // Ambient dust particles in panic
+      if (Math.random() < globalPanic * 0.1) {
+        const a = agents[Math.floor(Math.random() * agents.length)];
+        if (a && !a.evacuated) {
+          particles.push(new Particle(a.x, a.y, 'dust'));
+        }
+      }
+    }
+
+    // Render
+    ctx.save();
+    if (camShake > 0) {
+      ctx.translate((Math.random() - 0.5) * camShake, (Math.random() - 0.5) * camShake);
+      camShake *= 0.92;
+    }
+
+    ctx.fillStyle = '#0a0c10';
+    ctx.fillRect(0, 0, W, H);
+
+    drawFloor();
+    drawSmoke();
+    drawFire();
+    drawExits();
+    drawLabels();
+    drawAgents();
+    drawParticles();
+    drawAlarmOverlay();
+
+    ctx.restore();
+    updateUI();
+
+    requestAnimationFrame(tick);
+  }
+
+  function buildSpatialGrid() {
+    return agents;
+  }
+
+  requestAnimationFrame(tick);
+
+  // ── Controls ──
+  document.getElementById('btn-start').addEventListener('click', () => {
+    if (!running) {
+      running = true;
+      document.getElementById('btn-start').textContent = 'Evacuation Active';
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('phase-label').textContent = 'Evacuating';
+      document.getElementById('phase-label').style.color = 'rgba(255,180,70,0.5)';
+      if (!fireActive) {
+        setTimeout(() => {
+          if (running && !fireActive) igniteFire();
+          camShake = 4;
+        }, 3000 + Math.random() * 2000);
+      }
+    }
+  });
+
+  document.getElementById('btn-reset').addEventListener('click', reset);
+  document.getElementById('btn-banner').addEventListener('click', reset);
+
+  document.getElementById('btn-fire').addEventListener('click', () => {
+    if (!fireActive) {
+      igniteFire();
+      camShake = 6;
+      if (!running) {
+        running = true;
+        document.getElementById('btn-start').textContent = 'Evacuation Active';
+        document.getElementById('btn-start').disabled = true;
+        document.getElementById('phase-label').textContent = 'Evacuating';
+      }
+    }
+  });
+
+  document.getElementById('crowd-slider').addEventListener('input', e => {
+    if (!running) {
+      targetCount = parseInt(e.target.value);
+      spawnAgents(targetCount);
+      document.querySelector('.title-block p').textContent =
+        `Office floor · ${targetCount} occupants · Real-time crowd dynamics`;
+      document.getElementById('remaining-val').textContent = targetCount;
+    }
+  });
+
+  function reset() {
+    running = false;
+    elapsed = 0;
+    globalPanic = 0;
+    fireActive = false;
+    fireSources = [];
+    smokeField.fill(0);
+    particles.length = 0;
+    spawnAgents(targetCount);
+    rebuildFlowField();
+    document.getElementById('btn-start').textContent = 'Begin Evacuation';
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('banner').classList.remove('visible');
+    document.getElementById('phase-label').textContent = 'Standby';
+    document.getElementById('phase-label').style.color = 'rgba(255,255,255,0.25)';
+    document.querySelector('.title-block p').textContent =
+      `Office floor · ${targetCount} occupants · Real-time crowd dynamics`;
+  }
+})();
+</script>
+</body>
+</html>

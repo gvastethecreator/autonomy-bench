@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Procedural Biped Walker</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: rgba(12, 18, 36, 0.82);
+      --border: rgba(140, 170, 255, 0.22);
+      --text: #e8eefc;
+      --muted: #9aa8c7;
+      --accent: #7aa2ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(1200px 800px at 50% 10%, #152044 0%, var(--bg) 60%);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--text);
+    }
+    #canvas-host {
+      position: fixed;
+      inset: 0;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 2;
+      max-width: min(360px, calc(100vw - 32px));
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+    .hud h1 {
+      margin: 0 0 6px;
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+    }
+    .hud p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.4;
+    }
+    .controls {
+      display: grid;
+      gap: 10px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 78px 1fr 42px;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+    }
+    .row label { color: var(--muted); }
+    .row output {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(122, 162, 255, 0.12);
+      color: var(--text);
+      padding: 7px 12px;
+      font: inherit;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(122, 162, 255, 0.22); }
+    button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .hint {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 2;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    @media (max-width: 640px) {
+      .hint { display: none; }
+      .hud { top: 10px; left: 10px; right: 10px; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-host" aria-label="Procedural biped animation canvas"></div>
+
+  <aside class="hud">
+    <h1>Procedural Biped</h1>
+    <p>Inverse-kinematics style walk cycle driven by sine phases — no keyframes.</p>
+    <div class="controls">
+      <div class="row">
+        <label for="speed">Speed</label>
+        <input id="speed" type="range" min="0.2" max="2.4" step="0.05" value="1" />
+        <output id="speedOut" for="speed">1.00×</output>
+      </div>
+      <div class="row">
+        <label for="stride">Stride</label>
+        <input id="stride" type="range" min="0.3" max="1.4" step="0.05" value="0.85" />
+        <output id="strideOut" for="stride">0.85</output>
+      </div>
+      <div class="row">
+        <label for="bounce">Bounce</label>
+        <input id="bounce" type="range" min="0" max="1" step="0.05" value="0.55" />
+        <output id="bounceOut" for="bounce">0.55</output>
+      </div>
+      <div class="buttons">
+        <button id="toggle" type="button">Pause</button>
+        <button id="resetCam" type="button">Reset camera</button>
+      </div>
+    </div>
+  </aside>
+  <div class="hint">Drag to orbit · Scroll to zoom</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const host = document.getElementById("canvas-host");
+    const speedInput = document.getElementById("speed");
+    const strideInput = document.getElementById("stride");
+    const bounceInput = document.getElementById("bounce");
+    const speedOut = document.getElementById("speedOut");
+    const strideOut = document.getElementById("strideOut");
+    const bounceOut = document.getElementById("bounceOut");
+    const toggleBtn = document.getElementById("toggle");
+    const resetCamBtn = document.getElementById("resetCam");
+
+    const params = {
+      speed: Number(speedInput.value),
+      stride: Number(strideInput.value),
+      bounce: Number(bounceInput.value),
+      playing: true,
+      time: 0,
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
+    scene.fog = new THREE.Fog(0x0b1020, 12, 42);
+
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+    camera.position.set(4.2, 2.6, 5.4);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    host.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.15, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 2.5;
+    controls.maxDistance = 16;
+    controls.maxPolarAngle = Math.PI * 0.49;
+
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xb8c8ff, 0x2a1f18, 0.85);
+    scene.add(hemi);
+
+    const key = new THREE.DirectionalLight(0xfff2dd, 1.35);
+    key.position.set(5, 10, 4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.near = 1;
+    key.shadow.camera.far = 28;
+    key.shadow.camera.left = -8;
+    key.shadow.camera.right = 8;
+    key.shadow.camera.top = 8;
+    key.shadow.camera.bottom = -8;
+    key.shadow.bias = -0.0002;
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0x6ea8ff, 0.35);
+    fill.position.set(-4, 3, -2);
+    scene.add(fill);
+
+    // Ground
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x1a2338,
+      roughness: 0.92,
+      metalness: 0.05,
+    });
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(18, 64), groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(18, 36, 0x3a4a78, 0x243050);
+    grid.position.y = 0.002;
+    grid.material.transparent = true;
+    grid.material.opacity = 0.45;
+    scene.add(grid);
+
+    // Materials
+    const skin = new THREE.MeshStandardMaterial({
+      color: 0xc8a07a,
+      roughness: 0.55,
+      metalness: 0.05,
+    });
+    const cloth = new THREE.MeshStandardMaterial({
+      color: 0x3d5a9a,
+      roughness: 0.7,
+      metalness: 0.15,
+    });
+    const accent = new THREE.MeshStandardMaterial({
+      color: 0x7aa2ff,
+      roughness: 0.35,
+      metalness: 0.35,
+      emissive: 0x1a2a55,
+      emissiveIntensity: 0.35,
+    });
+    const dark = new THREE.MeshStandardMaterial({
+      color: 0x222833,
+      roughness: 0.8,
+      metalness: 0.2,
+    });
+
+    function makeBone(length, radius, material, radial = 10) {
+      const mesh = new THREE.Mesh(
+        new THREE.CapsuleGeometry(radius, Math.max(0.01, length - radius * 2), 4, radial),
+        material
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.position.y = -length / 2;
+      return mesh;
+    }
+
+    function makeJoint(radius, material) {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    /**
+     * Hierarchical biped:
+     * root → hips → spine → chest → neck → head
+     *                 ↘ L/R clavicle → upperArm → elbow → forearm → hand
+     *          ↘ L/R hip → thigh → knee → shin → ankle → foot
+     */
+    function createBiped() {
+      const root = new THREE.Group();
+      root.name = "biped";
+
+      const hips = new THREE.Group();
+      hips.position.y = 1.05;
+      root.add(hips);
+
+      const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.24), cloth);
+      pelvis.castShadow = true;
+      pelvis.receiveShadow = true;
+      hips.add(pelvis);
+
+      const spine = new THREE.Group();
+      spine.position.y = 0.12;
+      hips.add(spine);
+      spine.add(makeBone(0.38, 0.08, cloth));
+
+      const chest = new THREE.Group();
+      chest.position.y = 0.38;
+      spine.add(chest);
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.28), cloth);
+      torso.position.y = 0.12;
+      torso.castShadow = true;
+      torso.receiveShadow = true;
+      chest.add(torso);
+
+      const core = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), accent);
+      core.position.set(0, 0.14, 0.15);
+      core.castShadow = true;
+      chest.add(core);
+
+      const neck = new THREE.Group();
+      neck.position.y = 0.36;
+      chest.add(neck);
+      neck.add(makeBone(0.14, 0.045, skin, 8));
+
+      const head = new THREE.Group();
+      head.position.y = 0.16;
+      neck.add(head);
+      const skull = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 16), skin);
+      skull.castShadow = true;
+      skull.receiveShadow = true;
+      head.add(skull);
+
+      const facePlate = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.1, 0.06),
+        dark
+      );
+      facePlate.position.set(0, -0.02, 0.13);
+      head.add(facePlate);
+
+      for (const side of [-1, 1]) {
+        const eye = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03, 10, 8),
+          new THREE.MeshStandardMaterial({
+            color: 0xaad4ff,
+            emissive: 0x3a6cff,
+            emissiveIntensity: 0.8,
+            roughness: 0.25,
+          })
+        );
+        eye.position.set(0.05 * side, 0.03, 0.14);
+        head.add(eye);
+      }
+
+      // Arms
+      const arms = {};
+      for (const side of ["L", "R"]) {
+        const s = side === "L" ? 1 : -1;
+        const clavicle = new THREE.Group();
+        clavicle.position.set(0.28 * s, 0.28, 0);
+        chest.add(clavicle);
+
+        const shoulder = makeJoint(0.07, skin);
+        clavicle.add(shoulder);
+
+        const upperArm = new THREE.Group();
+        upperArm.position.y = 0;
+        clavicle.add(upperArm);
+        upperArm.add(makeBone(0.34, 0.055, skin));
+
+        const elbow = new THREE.Group();
+        elbow.position.y = -0.34;
+        upperArm.add(elbow);
+        elbow.add(makeJoint(0.055, skin));
+
+        const forearm = new THREE.Group();
+        forearm.position.y = 0;
+        elbow.add(forearm);
+        forearm.add(makeBone(0.3, 0.045, skin));
+
+        const wrist = new THREE.Group();
+        wrist.position.y = -0.3;
+        forearm.add(wrist);
+        const hand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.06), skin);
+        hand.position.y = -0.05;
+        hand.castShadow = true;
+        hand.receiveShadow = true;
+        wrist.add(hand);
+
+        arms[side] = { clavicle, upperArm, elbow, forearm, wrist };
+      }
+
+      // Legs
+      const legs = {};
+      for (const side of ["L", "R"]) {
+        const s = side === "L" ? 1 : -1;
+        const hip = new THREE.Group();
+        hip.position.set(0.14 * s, -0.05, 0);
+        hips.add(hip);
+        hip.add(makeJoint(0.075, cloth));
+
+        const thigh = new THREE.Group();
+        hip.add(thigh);
+        thigh.add(makeBone(0.42, 0.07, cloth));
+
+        const knee = new THREE.Group();
+        knee.position.y = -0.42;
+        thigh.add(knee);
+        knee.add(makeJoint(0.06, skin));
+
+        const shin = new THREE.Group();
+        knee.add(shin);
+        shin.add(makeBone(0.4, 0.055, skin));
+
+        const ankle = new THREE.Group();
+        ankle.position.y = -0.4;
+        shin.add(ankle);
+        ankle.add(makeJoint(0.045, dark));
+
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.26), dark);
+        foot.position.set(0, -0.04, 0.06);
+        foot.castShadow = true;
+        foot.receiveShadow = true;
+        ankle.add(foot);
+
+        legs[side] = { hip, thigh, knee, shin, ankle, foot };
+      }
+
+      return { root, hips, spine, chest, neck, head, arms, legs };
+    }
+
+    const biped = createBiped();
+    scene.add(biped.root);
+
+    // Soft contact shadows under feet
+    const contactShadowMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+    const footShadowL = new THREE.Mesh(new THREE.CircleGeometry(0.14, 20), contactShadowMat);
+    const footShadowR = footShadowL.clone();
+    footShadowL.rotation.x = footShadowR.rotation.x = -Math.PI / 2;
+    footShadowL.position.y = footShadowR.position.y = 0.01;
+    scene.add(footShadowL, footShadowR);
+
+    function clamp(v, a, b) {
+      return Math.max(a, Math.min(b, v));
+    }
+
+    function smoothstep(edge0, edge1, x) {
+      const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+
+    /**
+     * Procedural gait:
+     * - Phase-offset sine for hip swing
+     * - Knee flex only on the swing leg (lift)
+     * - Ankle pitch for toe-off / heel-strike
+     * - Arm counter-swing, torso twist, vertical bob
+     */
+    function updateWalk(t, stride, bounce) {
+      const omega = t * Math.PI * 2; // one full gait cycle per unit time
+      const phaseL = omega;
+      const phaseR = omega + Math.PI;
+
+      const hipAmp = 0.55 * stride;
+      const kneeAmp = 1.05 * stride;
+      const ankleAmp = 0.45 * stride;
+      const armAmp = 0.55 * stride;
+      const bob = 0.05 + 0.07 * bounce;
+
+      // Vertical bob + slight forward lean
+      const bodyBob = Math.abs(Math.sin(omega)) * bob;
+      biped.root.position.y = bodyBob;
+      biped.hips.rotation.x = 0.06 * stride;
+      biped.hips.rotation.y = Math.sin(omega) * 0.08 * stride;
+      biped.spine.rotation.x = -0.04 * stride + Math.sin(omega * 2) * 0.02 * bounce;
+      biped.chest.rotation.y = -Math.sin(omega) * 0.12 * stride;
+      biped.chest.rotation.z = Math.sin(omega) * 0.04;
+      biped.neck.rotation.y = Math.sin(omega) * 0.06;
+      biped.head.rotation.x = -0.05 + Math.sin(omega * 2) * 0.03 * bounce;
+
+      function driveLeg(leg, phase, shadow) {
+        const swing = Math.sin(phase);
+        const liftGate = smoothstep(0.05, 0.95, Math.max(0, -Math.cos(phase)));
+        // Swing positive = thigh forward
+        const thighX = swing * hipAmp;
+        const kneeX = liftGate * kneeAmp * (0.55 + 0.45 * Math.max(0, -swing));
+        const ankleX = -swing * ankleAmp * 0.55 + liftGate * -0.25;
+
+        leg.thigh.rotation.x = thighX;
+        leg.knee.rotation.x = kneeX;
+        leg.ankle.rotation.x = ankleX;
+        leg.hip.rotation.z = swing * 0.03;
+
+        // Approximate foot world XZ for contact shadow
+        const footWorld = new THREE.Vector3();
+        leg.foot.getWorldPosition(footWorld);
+        shadow.position.x = footWorld.x;
+        shadow.position.z = footWorld.z;
+        const grounded = 1 - liftGate;
+        shadow.scale.setScalar(0.75 + grounded * 0.55);
+        shadow.material.opacity = 0.08 + grounded * 0.28;
+      }
+
+      driveLeg(biped.legs.L, phaseL, footShadowL);
+      driveLeg(biped.legs.R, phaseR, footShadowR);
+
+      function driveArm(arm, phase, side) {
+        const swing = Math.sin(phase);
+        arm.upperArm.rotation.x = -swing * armAmp;
+        arm.forearm.rotation.x = Math.max(0, -swing) * 0.35 * stride + 0.15;
+        arm.clavicle.rotation.z = side * (0.12 + Math.abs(swing) * 0.04);
+        arm.clavicle.rotation.y = -swing * 0.08 * side;
+        arm.wrist.rotation.x = swing * 0.15;
+      }
+
+      // Arms opposite to legs
+      driveArm(biped.arms.L, phaseR, 1);
+      driveArm(biped.arms.R, phaseL, -1);
+
+      // Subtle side-to-side weight shift
+      biped.hips.position.x = Math.sin(omega) * 0.03 * stride;
+      biped.hips.position.y = 1.05;
+    }
+
+    function resize() {
+      const w = host.clientWidth || window.innerWidth;
+      const h = host.clientHeight || window.innerHeight;
+      camera.aspect = w / Math.max(1, h);
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+
+    function syncOutputs() {
+      speedOut.textContent = `${params.speed.toFixed(2)}×`;
+      strideOut.textContent = params.stride.toFixed(2);
+      bounceOut.textContent = params.bounce.toFixed(2);
+    }
+
+    speedInput.addEventListener("input", () => {
+      params.speed = Number(speedInput.value);
+      syncOutputs();
+    });
+    strideInput.addEventListener("input", () => {
+      params.stride = Number(strideInput.value);
+      syncOutputs();
+    });
+    bounceInput.addEventListener("input", () => {
+      params.bounce = Number(bounceInput.value);
+      syncOutputs();
+    });
+    toggleBtn.addEventListener("click", () => {
+      params.playing = !params.playing;
+      toggleBtn.textContent = params.playing ? "Pause" : "Play";
+    });
+    resetCamBtn.addEventListener("click", () => {
+      camera.position.set(4.2, 2.6, 5.4);
+      controls.target.set(0, 1.15, 0);
+      controls.update();
+    });
+    syncOutputs();
+
+    // Seed one pose before first paint
+    updateWalk(0, params.stride, params.bounce);
+
+    const clock = new THREE.Clock();
+    function frame() {
+      const dt = Math.min(0.05, clock.getDelta());
+      if (params.playing) {
+        // Gait frequency scales with speed; ~1.15 cycles/sec at 1×
+        params.time += dt * params.speed * 1.15;
+      }
+      updateWalk(params.time, params.stride, params.bounce);
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
+

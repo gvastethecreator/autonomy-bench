@@ -1,0 +1,2498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>LuminaFluid — High-Performance WebGL Fluid Dynamics Simulation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --panel-bg: rgba(13, 17, 26, 0.72);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --panel-border-glow: rgba(99, 102, 241, 0.35);
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-gradient: linear-gradient(135deg, #6366f1, #a855f7, #ec4899);
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+      --radius-full: 9999px;
+      --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+      --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.3);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg-dark);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text-main);
+      font-size: 13px;
+    }
+
+    #canvas-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    canvas#fluid-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    /* UI Overlay Layer */
+    .ui-layer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    .ui-layer.hidden-ui {
+      opacity: 0;
+      pointer-events: none !important;
+      transform: scale(0.98);
+    }
+
+    .interactive {
+      pointer-events: auto;
+    }
+
+    /* Glass Panels */
+    .glass-panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-glass);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .glass-panel:hover {
+      border-color: var(--panel-border-glow);
+    }
+
+    /* Top Bar */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .brand-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      border-radius: var(--radius-full);
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px);
+    }
+
+    .brand-title {
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: 0.5px;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge-tag {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      background: rgba(99, 102, 241, 0.25);
+      color: #a5b4fc;
+      border-radius: var(--radius-full);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+    }
+
+    .fps-counter {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #34d399;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .fps-dot {
+      width: 6px;
+      height: 6px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #10b981;
+      animation: pulseDot 1.5s infinite;
+    }
+
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--radius-full);
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      outline: none;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: 50%;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+    }
+
+    .btn.active {
+      background: var(--accent-gradient);
+      border-color: rgba(255, 255, 255, 0.4);
+      color: #ffffff;
+      box-shadow: var(--shadow-glow);
+    }
+
+    /* Quick Preset Dock at Bottom */
+    .bottom-dock {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .presets-scroll-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: var(--radius-full);
+      max-width: 95vw;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    .presets-scroll-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .preset-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .preset-chip .color-preview {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+    }
+
+    .preset-chip:hover {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .preset-chip.active {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: var(--accent);
+      color: #ffffff;
+      box-shadow: 0 0 14px rgba(99, 102, 241, 0.4);
+    }
+
+    /* Tools Quick Strip */
+    .tools-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px;
+      border-radius: var(--radius-full);
+    }
+
+    .tool-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius-full);
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tool-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .tool-btn.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    /* Sidebar Drawer */
+    .sidebar-drawer {
+      position: fixed;
+      top: 64px;
+      right: 16px;
+      bottom: 80px;
+      width: 340px;
+      max-width: calc(100vw - 32px);
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(380px);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+
+    .sidebar-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .drawer-title {
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .drawer-tabs {
+      display: flex;
+      padding: 6px;
+      gap: 4px;
+      background: rgba(0, 0, 0, 0.25);
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .drawer-tab {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.15s ease;
+      background: transparent;
+      border: none;
+    }
+
+    .drawer-tab:hover {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .drawer-tab.active {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .drawer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 18px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+
+    .drawer-content::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .drawer-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+
+    .tab-pane {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tab-pane.active {
+      display: flex;
+    }
+
+    /* Control Groups */
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .control-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .control-value {
+      font-family: 'JetBrains Mono', monospace;
+      color: #a5b4fc;
+      font-size: 11px;
+    }
+
+    /* Sliders */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+      outline: none;
+      transition: background 0.2s;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 2px solid var(--accent);
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+      transition: transform 0.1s ease, background-color 0.15s ease;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+      background: var(--accent-hover);
+    }
+
+    /* Select & Toggles */
+    .select-dropdown {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .select-dropdown option {
+      background: #0f172a;
+      color: #fff;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    .toggle-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 38px;
+      height: 20px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 20px;
+    }
+
+    .switch-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+    }
+
+    input:checked + .switch-slider {
+      background-color: var(--accent);
+    }
+
+    input:checked + .switch-slider:before {
+      transform: translateX(18px);
+    }
+
+    /* Keyboard Shortcuts Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      width: 440px;
+      max-width: 90vw;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .shortcut-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .shortcut-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+
+    .key-badge {
+      font-family: 'JetBrains Mono', monospace;
+      padding: 3px 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      box-shadow: 0 2px 0 rgba(255, 255, 255, 0.15);
+    }
+
+    /* Floating Toast */
+    .toast {
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--accent);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 15px rgba(99, 102, 241, 0.4);
+      padding: 8px 18px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Quick hints tooltip */
+    .hint-tooltip {
+      position: fixed;
+      bottom: 74px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 4px 12px;
+      border-radius: var(--radius-full);
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+      transition: opacity 0.5s ease;
+    }
+
+    /* Audio visualizer miniature */
+    .audio-meter {
+      width: 14px;
+      height: 14px;
+      display: inline-flex;
+      align-items: flex-end;
+      gap: 1.5px;
+    }
+
+    .audio-bar {
+      width: 2px;
+      background: #a855f7;
+      border-radius: 1px;
+      transition: height 0.05s ease;
+    }
+
+    /* Media queries for mobile friendly design */
+    @media (max-width: 768px) {
+      .top-bar {
+        flex-wrap: wrap;
+      }
+      .brand-pill {
+        padding: 6px 12px;
+      }
+      .sidebar-drawer {
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: 100%;
+        max-width: 100%;
+        border-radius: 0;
+      }
+      .hint-tooltip {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Canvas Container -->
+  <div id="canvas-container">
+    <canvas id="fluid-canvas"></canvas>
+  </div>
+
+  <!-- UI Overlay -->
+  <div class="ui-layer" id="ui-container">
+    <!-- Top Navigation Bar -->
+    <header class="top-bar interactive">
+      <div class="brand-pill">
+        <span class="brand-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+          </svg>
+          LuminaFluid
+        </span>
+        <span class="badge-tag" id="webgl-version-badge">WebGL 2</span>
+        <div class="fps-counter">
+          <span class="fps-dot"></span>
+          <span id="fps-text">60 FPS</span>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn" id="btn-autopilot" title="Toggle Auto-pilot Ambient Flow (Key: A)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+          <span>Auto-Pilot</span>
+        </button>
+
+        <button class="btn" id="btn-audio" title="Audio Reactive Synth (Key: M)">
+          <span class="audio-meter">
+            <span class="audio-bar" style="height: 40%"></span>
+            <span class="audio-bar" style="height: 90%"></span>
+            <span class="audio-bar" style="height: 60%"></span>
+          </span>
+          <span id="audio-btn-text">Audio Sound</span>
+        </button>
+
+        <button class="btn btn-icon" id="btn-pause" title="Pause / Resume (Key: Space)">
+          <svg id="icon-pause" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+          <svg id="icon-play" style="display:none" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        </button>
+
+        <button class="btn btn-icon" id="btn-clear" title="Clear Fluid (Key: C)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+        </button>
+
+        <button class="btn btn-icon" id="btn-screenshot" title="Capture High-Res Image (Key: S)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+        </button>
+
+        <button class="btn btn-icon" id="btn-shortcuts" title="Keyboard Shortcuts (?)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </button>
+
+        <button class="btn btn-primary" id="btn-toggle-settings" title="Custom Settings & Controls">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Settings</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Bottom Dock: Presets & Tools -->
+    <footer class="bottom-dock interactive">
+      <!-- Tool Selection Bar -->
+      <div class="tools-strip glass-panel">
+        <button class="tool-btn active" data-tool="paint" title="Paint Dye & Velocity">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>
+          Paint
+        </button>
+        <button class="tool-btn" data-tool="vortex" title="Vortex Swirl Generator">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+          Swirl
+        </button>
+        <button class="tool-btn" data-tool="push" title="Push Velocity Only">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8L22 12L18 16"></path><path d="M2 12H22"></path></svg>
+          Push
+        </button>
+        <button class="tool-btn" data-tool="attract" title="Gravity Attractor / Vortex Sink">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v8M8 12h8"></path></svg>
+          Attract
+        </button>
+        <button class="tool-btn" data-tool="repel" title="Repulsor Field">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+          Repel
+        </button>
+      </div>
+
+      <!-- Presets Scroll Strip -->
+      <div class="presets-scroll-bar glass-panel">
+        <div class="preset-chip active" data-preset="rainbow">
+          <span class="color-preview" style="background: linear-gradient(135deg, #f43f5e, #eab308, #06b6d4, #a855f7)"></span>
+          <span>Rainbow Prism</span>
+        </div>
+        <div class="preset-chip" data-preset="cyberpunk">
+          <span class="color-preview" style="background: linear-gradient(135deg, #ec4899, #8b5cf6, #06b6d4)"></span>
+          <span>Neon Cyberpunk</span>
+        </div>
+        <div class="preset-chip" data-preset="fire">
+          <span class="color-preview" style="background: linear-gradient(135deg, #ef4444, #f97316, #eab308)"></span>
+          <span>Solar Flare</span>
+        </div>
+        <div class="preset-chip" data-preset="ocean">
+          <span class="color-preview" style="background: linear-gradient(135deg, #0ea5e9, #14b8a6, #6366f1)"></span>
+          <span>Cosmic Ocean</span>
+        </div>
+        <div class="preset-chip" data-preset="toxic">
+          <span class="color-preview" style="background: linear-gradient(135deg, #84cc16, #10b981, #eab308)"></span>
+          <span>Acid Vortex</span>
+        </div>
+        <div class="preset-chip" data-preset="aurora">
+          <span class="color-preview" style="background: linear-gradient(135deg, #10b981, #06b6d4, #8b5cf6)"></span>
+          <span>Northern Aurora</span>
+        </div>
+        <div class="preset-chip" data-preset="mercury">
+          <span class="color-preview" style="background: linear-gradient(135deg, #94a3b8, #e2e8f0, #cbd5e1)"></span>
+          <span>Liquid Chrome</span>
+        </div>
+        <div class="preset-chip" data-preset="nebula">
+          <span class="color-preview" style="background: linear-gradient(135deg, #c084fc, #f472b6, #38bdf8)"></span>
+          <span>Pastel Nebula</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Hint Tooltip -->
+  <div class="hint-tooltip" id="hint-tooltip">Drag with mouse or touch to swirl fluid • Press H to hide UI</div>
+
+  <!-- Settings Drawer -->
+  <aside class="sidebar-drawer glass-panel interactive" id="sidebar-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M6 20V10M18 20V4"></path></svg>
+        Simulation Lab
+      </div>
+      <button class="btn btn-icon" id="btn-close-drawer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" data-tab="tab-physics">Physics</button>
+      <button class="drawer-tab" data-tab="tab-visuals">Visuals</button>
+      <button class="drawer-tab" data-tab="tab-particles">Particles</button>
+      <button class="drawer-tab" data-tab="tab-audio">Sound & FX</button>
+    </div>
+
+    <div class="drawer-content">
+      <!-- Physics Tab -->
+      <div class="tab-pane active" id="tab-physics">
+        <div class="control-group">
+          <div class="control-header">
+            <span>Dye Dissipation (Persistence)</span>
+            <span class="control-value" id="val-density-dissipation">1.0</span>
+          </div>
+          <input type="range" id="input-density-dissipation" min="0.1" max="4.0" step="0.05" value="1.0">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Velocity Viscosity</span>
+            <span class="control-value" id="val-velocity-dissipation">0.2</span>
+          </div>
+          <input type="range" id="input-velocity-dissipation" min="0.0" max="2.0" step="0.02" value="0.2">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Vorticity / Swirl Turbulence</span>
+            <span class="control-value" id="val-curl">30</span>
+          </div>
+          <input type="range" id="input-curl" min="0" max="60" step="1" value="30">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Pressure Iterations (Accuracy)</span>
+            <span class="control-value" id="val-iterations">20</span>
+          </div>
+          <input type="range" id="input-iterations" min="6" max="40" step="1" value="20">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Splat Radius</span>
+            <span class="control-value" id="val-splat-radius">0.25</span>
+          </div>
+          <input type="range" id="input-splat-radius" min="0.05" max="0.8" step="0.01" value="0.25">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Splat Force</span>
+            <span class="control-value" id="val-splat-force">6000</span>
+          </div>
+          <input type="range" id="input-splat-force" min="1000" max="15000" step="500" value="6000">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Simulation Grid Quality</span>
+          </div>
+          <select class="select-dropdown" id="select-resolution">
+            <option value="128">Performance (128²)</option>
+            <option value="256" selected>Balanced (256²)</option>
+            <option value="512">High-Def (512²)</option>
+            <option value="1024">Ultra (1024²)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Visuals Tab -->
+      <div class="tab-pane" id="tab-visuals">
+        <div class="control-group">
+          <div class="control-header">
+            <span>Render Shading Mode</span>
+          </div>
+          <select class="select-dropdown" id="select-shading-mode">
+            <option value="0" selected>Luminous Bloom & Glow</option>
+            <option value="1">Liquid Specular (3D Chrome / Water)</option>
+            <option value="2">Velocity Vector Visualizer</option>
+            <option value="3">Pressure Differential Map</option>
+            <option value="4">Clean Unshaded</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Bloom Intensity</span>
+            <span class="control-value" id="val-bloom-intensity">0.8</span>
+          </div>
+          <input type="range" id="input-bloom-intensity" min="0" max="2.0" step="0.05" value="0.8">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Color Vibrancy & Boost</span>
+            <span class="control-value" id="val-color-boost">1.2</span>
+          </div>
+          <input type="range" id="input-color-boost" min="0.5" max="3.0" step="0.1" value="1.2">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Liquid Specular Shininess</span>
+            <span class="control-value" id="val-specular-power">32</span>
+          </div>
+          <input type="range" id="input-specular-power" min="4" max="128" step="2" value="32">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Chromatic Aberration</span>
+            <span class="control-value" id="val-chromatic">0.002</span>
+          </div>
+          <input type="range" id="input-chromatic" min="0" max="0.01" step="0.0005" value="0.002">
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">Invert Colors</span>
+          <label class="switch">
+            <input type="checkbox" id="check-invert">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <span class="toggle-label">Dark Cosmic Vignette</span>
+          <label class="switch">
+            <input type="checkbox" id="check-vignette" checked>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Particles Tab -->
+      <div class="tab-pane" id="tab-particles">
+        <div class="toggle-row">
+          <span class="toggle-label">Enable Floating Advected Particles</span>
+          <label class="switch">
+            <input type="checkbox" id="check-particles" checked>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Particle Count</span>
+            <span class="control-value" id="val-particle-count">15,000</span>
+          </div>
+          <input type="range" id="input-particle-count" min="2000" max="40000" step="1000" value="15000">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Particle Point Size</span>
+            <span class="control-value" id="val-particle-size">2.0</span>
+          </div>
+          <input type="range" id="input-particle-size" min="1.0" max="6.0" step="0.2" value="2.0">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Particle Trail Alpha</span>
+            <span class="control-value" id="val-particle-alpha">0.7</span>
+          </div>
+          <input type="range" id="input-particle-alpha" min="0.1" max="1.0" step="0.05" value="0.7">
+        </div>
+      </div>
+
+      <!-- Sound & FX Tab -->
+      <div class="tab-pane" id="tab-audio">
+        <div class="toggle-row">
+          <span class="toggle-label">Interactive Ambient Synth Sound</span>
+          <label class="switch">
+            <input type="checkbox" id="check-audio-enabled">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Synth Volume</span>
+            <span class="control-value" id="val-audio-volume">0.5</span>
+          </div>
+          <input type="range" id="input-audio-volume" min="0" max="1" step="0.05" value="0.5">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Auto-Pilot Emitters Count</span>
+            <span class="control-value" id="val-autopilot-count">3</span>
+          </div>
+          <input type="range" id="input-autopilot-count" min="1" max="8" step="1" value="3">
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <span>Auto-Pilot Flow Speed</span>
+            <span class="control-value" id="val-autopilot-speed">1.0</span>
+          </div>
+          <input type="range" id="input-autopilot-speed" min="0.2" max="3.0" step="0.1" value="1.0">
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Shortcuts Modal -->
+  <div class="modal-overlay" id="shortcuts-modal">
+    <div class="modal-card glass-panel interactive">
+      <div class="drawer-header" style="padding: 0 0 12px 0;">
+        <div class="drawer-title">Keyboard & Gesture Shortcuts</div>
+        <button class="btn btn-icon" id="btn-close-modal">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="shortcut-list">
+        <div class="shortcut-item">
+          <span>Swirl / Paint Fluid</span>
+          <span class="key-badge">Mouse Drag / Touch</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Toggle UI Visibility (Zen Mode)</span>
+          <span class="key-badge">H</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Toggle Auto-Pilot Flow</span>
+          <span class="key-badge">A</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Pause / Resume Simulation</span>
+          <span class="key-badge">Space</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Clear Fluid Dye</span>
+          <span class="key-badge">C</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Toggle Audio Synthesizer</span>
+          <span class="key-badge">M</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Capture 4K Screenshot</span>
+          <span class="key-badge">S</span>
+        </div>
+        <div class="shortcut-item">
+          <span>Switch Color Presets</span>
+          <span class="key-badge">1 - 8</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">Screenshot Saved!</div>
+
+  <!-- WebGL Fluid Dynamics Implementation -->
+  <script>
+    'use strict';
+
+    /**
+     * CONFIGURATION & STATE
+     */
+    const config = {
+      SIM_RESOLUTION: 256,
+      DYE_RESOLUTION: 1024,
+      DENSITY_DISSIPATION: 1.0,
+      VELOCITY_DISSIPATION: 0.2,
+      PRESSURE: 0.8,
+      PRESSURE_ITERATIONS: 20,
+      CURL: 30,
+      SPLAT_RADIUS: 0.25,
+      SPLAT_FORCE: 6000,
+      SHADING_MODE: 0, // 0: Glow, 1: Specular, 2: Velocity, 3: Pressure, 4: Flat
+      BLOOM_INTENSITY: 0.8,
+      COLOR_BOOST: 1.2,
+      SPECULAR_POWER: 32.0,
+      CHROMATIC: 0.002,
+      INVERT: false,
+      VIGNETTE: true,
+      PARTICLES_ENABLED: true,
+      PARTICLE_COUNT: 15000,
+      PARTICLE_SIZE: 2.0,
+      PARTICLE_ALPHA: 0.7,
+      AUTOPILOT: true,
+      AUTOPILOT_COUNT: 3,
+      AUTOPILOT_SPEED: 1.0,
+      AUDIO_ENABLED: false,
+      AUDIO_VOLUME: 0.5,
+      CURRENT_TOOL: 'paint', // 'paint', 'vortex', 'push', 'attract', 'repel'
+      CURRENT_PRESET: 'rainbow',
+      PAUSED: false
+    };
+
+    const PRESETS = {
+      rainbow: {
+        name: 'Rainbow Prism',
+        palette: [
+          [1.0, 0.2, 0.4],
+          [1.0, 0.6, 0.1],
+          [0.1, 0.8, 0.9],
+          [0.7, 0.2, 1.0],
+          [0.2, 1.0, 0.5]
+        ],
+        curl: 30,
+        densityDissipation: 1.0,
+        bloom: 0.8
+      },
+      cyberpunk: {
+        name: 'Neon Cyberpunk',
+        palette: [
+          [1.0, 0.05, 0.6],
+          [0.0, 0.9, 1.0],
+          [0.55, 0.1, 1.0],
+          [1.0, 0.9, 0.0]
+        ],
+        curl: 38,
+        densityDissipation: 1.2,
+        bloom: 1.2
+      },
+      fire: {
+        name: 'Solar Flare',
+        palette: [
+          [1.0, 0.15, 0.0],
+          [1.0, 0.5, 0.0],
+          [1.0, 0.95, 0.1],
+          [0.8, 0.0, 0.0]
+        ],
+        curl: 45,
+        densityDissipation: 1.5,
+        bloom: 1.1
+      },
+      ocean: {
+        name: 'Cosmic Ocean',
+        palette: [
+          [0.0, 0.4, 0.9],
+          [0.05, 0.85, 0.8],
+          [0.3, 0.2, 0.9],
+          [0.1, 1.0, 0.7]
+        ],
+        curl: 26,
+        densityDissipation: 0.8,
+        bloom: 0.7
+      },
+      toxic: {
+        name: 'Acid Vortex',
+        palette: [
+          [0.4, 1.0, 0.05],
+          [0.0, 0.9, 0.4],
+          [0.9, 1.0, 0.1],
+          [0.1, 0.4, 0.1]
+        ],
+        curl: 42,
+        densityDissipation: 1.1,
+        bloom: 0.9
+      },
+      aurora: {
+        name: 'Northern Aurora',
+        palette: [
+          [0.05, 0.95, 0.55],
+          [0.1, 0.7, 1.0],
+          [0.6, 0.2, 0.9],
+          [0.1, 0.3, 0.8]
+        ],
+        curl: 28,
+        densityDissipation: 0.7,
+        bloom: 0.85
+      },
+      mercury: {
+        name: 'Liquid Chrome',
+        palette: [
+          [0.95, 0.95, 1.0],
+          [0.7, 0.75, 0.85],
+          [0.5, 0.55, 0.65],
+          [0.9, 0.9, 0.9]
+        ],
+        curl: 22,
+        densityDissipation: 0.5,
+        bloom: 0.4
+      },
+      nebula: {
+        name: 'Pastel Nebula',
+        palette: [
+          [0.85, 0.55, 0.95],
+          [0.95, 0.5, 0.7],
+          [0.4, 0.8, 1.0],
+          [1.0, 0.8, 0.6]
+        ],
+        curl: 32,
+        densityDissipation: 0.9,
+        bloom: 0.75
+      }
+    };
+
+    /**
+     * WEBGL CONTEXT SETUP & HELPER FUNCTIONS
+     */
+    const canvas = document.getElementById('fluid-canvas');
+    let gl, ext;
+
+    function getWebGLContext(canvas) {
+      const params = {
+        alpha: true,
+        depth: false,
+        stencil: false,
+        antialias: false,
+        preserveDrawingBuffer: true,
+        powerPreference: 'high-performance'
+      };
+
+      let gl = canvas.getContext('webgl2', params);
+      const isWebGL2 = !!gl;
+
+      let halfFloat, halfFloatTexType;
+      let supportLinearFiltering;
+
+      if (isWebGL2) {
+        document.getElementById('webgl-version-badge').textContent = 'WebGL 2';
+        gl.getExtension('EXT_color_buffer_float');
+        supportLinearFiltering = gl.getExtension('OES_texture_float_linear');
+        halfFloatTexType = gl.HALF_FLOAT;
+      } else {
+        gl = canvas.getContext('webgl', params) || canvas.getContext('experimental-webgl', params);
+        document.getElementById('webgl-version-badge').textContent = 'WebGL 1';
+        halfFloat = gl.getExtension('OES_texture_half_float');
+        supportLinearFiltering = gl.getExtension('OES_texture_half_float_linear');
+        halfFloatTexType = halfFloat ? halfFloat.HALF_FLOAT_OES : gl.UNSIGNED_BYTE;
+      }
+
+      if (!gl) {
+        alert('WebGL is not supported on your browser or device.');
+        return null;
+      }
+
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+      const internalFormat = isWebGL2 ? gl.RGBA16F : gl.RGBA;
+      const internalFormatRG = isWebGL2 ? gl.RG16F : gl.RGBA;
+      const formatRG = isWebGL2 ? gl.RG : gl.RGBA;
+      const texType = isWebGL2 ? gl.HALF_FLOAT : halfFloatTexType;
+
+      return {
+        gl,
+        ext: {
+          isWebGL2,
+          internalFormat,
+          internalFormatRG,
+          formatRG,
+          texType,
+          supportLinearFiltering: !!supportLinearFiltering
+        }
+      };
+    }
+
+    const context = getWebGLContext(canvas);
+    gl = context.gl;
+    ext = context.ext;
+
+    // Full screen quad buffer
+    const blit = (() => {
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 0, 2, 3]), gl.STATIC_DRAW);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(0);
+
+      return (target, clear = false) => {
+        if (target == null) {
+          gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        } else {
+          gl.viewport(0, 0, target.width, target.height);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+        }
+        if (clear) {
+          gl.clearColor(0.0, 0.0, 0.0, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+        }
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+      };
+    })();
+
+    class Program {
+      constructor(vertexShader, fragmentShader) {
+        this.uniforms = {};
+        this.program = createProgram(vertexShader, fragmentShader);
+        this.uniforms = getUniforms(this.program);
+      }
+      bind() {
+        gl.useProgram(this.program);
+      }
+    }
+
+    function createProgram(vertexShader, fragmentShader) {
+      let program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error(gl.getProgramInfoLog(program));
+      }
+      return program;
+    }
+
+    function getUniforms(program) {
+      let uniforms = [];
+      let uniformCount = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < uniformCount; i++) {
+        let uniformName = gl.getActiveUniform(program, i).name;
+        uniforms[uniformName] = gl.getUniformLocation(program, uniformName);
+      }
+      return uniforms;
+    }
+
+    function compileShader(type, source) {
+      let shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+      }
+      return shader;
+    }
+
+    /**
+     * GLSL SHADER DEFINITIONS
+     */
+    const baseVertexShader = compileShader(gl.VERTEX_SHADER, `
+      precision highp float;
+      attribute vec2 aPosition;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      uniform vec2 texelSize;
+
+      void main () {
+        vUv = aPosition * 0.5 + 0.5;
+        vL = vUv - vec2(texelSize.x, 0.0);
+        vR = vUv + vec2(texelSize.x, 0.0);
+        vT = vUv + vec2(0.0, texelSize.y);
+        vB = vUv - vec2(0.0, texelSize.y);
+        gl_Position = vec4(aPosition, 0.0, 1.0);
+      }
+    `);
+
+    const clearShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D uTexture;
+      uniform float value;
+      varying vec2 vUv;
+      void main () {
+        gl_FragColor = value * texture2D(uTexture, vUv);
+      }
+    `);
+
+    const splatShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision highp float;
+      uniform sampler2D uTarget;
+      uniform float aspectRatio;
+      uniform vec3 color;
+      uniform vec2 point;
+      uniform float radius;
+      varying vec2 vUv;
+      void main () {
+        vec2 p = vUv - point.xy;
+        p.x *= aspectRatio;
+        vec3 splat = exp(-dot(p, p) / radius) * color;
+        vec3 base = texture2D(uTarget, vUv).xyz;
+        gl_FragColor = vec4(base + splat, 1.0);
+      }
+    `);
+
+    const advectionShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision highp float;
+      uniform sampler2D uVelocity;
+      uniform sampler2D uSource;
+      uniform vec2 texelSize;
+      uniform float dt;
+      uniform float dissipation;
+      varying vec2 vUv;
+      void main () {
+        vec2 coord = vUv - dt * texture2D(uVelocity, vUv).xy * texelSize;
+        vec4 result = texture2D(uSource, coord);
+        float decay = 1.0 + dissipation * dt;
+        gl_FragColor = result / decay;
+      }
+    `);
+
+    const divergenceShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D uVelocity;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      void main () {
+        float L = texture2D(uVelocity, vL).x;
+        float R = texture2D(uVelocity, vR).x;
+        float T = texture2D(uVelocity, vT).y;
+        float B = texture2D(uVelocity, vB).y;
+
+        vec2 C = texture2D(uVelocity, vUv).xy;
+        if (vL.x < 0.0) { L = -C.x; }
+        if (vR.x > 1.0) { R = -C.x; }
+        if (vT.y > 1.0) { T = -C.y; }
+        if (vB.y < 0.0) { B = -C.y; }
+
+        float div = 0.5 * (R - L + T - B);
+        gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
+      }
+    `);
+
+    const curlShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D uVelocity;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      void main () {
+        float L = texture2D(uVelocity, vL).y;
+        float R = texture2D(uVelocity, vR).y;
+        float T = texture2D(uVelocity, vT).x;
+        float B = texture2D(uVelocity, vB).x;
+        float vorticity = R - L - T + B;
+        gl_FragColor = vec4(0.5 * vorticity, 0.0, 0.0, 1.0);
+      }
+    `);
+
+    const vorticityShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision highp float;
+      uniform sampler2D uVelocity;
+      uniform sampler2D uCurl;
+      uniform float curl;
+      uniform float dt;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      void main () {
+        float L = texture2D(uCurl, vL).x;
+        float R = texture2D(uCurl, vR).x;
+        float T = texture2D(uCurl, vT).x;
+        float B = texture2D(uCurl, vB).x;
+        float C = texture2D(uCurl, vUv).x;
+
+        vec2 force = 0.5 * vec2(abs(T) - abs(B), abs(R) - abs(L));
+        float lengthSquared = max(1e-5, dot(force, force));
+        force *= inversesqrt(lengthSquared) * curl * C;
+        force.y *= -1.0;
+
+        vec2 velocity = texture2D(uVelocity, vUv).xy;
+        velocity += force * dt;
+        velocity = clamp(velocity, vec2(-2000.0), vec2(2000.0));
+        gl_FragColor = vec4(velocity, 0.0, 1.0);
+      }
+    `);
+
+    const pressureShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      uniform sampler2D uPressure;
+      uniform sampler2D uDivergence;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      void main () {
+        float L = texture2D(uPressure, vL).x;
+        float R = texture2D(uPressure, vR).x;
+        float T = texture2D(uPressure, vT).x;
+        float B = texture2D(uPressure, vB).x;
+        float divergence = texture2D(uDivergence, vUv).x;
+        float pressure = (L + R + B + T - divergence) * 0.25;
+        gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
+      }
+    `);
+
+    const gradientSubtractShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision highp float;
+      uniform sampler2D uPressure;
+      uniform sampler2D uVelocity;
+      varying vec2 vUv;
+      varying vec2 vL;
+      varying vec2 vR;
+      varying vec2 vT;
+      varying vec2 vB;
+      void main () {
+        float L = texture2D(uPressure, vL).x;
+        float R = texture2D(uPressure, vR).x;
+        float T = texture2D(uPressure, vT).x;
+        float B = texture2D(uPressure, vB).x;
+        vec2 velocity = texture2D(uVelocity, vUv).xy;
+        velocity.xy -= vec2(R - L, T - B) * 0.5;
+        gl_FragColor = vec4(velocity, 0.0, 1.0);
+      }
+    `);
+
+    const displayShader = compileShader(gl.FRAGMENT_SHADER, `
+      precision highp float;
+      uniform sampler2D uDye;
+      uniform sampler2D uVelocity;
+      uniform sampler2D uPressure;
+      uniform vec2 texelSize;
+      uniform int shadingMode;
+      uniform float bloomIntensity;
+      uniform float colorBoost;
+      uniform float specularPower;
+      uniform float chromatic;
+      uniform bool invert;
+      uniform bool vignette;
+      varying vec2 vUv;
+
+      vec3 linearToGamma (vec3 color) {
+        color = max(color, vec3(0.0));
+        return max(1.055 * pow(color, vec3(0.416666667)) - 0.055, vec3(0.0));
+      }
+
+      void main () {
+        vec2 uv = vUv;
+        vec3 color = vec3(0.0);
+
+        // Chromatic aberration sample
+        if (chromatic > 0.0001) {
+          vec2 offset = (uv - 0.5) * chromatic;
+          float r = texture2D(uDye, uv - offset).r;
+          float g = texture2D(uDye, uv).g;
+          float b = texture2D(uDye, uv + offset).b;
+          color = vec3(r, g, b);
+        } else {
+          color = texture2D(uDye, uv).rgb;
+        }
+
+        // Shading Modes
+        if (shadingMode == 1) { // Liquid Specular / Chrome Water
+          float L = texture2D(uDye, uv - vec2(texelSize.x * 2.0, 0.0)).a;
+          float R = texture2D(uDye, uv + vec2(texelSize.x * 2.0, 0.0)).a;
+          float T = texture2D(uDye, uv + vec2(0.0, texelSize.y * 2.0)).a;
+          float B = texture2D(uDye, uv - vec2(0.0, texelSize.y * 2.0)).a;
+
+          vec3 N = normalize(vec3((L - R) * 4.0, (B - T) * 4.0, 1.0));
+          vec3 Ldir = normalize(vec3(0.5, 0.8, 1.2));
+          vec3 Vdir = vec3(0.0, 0.0, 1.0);
+          vec3 Hdir = normalize(Ldir + Vdir);
+
+          float diff = max(dot(N, Ldir), 0.0) * 0.4 + 0.6;
+          float spec = pow(max(dot(N, Hdir), 0.0), specularPower) * 1.5;
+          float fresnel = pow(1.0 - max(dot(N, Vdir), 0.0), 3.0) * 0.5;
+
+          color = color * diff + vec3(spec + fresnel) * (0.8 + 0.2 * color);
+        } else if (shadingMode == 2) { // Velocity Field
+          vec2 vel = texture2D(uVelocity, uv).xy * 0.005;
+          color = vec3(abs(vel.x), abs(vel.y), length(vel));
+        } else if (shadingMode == 3) { // Pressure Map
+          float p = texture2D(uPressure, uv).x * 0.05;
+          color = p > 0.0 ? vec3(p, p * 0.2, 0.0) : vec3(0.0, -p * 0.2, -p);
+        } else if (shadingMode == 0) { // Bloom & Glow
+          float lum = dot(color, vec3(0.299, 0.587, 0.114));
+          vec3 glow = pow(color, vec3(1.4)) * bloomIntensity;
+          color = color + glow;
+        }
+
+        // Color boost
+        color *= colorBoost;
+
+        // Tone-mapping & Vignette
+        if (vignette) {
+          float d = length(uv - 0.5);
+          float vig = smoothstep(0.8, 0.2, d);
+          color *= vig;
+        }
+
+        // ACES Film Tone Mapping
+        color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
+
+        if (invert) {
+          color = vec3(1.0) - color;
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `);
+
+    // Compile Programs
+    const programs = {
+      clear: new Program(baseVertexShader, clearShader),
+      splat: new Program(baseVertexShader, splatShader),
+      advection: new Program(baseVertexShader, advectionShader),
+      divergence: new Program(baseVertexShader, divergenceShader),
+      curl: new Program(baseVertexShader, curlShader),
+      vorticity: new Program(baseVertexShader, vorticityShader),
+      pressure: new Program(baseVertexShader, pressureShader),
+      gradientSubtract: new Program(baseVertexShader, gradientSubtractShader),
+      display: new Program(baseVertexShader, displayShader)
+    };
+
+    /**
+     * FRAMEBUFFERS & DOUBLE BUFFERS
+     */
+    function createFBO(w, h, internalFormat, format, type, param) {
+      gl.activeTexture(gl.TEXTURE0);
+      let texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, param);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, param);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, w, h, 0, format, type, null);
+
+      let fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+      gl.viewport(0, 0, w, h);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      return {
+        texture,
+        fbo,
+        width: w,
+        height: h,
+        attach(id) {
+          gl.activeTexture(gl.TEXTURE0 + id);
+          gl.bindTexture(gl.TEXTURE_2D, texture);
+          return id;
+        }
+      };
+    }
+
+    function createDoubleFBO(w, h, internalFormat, format, type, param) {
+      let fbo1 = createFBO(w, h, internalFormat, format, type, param);
+      let fbo2 = createFBO(w, h, internalFormat, format, type, param);
+      return {
+        width: w,
+        height: h,
+        texelSizeX: 1.0 / w,
+        texelSizeY: 1.0 / h,
+        get read() { return fbo1; },
+        set read(val) { fbo1 = val; },
+        get write() { return fbo2; },
+        set write(val) { fbo2 = val; },
+        swap() {
+          let temp = fbo1;
+          fbo1 = fbo2;
+          fbo2 = temp;
+        }
+      };
+    }
+
+    let dye, velocity, divergence, curl, pressure;
+
+    function initFramebuffers() {
+      let simRes = getResolution(config.SIM_RESOLUTION);
+      let dyeRes = getResolution(config.DYE_RESOLUTION);
+
+      const texType = ext.texType;
+      const rgba = ext.internalFormat;
+      const rg = ext.internalFormatRG;
+      const r = ext.internalFormatRG; // Use RG fallback
+      const filtering = ext.supportLinearFiltering ? gl.LINEAR : gl.NEAREST;
+
+      dye = createDoubleFBO(dyeRes.width, dyeRes.height, rgba, gl.RGBA, texType, filtering);
+      velocity = createDoubleFBO(simRes.width, simRes.height, rg, ext.formatRG, texType, filtering);
+      divergence = createFBO(simRes.width, simRes.height, r, ext.formatRG, texType, gl.NEAREST);
+      curl = createFBO(simRes.width, simRes.height, r, ext.formatRG, texType, gl.NEAREST);
+      pressure = createDoubleFBO(simRes.width, simRes.height, r, ext.formatRG, texType, gl.NEAREST);
+    }
+
+    function getResolution(resolution) {
+      let aspectRatio = gl.drawingBufferWidth / gl.drawingBufferHeight;
+      if (aspectRatio < 1) aspectRatio = 1.0 / aspectRatio;
+
+      let min = Math.round(resolution);
+      let max = Math.round(resolution * aspectRatio);
+
+      if (gl.drawingBufferWidth > gl.drawingBufferHeight)
+        return { width: max, height: min };
+      else
+        return { width: min, height: max };
+    }
+
+    /**
+     * ADVECTED PARTICLES SYSTEM
+     */
+    class ParticleSystem {
+      constructor(maxParticles) {
+        this.maxParticles = maxParticles;
+        this.positions = new Float32Array(maxParticles * 2);
+        this.velocities = new Float32Array(maxParticles * 2);
+        this.colors = new Float32Array(maxParticles * 4);
+        this.lifetimes = new Float32Array(maxParticles);
+
+        this.initParticles();
+
+        // Particle Shader
+        this.program = createProgram(
+          compileShader(gl.VERTEX_SHADER, `
+            precision highp float;
+            attribute vec2 aPos;
+            attribute vec4 aCol;
+            uniform float uPointSize;
+            varying vec4 vColor;
+            void main() {
+              vColor = aCol;
+              gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0);
+              gl_PointSize = uPointSize;
+            }
+          `),
+          compileShader(gl.FRAGMENT_SHADER, `
+            precision mediump float;
+            varying vec4 vColor;
+            uniform float uAlpha;
+            void main() {
+              vec2 coord = gl_PointCoord - vec2(0.5);
+              float dist = length(coord);
+              if (dist > 0.5) discard;
+              float glow = smoothstep(0.5, 0.0, dist);
+              gl_FragColor = vec4(vColor.rgb, vColor.a * glow * uAlpha);
+            }
+          `)
+        );
+
+        this.posBuffer = gl.createBuffer();
+        this.colBuffer = gl.createBuffer();
+        this.uPointSizeLoc = gl.getUniformLocation(this.program, 'uPointSize');
+        this.uAlphaLoc = gl.getUniformLocation(this.program, 'uAlpha');
+      }
+
+      initParticles() {
+        for (let i = 0; i < this.maxParticles; i++) {
+          this.resetParticle(i);
+        }
+      }
+
+      resetParticle(i) {
+        this.positions[i * 2] = Math.random();
+        this.positions[i * 2 + 1] = Math.random();
+        this.velocities[i * 2] = 0;
+        this.velocities[i * 2 + 1] = 0;
+        this.lifetimes[i] = Math.random();
+
+        const palette = PRESETS[config.CURRENT_PRESET].palette;
+        const col = palette[Math.floor(Math.random() * palette.length)];
+        this.colors[i * 4] = col[0];
+        this.colors[i * 4 + 1] = col[1];
+        this.colors[i * 4 + 2] = col[2];
+        this.colors[i * 4 + 3] = 0.8;
+      }
+
+      update(dt) {
+        if (!config.PARTICLES_ENABLED) return;
+        const count = Math.min(config.PARTICLE_COUNT, this.maxParticles);
+
+        for (let i = 0; i < count; i++) {
+          let px = this.positions[i * 2];
+          let py = this.positions[i * 2 + 1];
+
+          // Move particle
+          px += this.velocities[i * 2] * dt;
+          py += this.velocities[i * 2 + 1] * dt;
+
+          // Boundary wrap
+          if (px < 0) px += 1.0;
+          if (px > 1) px -= 1.0;
+          if (py < 0) py += 1.0;
+          if (py > 1) py -= 1.0;
+
+          this.positions[i * 2] = px;
+          this.positions[i * 2 + 1] = py;
+
+          this.lifetimes[i] -= dt * 0.2;
+          if (this.lifetimes[i] <= 0) {
+            this.resetParticle(i);
+          }
+        }
+      }
+
+      render() {
+        if (!config.PARTICLES_ENABLED) return;
+        const count = Math.min(config.PARTICLE_COUNT, this.maxParticles);
+
+        gl.useProgram(this.program);
+        gl.uniform1f(this.uPointSizeLoc, config.PARTICLE_SIZE);
+        gl.uniform1f(this.uAlphaLoc, config.PARTICLE_ALPHA);
+
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // Additive luminous blend
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.positions.subarray(0, count * 2), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.colBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.colors.subarray(0, count * 4), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+        gl.drawArrays(gl.POINTS, 0, count);
+
+        gl.disable(gl.BLEND);
+      }
+    }
+
+    let particleSystem;
+
+    /**
+     * SIMULATION SPLAT & STEP LOGIC
+     */
+    function splat(x, y, dx, dy, color) {
+      // Velocity splat
+      programs.splat.bind();
+      gl.uniform1i(programs.splat.uniforms.uTarget, velocity.read.attach(0));
+      gl.uniform1f(programs.splat.uniforms.aspectRatio, canvas.width / canvas.height);
+      gl.uniform2f(programs.splat.uniforms.point, x, y);
+      gl.uniform3f(programs.splat.uniforms.color, dx, dy, 0.0);
+      gl.uniform1f(programs.splat.uniforms.radius, correctRadius(config.SPLAT_RADIUS / 100.0));
+      blit(velocity.write);
+      velocity.swap();
+
+      // Dye splat
+      if (color) {
+        gl.uniform1i(programs.splat.uniforms.uTarget, dye.read.attach(0));
+        gl.uniform3f(programs.splat.uniforms.color, color[0], color[1], color[2]);
+        blit(dye.write);
+        dye.swap();
+      }
+
+      // Nudge nearby particles in particle system
+      if (particleSystem && config.PARTICLES_ENABLED) {
+        const count = Math.min(config.PARTICLE_COUNT, particleSystem.maxParticles);
+        const radSq = 0.05 * 0.05;
+        for (let i = 0; i < count; i += 3) {
+          const px = particleSystem.positions[i * 2];
+          const py = particleSystem.positions[i * 2 + 1];
+          const distSq = (px - x) * (px - x) + (py - y) * (py - y);
+          if (distSq < radSq) {
+            particleSystem.velocities[i * 2] = dx * 0.0003;
+            particleSystem.velocities[i * 2 + 1] = dy * 0.0003;
+          }
+        }
+      }
+    }
+
+    function correctRadius(radius) {
+      let aspectRatio = canvas.width / canvas.height;
+      if (aspectRatio > 1) radius *= aspectRatio;
+      return radius;
+    }
+
+    function step(dt) {
+      gl.disable(gl.BLEND);
+
+      // 1. Curl calculation
+      programs.curl.bind();
+      gl.uniform2f(programs.curl.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.curl.uniforms.uVelocity, velocity.read.attach(0));
+      blit(curl);
+
+      // 2. Vorticity Confinement
+      programs.vorticity.bind();
+      gl.uniform2f(programs.vorticity.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.vorticity.uniforms.uVelocity, velocity.read.attach(0));
+      gl.uniform1i(programs.vorticity.uniforms.uCurl, curl.attach(1));
+      gl.uniform1f(programs.vorticity.uniforms.curl, config.CURL);
+      gl.uniform1f(programs.vorticity.uniforms.dt, dt);
+      blit(velocity.write);
+      velocity.swap();
+
+      // 3. Divergence calculation
+      programs.divergence.bind();
+      gl.uniform2f(programs.divergence.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.divergence.uniforms.uVelocity, velocity.read.attach(0));
+      blit(divergence);
+
+      // 4. Clear Pressure
+      programs.clear.bind();
+      gl.uniform1i(programs.clear.uniforms.uTexture, pressure.read.attach(0));
+      gl.uniform1f(programs.clear.uniforms.value, config.PRESSURE);
+      blit(pressure.write);
+      pressure.swap();
+
+      // 5. Pressure Poisson Jacobi Iterations
+      programs.pressure.bind();
+      gl.uniform2f(programs.pressure.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.pressure.uniforms.uDivergence, divergence.attach(0));
+      for (let i = 0; i < config.PRESSURE_ITERATIONS; i++) {
+        gl.uniform1i(programs.pressure.uniforms.uPressure, pressure.read.attach(1));
+        blit(pressure.write);
+        pressure.swap();
+      }
+
+      // 6. Subtract Pressure Gradient
+      programs.gradientSubtract.bind();
+      gl.uniform2f(programs.gradientSubtract.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.gradientSubtract.uniforms.uPressure, pressure.read.attach(0));
+      gl.uniform1i(programs.gradientSubtract.uniforms.uVelocity, velocity.read.attach(1));
+      blit(velocity.write);
+      velocity.swap();
+
+      // 7. Velocity Advection
+      programs.advection.bind();
+      gl.uniform2f(programs.advection.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+      gl.uniform1i(programs.advection.uniforms.uVelocity, velocity.read.attach(0));
+      gl.uniform1i(programs.advection.uniforms.uSource, velocity.read.attach(0));
+      gl.uniform1f(programs.advection.uniforms.dt, dt);
+      gl.uniform1f(programs.advection.uniforms.dissipation, config.VELOCITY_DISSIPATION);
+      blit(velocity.write);
+      velocity.swap();
+
+      // 8. Dye Advection
+      programs.advection.bind();
+      gl.uniform2f(programs.advection.uniforms.texelSize, dye.texelSizeX, dye.texelSizeY);
+      gl.uniform1i(programs.advection.uniforms.uVelocity, velocity.read.attach(0));
+      gl.uniform1i(programs.advection.uniforms.uSource, dye.read.attach(1));
+      gl.uniform1f(programs.advection.uniforms.dt, dt);
+      gl.uniform1f(programs.advection.uniforms.dissipation, config.DENSITY_DISSIPATION);
+      blit(dye.write);
+      dye.swap();
+
+      // Step particles
+      if (particleSystem) {
+        particleSystem.update(dt);
+      }
+    }
+
+    function renderDisplay() {
+      programs.display.bind();
+      gl.uniform1i(programs.display.uniforms.uDye, dye.read.attach(0));
+      gl.uniform1i(programs.display.uniforms.uVelocity, velocity.read.attach(1));
+      gl.uniform1i(programs.display.uniforms.uPressure, pressure.read.attach(2));
+      gl.uniform2f(programs.display.uniforms.texelSize, 1.0 / canvas.width, 1.0 / canvas.height);
+      gl.uniform1i(programs.display.uniforms.shadingMode, config.SHADING_MODE);
+      gl.uniform1f(programs.display.uniforms.bloomIntensity, config.BLOOM_INTENSITY);
+      gl.uniform1f(programs.display.uniforms.colorBoost, config.COLOR_BOOST);
+      gl.uniform1f(programs.display.uniforms.specularPower, config.SPECULAR_POWER);
+      gl.uniform1f(programs.display.uniforms.chromatic, config.CHROMATIC);
+      gl.uniform1i(programs.display.uniforms.invert, config.INVERT);
+      gl.uniform1i(programs.display.uniforms.vignette, config.VIGNETTE);
+
+      blit(null);
+
+      // Render particle overlay
+      if (particleSystem && config.PARTICLES_ENABLED) {
+        particleSystem.render();
+      }
+    }
+
+    /**
+     * MULTI-EMITTER AUTONOMOUS FLOW (AUTOPILOT)
+     */
+    const autoDancers = [];
+    for (let i = 0; i < 8; i++) {
+      autoDancers.push({
+        t: i * 2.5,
+        freqX: 0.4 + i * 0.22,
+        freqY: 0.3 + i * 0.18,
+        prevX: 0.5,
+        prevY: 0.5,
+        colorIdx: i
+      });
+    }
+
+    function updateAutopilot(dt) {
+      if (!config.AUTOPILOT) return;
+      const count = config.AUTOPILOT_COUNT;
+      const palette = PRESETS[config.CURRENT_PRESET].palette;
+
+      for (let i = 0; i < count; i++) {
+        const d = autoDancers[i];
+        d.t += dt * 0.8 * config.AUTOPILOT_SPEED;
+
+        // Lissajous / Rose harmonic curve
+        const x = 0.5 + 0.36 * Math.sin(d.t * d.freqX) * Math.cos(d.t * 0.15);
+        const y = 0.5 + 0.36 * Math.cos(d.t * d.freqY) * Math.sin(d.t * 0.12 + i);
+
+        const dx = (x - d.prevX) * config.SPLAT_FORCE;
+        const dy = (y - d.prevY) * config.SPLAT_FORCE;
+
+        const col = palette[(d.colorIdx + Math.floor(d.t * 0.5)) % palette.length];
+
+        splat(x, y, dx, dy, col);
+
+        d.prevX = x;
+        d.prevY = y;
+      }
+    }
+
+    /**
+     * WEB AUDIO GENERATIVE SYNTHESIZER
+     */
+    let audioCtx = null;
+    let synthMasterGain = null;
+    const PENTATONIC_SCALE = [130.81, 146.83, 164.81, 196.00, 220.00, 261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99];
+
+    function initAudio() {
+      if (audioCtx) return;
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        synthMasterGain = audioCtx.createGain();
+        synthMasterGain.gain.value = config.AUDIO_VOLUME;
+
+        // Reverb/Delay Convolver simulation
+        const delay = audioCtx.createDelay();
+        delay.delayTime.value = 0.28;
+        const feedback = audioCtx.createGain();
+        feedback.gain.value = 0.4;
+        delay.connect(feedback);
+        feedback.connect(delay);
+
+        synthMasterGain.connect(audioCtx.destination);
+        synthMasterGain.connect(delay);
+        delay.connect(audioCtx.destination);
+      } catch (e) {
+        console.warn('Web Audio not supported or allowed', e);
+      }
+    }
+
+    function playFluidTone(normalizedX, normalizedY, speed) {
+      if (!config.AUDIO_ENABLED || !audioCtx) return;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
+      const noteIdx = Math.min(Math.floor(normalizedX * PENTATONIC_SCALE.length), PENTATONIC_SCALE.length - 1);
+      const freq = PENTATONIC_SCALE[noteIdx];
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+
+      // Low pass filter modulated by Y position
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(300 + normalizedY * 2000, audioCtx.currentTime);
+
+      const amp = Math.min(0.2, speed * 0.00005) * config.AUDIO_VOLUME;
+      gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(amp, audioCtx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.8);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(synthMasterGain);
+
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.85);
+    }
+
+    /**
+     * INTERACTION HANDLERS (MOUSE & TOUCH)
+     */
+    const pointers = [];
+    let colorIdx = 0;
+
+    class Pointer {
+      constructor(id) {
+        this.id = id;
+        this.x = 0;
+        this.y = 0;
+        this.dx = 0;
+        this.dy = 0;
+        this.down = false;
+        this.moved = false;
+        this.color = [1, 1, 1];
+      }
+    }
+
+    function getPointer(id) {
+      let p = pointers.find(p => p.id === id);
+      if (!p) {
+        p = new Pointer(id);
+        pointers.push(p);
+      }
+      return p;
+    }
+
+    function getNextColor() {
+      const palette = PRESETS[config.CURRENT_PRESET].palette;
+      colorIdx = (colorIdx + 1) % palette.length;
+      return palette[colorIdx];
+    }
+
+    function handlePointerMove(p, clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (clientX - rect.left) / rect.width;
+      const y = 1.0 - (clientY - rect.top) / rect.height;
+
+      p.dx = (x - p.x) * config.SPLAT_FORCE;
+      p.dy = (y - p.y) * config.SPLAT_FORCE;
+      p.x = x;
+      p.y = y;
+      p.moved = Math.abs(p.dx) > 0.01 || Math.abs(p.dy) > 0.01;
+    }
+
+    // Canvas Event Listeners
+    canvas.addEventListener('mousedown', e => {
+      const p = getPointer(-1);
+      p.down = true;
+      p.color = getNextColor();
+      handlePointerMove(p, e.clientX, e.clientY);
+      p.dx = 0;
+      p.dy = 0;
+      applyTool(p);
+    });
+
+    window.addEventListener('mousemove', e => {
+      const p = getPointer(-1);
+      if (!p.down) return;
+      handlePointerMove(p, e.clientX, e.clientY);
+      applyTool(p);
+    });
+
+    window.addEventListener('mouseup', () => {
+      const p = getPointer(-1);
+      p.down = false;
+    });
+
+    // Touch Event Listeners
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        const p = getPointer(touch.identifier);
+        p.down = true;
+        p.color = getNextColor();
+        handlePointerMove(p, touch.clientX, touch.clientY);
+        p.dx = 0;
+        p.dy = 0;
+        applyTool(p);
+      }
+    }, { passive: false });
+
+    window.addEventListener('touchmove', e => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        const p = getPointer(touch.identifier);
+        if (!p.down) continue;
+        handlePointerMove(p, touch.clientX, touch.clientY);
+        applyTool(p);
+      }
+    }, { passive: false });
+
+    window.addEventListener('touchend', e => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        const p = getPointer(touch.identifier);
+        p.down = false;
+      }
+    });
+
+    function applyTool(p) {
+      const tool = config.CURRENT_TOOL;
+      const speed = Math.hypot(p.dx, p.dy);
+
+      if (tool === 'paint') {
+        splat(p.x, p.y, p.dx, p.dy, p.color);
+      } else if (tool === 'vortex') {
+        // Rotational force
+        const angle = Math.atan2(p.dy, p.dx) + Math.PI * 0.5;
+        const vForce = Math.max(speed, 3000);
+        splat(p.x, p.y, Math.cos(angle) * vForce, Math.sin(angle) * vForce, p.color);
+      } else if (tool === 'push') {
+        splat(p.x, p.y, p.dx * 1.5, p.dy * 1.5, null);
+      } else if (tool === 'attract') {
+        // Sink force inwards
+        splat(p.x, p.y, -p.dx * 2.0, -p.dy * 2.0, p.color);
+      } else if (tool === 'repel') {
+        // Outwards burst
+        splat(p.x, p.y, p.dx * 2.5, p.dy * 2.5, p.color);
+      }
+
+      if (speed > 50) {
+        playFluidTone(p.x, p.y, speed);
+      }
+    }
+
+    /**
+     * RESIZE & INITIALIZATION
+     */
+    function resizeCanvas() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        initFramebuffers();
+      }
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    /**
+     * ANIMATION & RENDER LOOP
+     */
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let fpsTimer = performance.now();
+    const fpsText = document.getElementById('fps-text');
+
+    function animate(currentTime) {
+      requestAnimationFrame(animate);
+
+      // FPS tracking
+      frameCount++;
+      if (currentTime - fpsTimer >= 1000) {
+        fpsText.textContent = `${frameCount} FPS`;
+        frameCount = 0;
+        fpsTimer = currentTime;
+      }
+
+      const dt = Math.min((currentTime - lastTime) / 1000, 0.033);
+      lastTime = currentTime;
+
+      if (!config.PAUSED) {
+        updateAutopilot(dt);
+        step(dt);
+      }
+
+      renderDisplay();
+    }
+
+    /**
+     * UI EVENT WIRING & INTERACTION
+     */
+    function setupUI() {
+      // Tool buttons
+      document.querySelectorAll('.tool-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          config.CURRENT_TOOL = btn.dataset.tool;
+          showToast(`Tool: ${btn.textContent.trim()}`);
+        });
+      });
+
+      // Preset chips
+      document.querySelectorAll('.preset-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          applyPreset(chip.dataset.preset);
+        });
+      });
+
+      // Auto-Pilot toggle
+      const btnAutopilot = document.getElementById('btn-autopilot');
+      btnAutopilot.addEventListener('click', () => {
+        config.AUTOPILOT = !config.AUTOPILOT;
+        btnAutopilot.classList.toggle('active', config.AUTOPILOT);
+        showToast(config.AUTOPILOT ? 'Auto-Pilot Enabled' : 'Auto-Pilot Disabled');
+      });
+      btnAutopilot.classList.toggle('active', config.AUTOPILOT);
+
+      // Audio toggle
+      const btnAudio = document.getElementById('btn-audio');
+      const checkAudio = document.getElementById('check-audio-enabled');
+      function toggleAudio(val) {
+        config.AUDIO_ENABLED = val;
+        btnAudio.classList.toggle('active', config.AUDIO_ENABLED);
+        checkAudio.checked = config.AUDIO_ENABLED;
+        if (config.AUDIO_ENABLED) {
+          initAudio();
+          showToast('Audio Synth Activated');
+        } else {
+          showToast('Audio Synth Muted');
+        }
+      }
+      btnAudio.addEventListener('click', () => toggleAudio(!config.AUDIO_ENABLED));
+      checkAudio.addEventListener('change', e => toggleAudio(e.target.checked));
+
+      // Pause toggle
+      const btnPause = document.getElementById('btn-pause');
+      const iconPause = document.getElementById('icon-pause');
+      const iconPlay = document.getElementById('icon-play');
+      btnPause.addEventListener('click', () => {
+        config.PAUSED = !config.PAUSED;
+        iconPause.style.display = config.PAUSED ? 'none' : 'block';
+        iconPlay.style.display = config.PAUSED ? 'block' : 'none';
+        showToast(config.PAUSED ? 'Paused' : 'Resumed');
+      });
+
+      // Clear button
+      document.getElementById('btn-clear').addEventListener('click', () => {
+        initFramebuffers();
+        if (particleSystem) particleSystem.initParticles();
+        showToast('Fluid Canvas Cleared');
+      });
+
+      // Screenshot button
+      document.getElementById('btn-screenshot').addEventListener('click', takeScreenshot);
+
+      // Settings Drawer toggle
+      const drawer = document.getElementById('sidebar-drawer');
+      const btnSettings = document.getElementById('btn-toggle-settings');
+      const btnCloseDrawer = document.getElementById('btn-close-drawer');
+      btnSettings.addEventListener('click', () => drawer.classList.toggle('open'));
+      btnCloseDrawer.addEventListener('click', () => drawer.classList.remove('open'));
+
+      // Drawer Tabs
+      document.querySelectorAll('.drawer-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.drawer-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById(tab.dataset.tab).classList.add('active');
+        });
+      });
+
+      // Shortcuts Modal
+      const modal = document.getElementById('shortcuts-modal');
+      document.getElementById('btn-shortcuts').addEventListener('click', () => modal.classList.add('open'));
+      document.getElementById('btn-close-modal').addEventListener('click', () => modal.classList.remove('open'));
+      modal.addEventListener('click', e => {
+        if (e.target === modal) modal.classList.remove('open');
+      });
+
+      // Physics Sliders
+      wireSlider('input-density-dissipation', 'val-density-dissipation', v => config.DENSITY_DISSIPATION = +v);
+      wireSlider('input-velocity-dissipation', 'val-velocity-dissipation', v => config.VELOCITY_DISSIPATION = +v);
+      wireSlider('input-curl', 'val-curl', v => config.CURL = +v);
+      wireSlider('input-iterations', 'val-iterations', v => config.PRESSURE_ITERATIONS = +v);
+      wireSlider('input-splat-radius', 'val-splat-radius', v => config.SPLAT_RADIUS = +v);
+      wireSlider('input-splat-force', 'val-splat-force', v => config.SPLAT_FORCE = +v);
+
+      // Visuals Controls
+      document.getElementById('select-shading-mode').addEventListener('change', e => {
+        config.SHADING_MODE = +e.target.value;
+      });
+      wireSlider('input-bloom-intensity', 'val-bloom-intensity', v => config.BLOOM_INTENSITY = +v);
+      wireSlider('input-color-boost', 'val-color-boost', v => config.COLOR_BOOST = +v);
+      wireSlider('input-specular-power', 'val-specular-power', v => config.SPECULAR_POWER = +v);
+      wireSlider('input-chromatic', 'val-chromatic', v => config.CHROMATIC = +v);
+      document.getElementById('check-invert').addEventListener('change', e => config.INVERT = e.target.checked);
+      document.getElementById('check-vignette').addEventListener('change', e => config.VIGNETTE = e.target.checked);
+
+      // Particle Controls
+      document.getElementById('check-particles').addEventListener('change', e => config.PARTICLES_ENABLED = e.target.checked);
+      wireSlider('input-particle-count', 'val-particle-count', v => {
+        config.PARTICLE_COUNT = +v;
+        document.getElementById('val-particle-count').textContent = (+v).toLocaleString();
+      });
+      wireSlider('input-particle-size', 'val-particle-size', v => config.PARTICLE_SIZE = +v);
+      wireSlider('input-particle-alpha', 'val-particle-alpha', v => config.PARTICLE_ALPHA = +v);
+
+      // Sound & FX Sliders
+      wireSlider('input-audio-volume', 'val-audio-volume', v => {
+        config.AUDIO_VOLUME = +v;
+        if (synthMasterGain) synthMasterGain.gain.value = +v;
+      });
+      wireSlider('input-autopilot-count', 'val-autopilot-count', v => config.AUTOPILOT_COUNT = +v);
+      wireSlider('input-autopilot-speed', 'val-autopilot-speed', v => config.AUTOPILOT_SPEED = +v);
+
+      // Resolution dropdown
+      document.getElementById('select-resolution').addEventListener('change', e => {
+        config.SIM_RESOLUTION = +e.target.value;
+        initFramebuffers();
+      });
+
+      // Keyboard Hotkeys
+      window.addEventListener('keydown', e => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+        const key = e.key.toLowerCase();
+        if (key === 'h') {
+          document.getElementById('ui-container').classList.toggle('hidden-ui');
+          document.getElementById('sidebar-drawer').classList.remove('open');
+          document.getElementById('shortcuts-modal').classList.remove('open');
+        } else if (key === 'a') {
+          btnAutopilot.click();
+        } else if (key === ' ') {
+          e.preventDefault();
+          btnPause.click();
+        } else if (key === 'c') {
+          document.getElementById('btn-clear').click();
+        } else if (key === 'm') {
+          btnAudio.click();
+        } else if (key === 's') {
+          takeScreenshot();
+        } else if (key === '?' || key === '/') {
+          modal.classList.toggle('open');
+        } else if (['1', '2', '3', '4', '5', '6', '7', '8'].includes(key)) {
+          const presetKeys = Object.keys(PRESETS);
+          const idx = parseInt(key) - 1;
+          if (presetKeys[idx]) {
+            applyPreset(presetKeys[idx]);
+          }
+        }
+      });
+    }
+
+    function wireSlider(id, labelId, callback) {
+      const input = document.getElementById(id);
+      const label = document.getElementById(labelId);
+      input.addEventListener('input', e => {
+        label.textContent = e.target.value;
+        callback(e.target.value);
+      });
+    }
+
+    function applyPreset(key) {
+      if (!PRESETS[key]) return;
+      config.CURRENT_PRESET = key;
+      const p = PRESETS[key];
+
+      config.CURL = p.curl;
+      config.DENSITY_DISSIPATION = p.densityDissipation;
+      config.BLOOM_INTENSITY = p.bloom;
+
+      // Update UI elements
+      document.getElementById('input-curl').value = p.curl;
+      document.getElementById('val-curl').textContent = p.curl;
+      document.getElementById('input-density-dissipation').value = p.densityDissipation;
+      document.getElementById('val-density-dissipation').textContent = p.densityDissipation;
+      document.getElementById('input-bloom-intensity').value = p.bloom;
+      document.getElementById('val-bloom-intensity').textContent = p.bloom;
+
+      document.querySelectorAll('.preset-chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.preset === key);
+      });
+
+      if (particleSystem) particleSystem.initParticles();
+      showToast(`Preset: ${p.name}`);
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function takeScreenshot() {
+      renderDisplay();
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `lumina-fluid-${Date.now()}.png`;
+      link.href = dataUrl;
+      link.click();
+      showToast('High-Res Screenshot Downloaded!');
+    }
+
+    // Initialize Everything
+    window.addEventListener('DOMContentLoaded', () => {
+      resizeCanvas();
+      particleSystem = new ParticleSystem(40000);
+      setupUI();
+
+      // Initial vibrant burst
+      for (let i = 0; i < 5; i++) {
+        const x = 0.3 + 0.4 * Math.random();
+        const y = 0.3 + 0.4 * Math.random();
+        const col = PRESETS.rainbow.palette[i % PRESETS.rainbow.palette.length];
+        splat(x, y, (Math.random() - 0.5) * 5000, (Math.random() - 0.5) * 5000, col);
+      }
+
+      requestAnimationFrame(animate);
+    });
+  </script>
+</body>
+</html>

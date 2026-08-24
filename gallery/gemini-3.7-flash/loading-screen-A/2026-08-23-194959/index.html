@@ -1,0 +1,1866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuantumFlow - Next-Gen Loading Screen & Telemetry Engine</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,700;1,400&family=Orbitron:wght@400;600;800;900&display=swap" rel="stylesheet">
+    
+    <!-- Three.js & Confetti CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-base: #070913;
+            --primary: #00f0ff;
+            --primary-glow: rgba(0, 240, 255, 0.4);
+            --secondary: #7000ff;
+            --accent: #ff007b;
+            --text-main: #f0f4fc;
+            --text-muted: #8892b0;
+            --surface: rgba(14, 19, 36, 0.7);
+            --surface-border: rgba(0, 240, 255, 0.18);
+            --font-main: 'Inter', -apple-system, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --font-display: 'Orbitron', sans-serif;
+            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Preset Themes */
+        body.theme-cyberpunk {
+            --bg-base: #05050a;
+            --primary: #00ff66;
+            --primary-glow: rgba(0, 255, 102, 0.45);
+            --secondary: #ff0055;
+            --accent: #ffe600;
+            --surface: rgba(10, 15, 10, 0.78);
+            --surface-border: rgba(0, 255, 102, 0.25);
+            --font-display: 'Orbitron', monospace;
+        }
+
+        body.theme-celestial {
+            --bg-base: #060412;
+            --primary: #ffd700;
+            --primary-glow: rgba(255, 215, 0, 0.4);
+            --secondary: #9945ff;
+            --accent: #ff7be5;
+            --surface: rgba(20, 14, 38, 0.75);
+            --surface-border: rgba(255, 215, 0, 0.2);
+            --font-display: 'Cinzel', serif;
+        }
+
+        body.theme-synthwave {
+            --bg-base: #0f051d;
+            --primary: #ff71ce;
+            --primary-glow: rgba(255, 113, 206, 0.45);
+            --secondary: #01cdfe;
+            --accent: #05ffa1;
+            --surface: rgba(30, 10, 50, 0.75);
+            --surface-border: rgba(255, 113, 206, 0.25);
+            --font-display: 'Orbitron', sans-serif;
+        }
+
+        body.theme-minimal {
+            --bg-base: #0a0c10;
+            --primary: #ffffff;
+            --primary-glow: rgba(255, 255, 255, 0.35);
+            --secondary: #3b82f6;
+            --accent: #60a5fa;
+            --surface: rgba(18, 22, 30, 0.85);
+            --surface-border: rgba(255, 255, 255, 0.12);
+            --font-display: 'Inter', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-base);
+            font-family: var(--font-main);
+            color: var(--text-main);
+            transition: background-color 0.6s ease;
+        }
+
+        /* 3D WebGL Canvas Layer */
+        #webgl-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: auto;
+        }
+
+        /* Scanlines and CRT FX */
+        .crt-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            background-size: 100% 3px, 6px 100%;
+            opacity: 0.65;
+            transition: opacity 0.3s;
+        }
+
+        .crt-vignette {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+            box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.85);
+        }
+
+        /* Main UI Wrapper */
+        .app-container {
+            position: relative;
+            z-index: 10;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 28px 36px;
+            pointer-events: none;
+        }
+
+        /* Interactive Elements Enablement */
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* Top Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+
+        .brand-block {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-icon-wrapper {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px var(--primary-glow);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .brand-icon-wrapper svg {
+            width: 24px;
+            height: 24px;
+            fill: none;
+            stroke: var(--primary);
+            stroke-width: 2;
+            filter: drop-shadow(0 0 6px var(--primary));
+            animation: pulse-spin 12s linear infinite;
+        }
+
+        .brand-title {
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: 1.25rem;
+            letter-spacing: 2px;
+            background: linear-gradient(135deg, #ffffff 20%, var(--primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-transform: uppercase;
+        }
+
+        .brand-badge {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 2px 8px;
+            border-radius: 20px;
+            background: rgba(0, 240, 255, 0.1);
+            border: 1px solid var(--surface-border);
+            color: var(--primary);
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        /* Top Controls Bar */
+        .top-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface);
+            padding: 6px 10px;
+            border-radius: 14px;
+            border: 1px solid var(--surface-border);
+            backdrop-filter: blur(16px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .toolbar-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+            font-family: var(--font-main);
+        }
+
+        .toolbar-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .toolbar-btn.active {
+            color: var(--bg-base);
+            background: var(--primary);
+            font-weight: 700;
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            justify-content: center;
+        }
+
+        /* Center Content Area */
+        .center-stage {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            max-width: 680px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        /* Holographic Ring Loader */
+        .holo-core {
+            position: relative;
+            width: 230px;
+            height: 230px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .ring-svg {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .ring-bg {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.05);
+            stroke-width: 6;
+        }
+
+        .ring-progress {
+            fill: none;
+            stroke: url(#coreGradient);
+            stroke-width: 6;
+            stroke-linecap: round;
+            stroke-dasharray: 628;
+            stroke-dashoffset: 628;
+            transition: stroke-dashoffset 0.18s linear;
+            filter: drop-shadow(0 0 10px var(--primary));
+        }
+
+        .ring-outer-orbit {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: 1px dashed rgba(0, 240, 255, 0.3);
+            border-radius: 50%;
+            animation: spin-cw 20s linear infinite;
+        }
+
+        .ring-inner-orbit {
+            position: absolute;
+            width: 75%;
+            height: 75%;
+            border: 1px dotted rgba(255, 0, 123, 0.4);
+            border-radius: 50%;
+            animation: spin-ccw 14s linear infinite;
+        }
+
+        .holo-value {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 3;
+        }
+
+        .percent-display {
+            font-family: var(--font-display);
+            font-size: 3.4rem;
+            font-weight: 900;
+            letter-spacing: -1px;
+            color: #ffffff;
+            text-shadow: 0 0 24px var(--primary-glow);
+            line-height: 1;
+        }
+
+        .percent-symbol {
+            font-size: 1.6rem;
+            color: var(--primary);
+            margin-left: 2px;
+        }
+
+        .status-badge {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            margin-top: 6px;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pulse-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--primary);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--primary);
+            animation: blink 1.2s ease-in-out infinite;
+        }
+
+        /* Dynamic Status & Log Display */
+        .stage-title {
+            font-family: var(--font-display);
+            font-size: 1.35rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            text-align: center;
+            color: #ffffff;
+            min-height: 32px;
+        }
+
+        .stage-description {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            text-align: center;
+            min-height: 24px;
+            margin-bottom: 24px;
+        }
+
+        /* Linear Progress Bar with Shimmer */
+        .progress-bar-container {
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--surface-border);
+            box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+            margin-bottom: 20px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--secondary), var(--primary), var(--accent));
+            background-size: 200% 100%;
+            border-radius: 10px;
+            transition: width 0.15s ease-out;
+            position: relative;
+            box-shadow: 0 0 18px var(--primary-glow);
+            animation: gradient-pan 3s linear infinite;
+        }
+
+        .progress-bar-shimmer {
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+            animation: shimmer 1.8s infinite;
+        }
+
+        /* Checkpoint Stepper */
+        .steps-container {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 20px;
+            gap: 8px;
+        }
+
+        .step-item {
+            flex: 1;
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .step-item.active {
+            border-color: var(--primary);
+            box-shadow: 0 0 14px var(--primary-glow);
+            background: rgba(0, 240, 255, 0.08);
+        }
+
+        .step-item.completed {
+            border-color: rgba(0, 255, 128, 0.4);
+            background: rgba(0, 255, 128, 0.05);
+        }
+
+        .step-indicator {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            transition: all 0.3s;
+        }
+
+        .step-item.active .step-indicator {
+            background: var(--primary);
+            color: var(--bg-base);
+            box-shadow: 0 0 10px var(--primary);
+        }
+
+        .step-item.completed .step-indicator {
+            background: #00ff88;
+            color: #000;
+        }
+
+        .step-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .step-item.active .step-label {
+            color: #fff;
+        }
+
+        .step-item.completed .step-label {
+            color: #a0f4cf;
+        }
+
+        /* Mini Game / Interactive Orbit Area */
+        .interactive-tip {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            padding: 8px 16px;
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            backdrop-filter: blur(8px);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .interactive-tip:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .tip-badge {
+            background: var(--primary);
+            color: var(--bg-base);
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 0.65rem;
+        }
+
+        /* Bottom Footer / Telemetry HUD */
+        .footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            width: 100%;
+        }
+
+        .telemetry-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 14px;
+            padding: 12px 18px;
+            backdrop-filter: blur(14px);
+            display: flex;
+            gap: 20px;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .telemetry-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .tel-label {
+            color: var(--text-muted);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .tel-value {
+            color: var(--text-main);
+            font-weight: 700;
+        }
+
+        /* Live Terminal Console Overlay */
+        .console-drawer {
+            position: fixed;
+            bottom: 28px;
+            right: 36px;
+            width: 320px;
+            height: 140px;
+            background: rgba(8, 12, 22, 0.88);
+            border: 1px solid var(--surface-border);
+            border-radius: 12px;
+            padding: 10px 14px;
+            backdrop-filter: blur(16px);
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: #6ce0ff;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column-reverse;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            z-index: 100;
+            pointer-events: auto;
+        }
+
+        .console-line {
+            line-height: 1.4;
+            opacity: 0.85;
+            word-break: break-all;
+        }
+        .console-line.highlight {
+            color: #00ff88;
+            font-weight: 700;
+        }
+        .console-line.error {
+            color: #ff3b69;
+        }
+
+        /* Control Panel Modal / Sidebar */
+        .controls-modal {
+            position: fixed;
+            top: 80px;
+            left: 36px;
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(24px);
+            z-index: 120;
+            width: 310px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+            pointer-events: auto;
+            animation: slide-in 0.25s var(--ease-out-expo);
+        }
+
+        .controls-modal.open {
+            display: flex;
+        }
+
+        .modal-title {
+            font-family: var(--font-display);
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 10px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+        }
+
+        .btn-mini {
+            flex: 1;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            color: var(--text-main);
+            font-size: 0.72rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .btn-mini:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .btn-mini.active {
+            background: var(--primary);
+            color: var(--bg-base);
+            font-weight: 700;
+            border-color: var(--primary);
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--primary);
+        }
+
+        /* Success & Ready Transition Screen */
+        .ready-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, rgba(14, 25, 48, 0.95) 0%, rgba(5, 7, 15, 0.98) 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.6s var(--ease-out-expo);
+            backdrop-filter: blur(20px);
+        }
+
+        .ready-screen.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .ready-card {
+            background: var(--surface);
+            border: 1px solid var(--surface-border);
+            border-radius: 24px;
+            padding: 44px;
+            text-align: center;
+            max-width: 520px;
+            box-shadow: 0 30px 80px rgba(0, 240, 255, 0.15);
+            animation: card-pop 0.5s var(--ease-out-expo);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .ready-badge-icon {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00f0ff, #00ff88);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            box-shadow: 0 0 35px rgba(0, 240, 255, 0.6);
+            margin-bottom: 8px;
+        }
+
+        .ready-title {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            color: #ffffff;
+        }
+
+        .ready-desc {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        .enter-btn {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: #ffffff;
+            border: none;
+            padding: 14px 38px;
+            border-radius: 12px;
+            font-family: var(--font-display);
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            cursor: pointer;
+            box-shadow: 0 10px 30px var(--primary-glow);
+            transition: all 0.25s ease;
+        }
+
+        .enter-btn:hover {
+            transform: translateY(-3px) scale(1.03);
+            box-shadow: 0 16px 40px var(--primary-glow);
+        }
+
+        .replay-link {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-decoration: underline;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+
+        .replay-link:hover {
+            color: var(--primary);
+        }
+
+        /* Keyframe Animations */
+        @keyframes spin-cw {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes spin-ccw {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(-360deg); }
+        }
+
+        @keyframes pulse-spin {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.08); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 0.3; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
+
+        @keyframes shimmer {
+            0% { left: -100%; }
+            100% { left: 200%; }
+        }
+
+        @keyframes gradient-pan {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes slide-in {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes card-pop {
+            from { opacity: 0; transform: scale(0.9) translateY(20px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        /* Game Score Floating Badges */
+        .floating-score {
+            position: absolute;
+            font-family: var(--font-display);
+            font-weight: 800;
+            color: #00ffcc;
+            font-size: 1.1rem;
+            pointer-events: none;
+            animation: float-up-fade 0.8s forwards ease-out;
+            z-index: 50;
+            text-shadow: 0 0 10px #00ffcc;
+        }
+
+        @keyframes float-up-fade {
+            0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -100px) scale(1.4); }
+        }
+
+        /* Responsive Layout Adjustments */
+        @media (max-width: 768px) {
+            .app-container {
+                padding: 16px 20px;
+            }
+            .holo-core {
+                width: 180px;
+                height: 180px;
+                margin-bottom: 20px;
+            }
+            .percent-display {
+                font-size: 2.5rem;
+            }
+            .steps-container {
+                display: none;
+            }
+            .console-drawer {
+                display: none;
+            }
+            .telemetry-card {
+                padding: 8px 12px;
+                gap: 12px;
+            }
+            .controls-modal {
+                left: 20px;
+                right: 20px;
+                width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Background Canvas -->
+    <canvas id="webgl-canvas"></canvas>
+
+    <!-- CRT Aesthetic Overlays -->
+    <div class="crt-overlay" id="crt-overlay"></div>
+    <div class="crt-vignette"></div>
+
+    <!-- UI Overlay Container -->
+    <div class="app-container">
+        
+        <!-- Header -->
+        <header class="header">
+            <div class="brand-block interactive">
+                <div class="brand-icon-wrapper">
+                    <svg viewBox="0 0 24 24">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                </div>
+                <div>
+                    <div class="brand-title">QUANTUM<span style="color:var(--primary)">FLOW</span></div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="brand-badge">CORE v3.9</span>
+                        <span style="font-size:0.65rem; color:var(--text-muted); font-family:var(--font-mono);">INITIALIZING CLUSTER</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Toolbar Controls -->
+            <div class="top-toolbar interactive">
+                <!-- Theme Selectors -->
+                <button class="toolbar-btn active" data-theme="scifi" title="Quantum Sci-Fi">Cosmic</button>
+                <button class="toolbar-btn" data-theme="cyberpunk" title="Cyberpunk Neon">Cyber</button>
+                <button class="toolbar-btn" data-theme="celestial" title="Celestial Gold">Arcane</button>
+                <button class="toolbar-btn" data-theme="synthwave" title="Retro Synthwave">Retro</button>
+                <button class="toolbar-btn" data-theme="minimal" title="Minimal Glass">Clean</button>
+                
+                <div style="width:1px; height:20px; background:rgba(255,255,255,0.15); margin:0 4px;"></div>
+                
+                <!-- Audio Toggle -->
+                <button class="toolbar-btn icon-btn" id="audio-toggle" title="Toggle Synthesizer Sound FX">
+                    <svg id="audio-icon" width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77zm-2.5-2.23l-5.5 4h-4c-.55 0-1 .45-1 1v12c0 .55.45 1 1 1h4l5.5 4c.67.49 1.5-.02 1.5-.82v-20.36c0-.8-0.83-1.31-1.5-.82z"/>
+                    </svg>
+                </button>
+
+                <!-- Settings / Simulation Options Modal Toggle -->
+                <button class="toolbar-btn icon-btn" id="settings-toggle" title="Loading Simulation Settings">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Simulation Control Modal -->
+        <div class="controls-modal" id="controls-modal">
+            <div class="modal-title">
+                <span>SIMULATION LAB</span>
+                <span id="close-modal" style="cursor:pointer; font-size:1.1rem; color:var(--text-muted);">&times;</span>
+            </div>
+            
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Loading Speed</span>
+                    <span id="speed-val">1.0x</span>
+                </div>
+                <input type="range" id="speed-slider" min="0.2" max="3.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">Simulation Profile</div>
+                <div class="btn-group">
+                    <button class="btn-mini active" data-profile="organic">Dynamic</button>
+                    <button class="btn-mini" data-profile="linear">Smooth</button>
+                    <button class="btn-mini" data-profile="stepped">Stepped</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">Visual Artifacts</div>
+                <div class="btn-group">
+                    <button class="btn-mini active" id="toggle-crt">CRT FX: ON</button>
+                    <button class="btn-mini active" id="toggle-bloom">Particles: ON</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">Actions</div>
+                <div class="btn-group">
+                    <button class="btn-mini" id="btn-pause">Pause</button>
+                    <button class="btn-mini" id="btn-restart">Restart</button>
+                    <button class="btn-mini" id="btn-glitch" style="color:#ff0055;">Simulate Spike</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Loading Stage -->
+        <main class="center-stage">
+            
+            <!-- Circular Holographic Loader -->
+            <div class="holo-core">
+                <div class="ring-outer-orbit"></div>
+                <div class="ring-inner-orbit"></div>
+                
+                <svg class="ring-svg" viewBox="0 0 220 220">
+                    <defs>
+                        <linearGradient id="coreGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="var(--secondary)" />
+                            <stop offset="50%" stop-color="var(--primary)" />
+                            <stop offset="100%" stop-color="var(--accent)" />
+                        </linearGradient>
+                    </defs>
+                    <circle class="ring-bg" cx="110" cy="110" r="96"></circle>
+                    <circle class="ring-progress" id="circular-progress-bar" cx="110" cy="110" r="96"></circle>
+                </svg>
+
+                <div class="holo-value">
+                    <div class="percent-display"><span id="percent-text">0</span><span class="percent-symbol">%</span></div>
+                    <div class="status-badge">
+                        <span class="pulse-dot"></span>
+                        <span id="status-mode-text">INITIALIZING</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Phase Title & Description -->
+            <div class="stage-title" id="stage-title">Establishing Quantum Neural Uplink</div>
+            <div class="stage-description" id="stage-description">Allocating high-bandwidth tensor buffers...</div>
+
+            <!-- Linear Bar Indicator -->
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="linear-progress-bar">
+                    <div class="progress-bar-shimmer"></div>
+                </div>
+            </div>
+
+            <!-- Checkpoint Stepper -->
+            <div class="steps-container">
+                <div class="step-item active" id="step-0">
+                    <div class="step-indicator">1</div>
+                    <div class="step-label">Handshake</div>
+                </div>
+                <div class="step-item" id="step-1">
+                    <div class="step-indicator">2</div>
+                    <div class="step-label">Shaders</div>
+                </div>
+                <div class="step-item" id="step-2">
+                    <div class="step-indicator">3</div>
+                    <div class="step-label">Neural Mesh</div>
+                </div>
+                <div class="step-item" id="step-3">
+                    <div class="step-indicator">4</div>
+                    <div class="step-label">Textures</div>
+                </div>
+                <div class="step-item" id="step-4">
+                    <div class="step-indicator">5</div>
+                    <div class="step-label">Sync</div>
+                </div>
+            </div>
+
+            <!-- Mini Game / Interactive Prompt -->
+            <div class="interactive-tip interactive" id="interactive-game-btn" title="Click moving particles or this prompt to charge hyper-boost!">
+                <span class="tip-badge">MINI-GAME</span>
+                <span>Click floating energy nodes in 3D space to accelerate loading! (Boost: <span id="boost-counter" style="color:var(--primary); font-weight:700;">0x</span>)</span>
+            </div>
+        </main>
+
+        <!-- Footer / HUD Telemetry -->
+        <footer class="footer">
+            <div class="telemetry-card interactive">
+                <div class="telemetry-item">
+                    <span class="tel-label">DATA THROUGHPUT</span>
+                    <span class="tel-value" id="hud-bandwidth">3.48 GB/s</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="tel-label">LATENCY</span>
+                    <span class="tel-value" id="hud-latency">1.8 ms</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="tel-label">TENSOR NODES</span>
+                    <span class="tel-value" id="hud-nodes">128 / 128</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="tel-label">FPS</span>
+                    <span class="tel-value" id="hud-fps" style="color:#00ff88;">60.0</span>
+                </div>
+            </div>
+
+            <div style="font-family:var(--font-mono); font-size:0.7rem; color:var(--text-muted); text-align:right;">
+                <span>ENCRYPTED SECURE CHANNEL</span><br>
+                <span style="color:var(--primary); font-weight:600;">TLS 1.3 // AES-GCM-256</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Live Terminal Stream Logs Drawer -->
+    <div class="console-drawer" id="console-drawer">
+        <div class="console-line highlight">[SYS] Bootstrapping QuantumFlow Engine kernel...</div>
+    </div>
+
+    <!-- Ready / Completed Experience Transition Screen -->
+    <div class="ready-screen" id="ready-screen">
+        <div class="ready-card">
+            <div class="ready-badge-icon">
+                <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </div>
+            <div class="ready-title">SYSTEM READY</div>
+            <p class="ready-desc">
+                All 5 subsystem modules, volumetric shaders, and neural weights have been successfully compiled and synchronized into local memory.
+            </p>
+            <button class="enter-btn interactive" id="btn-enter">LAUNCH WORKSPACE</button>
+            <span class="replay-link interactive" id="btn-replay-demo">Re-run Loading Sequence & Test Presets</span>
+        </div>
+    </div>
+
+    <!-- JavaScript Application Core -->
+    <script>
+        /**
+         * Web Audio Synthesizer (Zero External Audio Dependencies)
+         */
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+                this.enabled = true;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) {
+                        this.ctx = new AudioCtx();
+                    }
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playBlip(freq = 440, type = 'sine', duration = 0.08, vol = 0.08) {
+                if (!this.enabled) return;
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(freq * 1.5, this.ctx.currentTime + duration);
+
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + duration);
+                } catch (e) {}
+            }
+
+            playMilestone(stageIndex) {
+                if (!this.enabled) return;
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    const baseFreq = [320, 440, 580, 720, 880][stageIndex % 5] || 440;
+                    
+                    const now = this.ctx.currentTime;
+                    const osc1 = this.ctx.createOscillator();
+                    const osc2 = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+
+                    osc1.type = 'triangle';
+                    osc2.type = 'sine';
+                    osc1.frequency.setValueAtTime(baseFreq, now);
+                    osc2.frequency.setValueAtTime(baseFreq * 1.5, now);
+
+                    gain.gain.setValueAtTime(0.12, now);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+
+                    osc1.connect(gain);
+                    osc2.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    osc1.start(now);
+                    osc2.start(now);
+                    osc1.stop(now + 0.35);
+                    osc2.stop(now + 0.35);
+                } catch (e) {}
+            }
+
+            playSuccessChord() {
+                if (!this.enabled) return;
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    const chord = [523.25, 659.25, 783.99, 1046.50]; // C Major
+                    const now = this.ctx.currentTime;
+                    
+                    chord.forEach((freq, idx) => {
+                        const osc = this.ctx.createOscillator();
+                        const gain = this.ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+
+                        gain.gain.setValueAtTime(0.1, now + idx * 0.08);
+                        gain.gain.exponentialRampToValueAtTime(0.00001, now + idx * 0.08 + 1.2);
+
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        osc.start(now + idx * 0.08);
+                        osc.stop(now + idx * 0.08 + 1.2);
+                    });
+                } catch (e) {}
+            }
+
+            playBoostPop() {
+                if (!this.enabled) return;
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, now);
+                    osc.frequency.exponentialRampToValueAtTime(1600, now + 0.12);
+
+                    gain.gain.setValueAtTime(0.18, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                } catch (e) {}
+            }
+        }
+
+        const sound = new SoundEngine();
+
+        /**
+         * 3D WebGL Background Engine (Three.js)
+         */
+        class VisualEngine {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.particleCount = 1200;
+                this.particles = null;
+                this.particleGeo = null;
+                this.particleMat = null;
+                this.interactiveNodes = [];
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2(-999, -999);
+                this.targetSpeed = 0.003;
+                this.currentTheme = 'scifi';
+                this.warpMode = false;
+                this.tunnelMesh = null;
+                this.init();
+            }
+
+            init() {
+                this.scene = new THREE.Scene();
+                this.scene.fog = new THREE.FogExp2(0x070913, 0.0015);
+
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+                this.camera.position.z = 400;
+
+                this.renderer = new THREE.WebGLRenderer({
+                    canvas: this.canvas,
+                    antialias: true,
+                    alpha: true
+                });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+                this.buildParticleVortex();
+                this.buildInteractiveNodes();
+                this.buildTorusField();
+
+                window.addEventListener('resize', () => this.onWindowResize());
+                window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+                window.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+
+                this.animate();
+            }
+
+            buildParticleVortex() {
+                this.particleGeo = new THREE.BufferGeometry();
+                const pos = new Float32Array(this.particleCount * 3);
+                const colors = new Float32Array(this.particleCount * 3);
+                const scales = new Float32Array(this.particleCount);
+
+                const c1 = new THREE.Color(0x00f0ff);
+                const c2 = new THREE.Color(0x7000ff);
+
+                for (let i = 0; i < this.particleCount; i++) {
+                    const i3 = i * 3;
+                    const radius = 60 + Math.random() * 500;
+                    const theta = Math.random() * Math.PI * 2;
+                    const z = (Math.random() - 0.5) * 1200;
+
+                    pos[i3] = Math.cos(theta) * radius;
+                    pos[i3 + 1] = Math.sin(theta) * radius;
+                    pos[i3 + 2] = z;
+
+                    const mixedColor = c1.clone().lerp(c2, Math.random());
+                    colors[i3] = mixedColor.r;
+                    colors[i3 + 1] = mixedColor.g;
+                    colors[i3 + 2] = mixedColor.b;
+
+                    scales[i] = Math.random() * 3.5 + 1.0;
+                }
+
+                this.particleGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                this.particleGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                this.particleGeo.setAttribute('scale', new THREE.BufferAttribute(scales, 1));
+
+                // Canvas Circle Texture for smooth glowing particles
+                const canvas = document.createElement('canvas');
+                canvas.width = 64;
+                canvas.height = 64;
+                const ctx = canvas.getContext('2d');
+                const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+                grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.8)');
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 64, 64);
+                const texture = new THREE.CanvasTexture(canvas);
+
+                this.particleMat = new THREE.PointsMaterial({
+                    size: 7,
+                    vertexColors: true,
+                    map: texture,
+                    transparent: true,
+                    opacity: 0.85,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+
+                this.particles = new THREE.Points(this.particleGeo, this.particleMat);
+                this.scene.add(this.particles);
+            }
+
+            buildTorusField() {
+                const geo = new THREE.TorusGeometry(180, 0.8, 16, 100);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: 0x00f0ff,
+                    wireframe: true,
+                    transparent: true,
+                    opacity: 0.18
+                });
+                this.tunnelMesh = new THREE.Mesh(geo, mat);
+                this.scene.add(this.tunnelMesh);
+
+                const geo2 = new THREE.TorusGeometry(260, 0.6, 16, 100);
+                this.outerRingMesh = new THREE.Mesh(geo2, mat.clone());
+                this.outerRingMesh.material.color.setHex(0x7000ff);
+                this.outerRingMesh.material.opacity = 0.12;
+                this.scene.add(this.outerRingMesh);
+            }
+
+            buildInteractiveNodes() {
+                // Clickable Floating Orbs for mini-game
+                const orbGeo = new THREE.SphereGeometry(6, 16, 16);
+                const orbMat = new THREE.MeshBasicMaterial({
+                    color: 0x00ffcc,
+                    wireframe: true,
+                    transparent: true,
+                    opacity: 0.85
+                });
+
+                for (let i = 0; i < 8; i++) {
+                    const orb = new THREE.Mesh(orbGeo, orbMat.clone());
+                    this.resetNodePosition(orb);
+                    orb.userData = {
+                        rotSpeedX: (Math.random() - 0.5) * 0.04,
+                        rotSpeedY: (Math.random() - 0.5) * 0.04,
+                        orbitRadius: 100 + Math.random() * 120,
+                        angle: (i / 8) * Math.PI * 2,
+                        speed: 0.015 + Math.random() * 0.015
+                    };
+                    this.scene.add(orb);
+                    this.interactiveNodes.push(orb);
+                }
+            }
+
+            resetNodePosition(orb) {
+                orb.position.x = (Math.random() - 0.5) * 350;
+                orb.position.y = (Math.random() - 0.5) * 250;
+                orb.position.z = 100 + (Math.random() - 0.5) * 150;
+            }
+
+            onWindowResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+
+            onMouseMove(e) {
+                this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+                this.camera.position.x += (this.mouse.x * 35 - this.camera.position.x) * 0.05;
+                this.camera.position.y += (this.mouse.y * 35 - this.camera.position.y) * 0.05;
+                this.camera.lookAt(0, 0, 0);
+            }
+
+            onPointerDown(e) {
+                sound.init();
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const intersects = this.raycaster.intersectObjects(this.interactiveNodes);
+
+                if (intersects.length > 0) {
+                    const hitOrb = intersects[0].object;
+                    hitOrb.scale.set(2, 2, 2);
+                    setTimeout(() => hitOrb.scale.set(1, 1, 1), 150);
+                    this.resetNodePosition(hitOrb);
+                    
+                    // Boost loading simulation
+                    app.registerOrbHit(e.clientX, e.clientY);
+                }
+            }
+
+            setTheme(themeKey) {
+                this.currentTheme = themeKey;
+                let c1Hex, c2Hex;
+                
+                switch (themeKey) {
+                    case 'cyberpunk':
+                        c1Hex = 0x00ff66;
+                        c2Hex = 0xff0055;
+                        this.scene.fog.color.setHex(0x05050a);
+                        break;
+                    case 'celestial':
+                        c1Hex = 0xffd700;
+                        c2Hex = 0x9945ff;
+                        this.scene.fog.color.setHex(0x060412);
+                        break;
+                    case 'synthwave':
+                        c1Hex = 0xff71ce;
+                        c2Hex = 0x01cdfe;
+                        this.scene.fog.color.setHex(0x0f051d);
+                        break;
+                    case 'minimal':
+                        c1Hex = 0xffffff;
+                        c2Hex = 0x3b82f6;
+                        this.scene.fog.color.setHex(0x0a0c10);
+                        break;
+                    default: // scifi
+                        c1Hex = 0x00f0ff;
+                        c2Hex = 0x7000ff;
+                        this.scene.fog.color.setHex(0x070913);
+                        break;
+                }
+
+                if (this.tunnelMesh) this.tunnelMesh.material.color.setHex(c1Hex);
+                if (this.outerRingMesh) this.outerRingMesh.material.color.setHex(c2Hex);
+
+                const colors = this.particleGeo.attributes.color.array;
+                const c1 = new THREE.Color(c1Hex);
+                const c2 = new THREE.Color(c2Hex);
+
+                for (let i = 0; i < this.particleCount; i++) {
+                    const i3 = i * 3;
+                    const mixed = c1.clone().lerp(c2, Math.random());
+                    colors[i3] = mixed.r;
+                    colors[i3 + 1] = mixed.g;
+                    colors[i3 + 2] = mixed.b;
+                }
+                this.particleGeo.attributes.color.needsUpdate = true;
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+
+                const time = performance.now() * 0.001;
+
+                if (this.particles) {
+                    const positions = this.particleGeo.attributes.position.array;
+                    const speedMultiplier = this.warpMode ? 6.0 : (1.0 + (app.progress / 100) * 1.5);
+
+                    for (let i = 0; i < this.particleCount; i++) {
+                        const i3 = i * 3;
+                        positions[i3 + 2] += (2.5 + (i % 5)) * speedMultiplier;
+
+                        // Wrap around camera
+                        if (positions[i3 + 2] > 600) {
+                            positions[i3 + 2] = -600;
+                        }
+                    }
+                    this.particleGeo.attributes.position.needsUpdate = true;
+                    this.particles.rotation.z += 0.001 * speedMultiplier;
+                }
+
+                if (this.tunnelMesh) {
+                    this.tunnelMesh.rotation.x = time * 0.2;
+                    this.tunnelMesh.rotation.y = time * 0.3;
+                }
+
+                if (this.outerRingMesh) {
+                    this.outerRingMesh.rotation.x = -time * 0.15;
+                    this.outerRingMesh.rotation.y = -time * 0.25;
+                }
+
+                // Interactive Nodes floating animation
+                this.interactiveNodes.forEach((orb) => {
+                    const ud = orb.userData;
+                    ud.angle += ud.speed;
+                    orb.position.x = Math.cos(ud.angle) * ud.orbitRadius;
+                    orb.position.y = Math.sin(ud.angle) * ud.orbitRadius + Math.sin(time * 2 + ud.angle) * 20;
+                    orb.rotation.x += ud.rotSpeedX;
+                    orb.rotation.y += ud.rotSpeedY;
+                });
+
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        /**
+         * Main Application & Simulation Controller
+         */
+        class LoadingApp {
+            constructor() {
+                this.progress = 0;
+                this.targetProgress = 0;
+                this.isPaused = false;
+                this.speedMultiplier = 1.0;
+                this.profile = 'organic';
+                this.boostCount = 0;
+                this.currentStageIndex = 0;
+                this.fpsHistory = [];
+                this.lastFrameTime = performance.now();
+
+                this.stages = [
+                    { percent: 0, title: "Establishing Quantum Neural Uplink", desc: "Allocating high-bandwidth tensor memory banks..." },
+                    { percent: 20, title: "Compiling Volumetric Shaders", desc: "Generating procedural particle compute buffers..." },
+                    { percent: 48, title: "Synchronizing Neural Mesh Weights", desc: "Verifying cryptographic integrity hash [0x7F...3B]..." },
+                    { percent: 75, title: "Streaming High-Res Textures", desc: "Decompressing ultra-dense voxel octree blocks..." },
+                    { percent: 92, title: "Finalizing System Calibration", desc: "Injecting live telemetry stream and warming cache..." },
+                    { percent: 100, title: "Workspace Synchronized", desc: "All systems nominal. Environment online." }
+                ];
+
+                this.initDOM();
+                this.visual = new VisualEngine(document.getElementById('webgl-canvas'));
+                this.setupEventListeners();
+                this.startSimulationLoop();
+                this.startTelemetryHUD();
+            }
+
+            initDOM() {
+                this.percentText = document.getElementById('percent-text');
+                this.circularBar = document.getElementById('circular-progress-bar');
+                this.linearBar = document.getElementById('linear-progress-bar');
+                this.stageTitle = document.getElementById('stage-title');
+                this.stageDesc = document.getElementById('stage-description');
+                this.statusModeText = document.getElementById('status-mode-text');
+                this.consoleDrawer = document.getElementById('console-drawer');
+                this.readyScreen = document.getElementById('ready-screen');
+                this.boostCounter = document.getElementById('boost-counter');
+
+                // SVG Circular perimeter = 2 * PI * 96 ≈ 603.18
+                this.circumference = 2 * Math.PI * 96;
+                this.circularBar.style.strokeDasharray = `${this.circumference} ${this.circumference}`;
+                this.circularBar.style.strokeDashoffset = this.circumference;
+            }
+
+            setupEventListeners() {
+                // Theme buttons
+                document.querySelectorAll('.top-toolbar .toolbar-btn[data-theme]').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        sound.init();
+                        sound.playBlip(540, 'triangle', 0.05);
+                        document.querySelectorAll('.top-toolbar .toolbar-btn[data-theme]').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        const theme = btn.getAttribute('data-theme');
+                        document.body.className = `theme-${theme}`;
+                        this.visual.setTheme(theme);
+                        this.logConsole(`[THEME] Switched visual theme preset to '${theme.toUpperCase()}'`, 'highlight');
+                    });
+                });
+
+                // Audio toggle
+                const audioBtn = document.getElementById('audio-toggle');
+                audioBtn.addEventListener('click', () => {
+                    sound.enabled = !sound.enabled;
+                    audioBtn.classList.toggle('active', sound.enabled);
+                    sound.playBlip(sound.enabled ? 660 : 330, 'sine', 0.08);
+                    this.logConsole(`[AUDIO] Synthesizer Sound FX ${sound.enabled ? 'ENABLED' : 'MUTED'}`);
+                });
+                audioBtn.classList.add('active');
+
+                // Settings modal toggle
+                const settingsBtn = document.getElementById('settings-toggle');
+                const modal = document.getElementById('controls-modal');
+                const closeModal = document.getElementById('close-modal');
+
+                settingsBtn.addEventListener('click', () => {
+                    sound.init();
+                    sound.playBlip(480, 'sine', 0.05);
+                    modal.classList.toggle('open');
+                });
+                closeModal.addEventListener('click', () => modal.classList.remove('open'));
+
+                // Speed slider
+                const speedSlider = document.getElementById('speed-slider');
+                const speedVal = document.getElementById('speed-val');
+                speedSlider.addEventListener('input', (e) => {
+                    this.speedMultiplier = parseFloat(e.target.value);
+                    speedVal.textContent = `${this.speedMultiplier.toFixed(1)}x`;
+                });
+
+                // Simulation Profile buttons
+                document.querySelectorAll('[data-profile]').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('[data-profile]').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        this.profile = btn.getAttribute('data-profile');
+                        this.logConsole(`[SIM] Loading profile changed to '${this.profile}'`);
+                    });
+                });
+
+                // CRT toggle
+                const toggleCrt = document.getElementById('toggle-crt');
+                const crtOverlay = document.getElementById('crt-overlay');
+                toggleCrt.addEventListener('click', () => {
+                    const isOff = crtOverlay.style.opacity === '0';
+                    crtOverlay.style.opacity = isOff ? '0.65' : '0';
+                    toggleCrt.textContent = `CRT FX: ${isOff ? 'ON' : 'OFF'}`;
+                    toggleCrt.classList.toggle('active', isOff);
+                });
+
+                // Bloom / particles toggle
+                const toggleBloom = document.getElementById('toggle-bloom');
+                toggleBloom.addEventListener('click', () => {
+                    const active = this.visual.particles.visible;
+                    this.visual.particles.visible = !active;
+                    toggleBloom.textContent = `Particles: ${!active ? 'ON' : 'OFF'}`;
+                    toggleBloom.classList.toggle('active', !active);
+                });
+
+                // Pause / Restart / Glitch buttons
+                const pauseBtn = document.getElementById('btn-pause');
+                pauseBtn.addEventListener('click', () => {
+                    this.isPaused = !this.isPaused;
+                    pauseBtn.textContent = this.isPaused ? 'Resume' : 'Pause';
+                    pauseBtn.classList.toggle('active', this.isPaused);
+                    this.statusModeText.textContent = this.isPaused ? 'PAUSED' : 'STREAMING';
+                });
+
+                document.getElementById('btn-restart').addEventListener('click', () => this.restart());
+                document.getElementById('btn-replay-demo').addEventListener('click', () => {
+                    this.readyScreen.classList.remove('visible');
+                    this.restart();
+                });
+
+                document.getElementById('btn-glitch').addEventListener('click', () => {
+                    sound.playBlip(200, 'sawtooth', 0.25, 0.2);
+                    this.logConsole(`[WARN] Critical cache spike! Stuttering buffer stream...`, 'error');
+                    this.progress = Math.max(0, this.progress - 15);
+                    this.targetProgress = this.progress;
+                    document.body.style.filter = 'invert(0.15) hue-rotate(90deg)';
+                    setTimeout(() => document.body.style.filter = '', 200);
+                });
+
+                // Interactive Mini-game Tip click
+                document.getElementById('interactive-game-btn').addEventListener('click', (e) => {
+                    this.registerOrbHit(e.clientX, e.clientY);
+                });
+
+                // Enter Workspace button
+                document.getElementById('btn-enter').addEventListener('click', () => {
+                    sound.playBlip(880, 'triangle', 0.2);
+                    alert("Welcome to the QuantumFlow Workspace!\n\nAll modules and components are loaded and ready.");
+                });
+            }
+
+            registerOrbHit(x, y) {
+                this.boostCount++;
+                this.boostCounter.textContent = `${this.boostCount}x`;
+                sound.playBoostPop();
+                
+                // Advance progress bonus!
+                this.targetProgress = Math.min(100, this.targetProgress + 6.5);
+
+                // Spawn floating badge
+                const float = document.createElement('div');
+                float.className = 'floating-score';
+                float.style.left = `${x || window.innerWidth / 2}px`;
+                float.style.top = `${y || window.innerHeight / 2}px`;
+                float.textContent = `+SPEED BOOST!`;
+                document.body.appendChild(float);
+                setTimeout(() => float.remove(), 800);
+
+                this.logConsole(`[BOOST] Interactive orb harvest! Telemetry feed accelerated +6.5%`, 'highlight');
+            }
+
+            logConsole(msg, type = '') {
+                const line = document.createElement('div');
+                line.className = `console-line ${type}`;
+                const time = new Date().toISOString().substring(11, 19);
+                line.textContent = `[${time}] ${msg}`;
+                this.consoleDrawer.insertBefore(line, this.consoleDrawer.firstChild);
+
+                // Keep up to 25 lines
+                if (this.consoleDrawer.children.length > 25) {
+                    this.consoleDrawer.removeChild(this.consoleDrawer.lastChild);
+                }
+            }
+
+            updateStageCheckpoints(pct) {
+                let stageIdx = 0;
+                for (let i = 0; i < this.stages.length; i++) {
+                    if (pct >= this.stages[i].percent) {
+                        stageIdx = i;
+                    }
+                }
+
+                if (stageIdx !== this.currentStageIndex) {
+                    this.currentStageIndex = stageIdx;
+                    const stage = this.stages[stageIdx];
+                    this.stageTitle.textContent = stage.title;
+                    this.stageDesc.textContent = stage.desc;
+
+                    sound.playMilestone(stageIdx);
+                    this.logConsole(`[STAGE ${stageIdx + 1}/5] ${stage.title} -> OK`, 'highlight');
+
+                    // Stepper highlight
+                    document.querySelectorAll('.step-item').forEach((step, idx) => {
+                        step.classList.remove('active', 'completed');
+                        if (idx < stageIdx) step.classList.add('completed');
+                        else if (idx === stageIdx) step.classList.add('active');
+                    });
+                }
+            }
+
+            startSimulationLoop() {
+                let nextStepDelay = 0;
+
+                const tick = () => {
+                    if (!this.isPaused && this.progress < 100) {
+                        // Profile-driven progression logic
+                        let increment = 0.25 * this.speedMultiplier;
+
+                        if (this.profile === 'organic') {
+                            // Organic has realistic micro-pauses and acceleration bursts
+                            const jitter = Math.sin(performance.now() * 0.005);
+                            increment *= (1.0 + jitter * 0.55);
+                            if (Math.random() < 0.02) increment = 0; // occasional momentary delay
+                        } else if (this.profile === 'stepped') {
+                            // Jump in steps
+                            if (Math.random() < 0.05) increment = 5.0 * this.speedMultiplier;
+                            else increment = 0.05 * this.speedMultiplier;
+                        }
+
+                        this.targetProgress = Math.min(100, this.targetProgress + increment);
+                    }
+
+                    // Smooth lerp progress towards target
+                    const diff = this.targetProgress - this.progress;
+                    this.progress += diff * 0.12;
+
+                    if (this.progress >= 99.85 && this.targetProgress >= 100) {
+                        this.progress = 100;
+                        this.onComplete();
+                    }
+
+                    this.renderProgress(this.progress);
+                    requestAnimationFrame(tick);
+                };
+
+                requestAnimationFrame(tick);
+            }
+
+            renderProgress(pct) {
+                const rounded = Math.floor(pct);
+                this.percentText.textContent = rounded;
+
+                // Circular bar offset
+                const offset = this.circumference - (pct / 100) * this.circumference;
+                this.circularBar.style.strokeDashoffset = offset;
+
+                // Linear bar fill
+                this.linearBar.style.width = `${pct}%`;
+
+                this.updateStageCheckpoints(pct);
+            }
+
+            onComplete() {
+                if (this.completed) return;
+                this.completed = true;
+                this.statusModeText.textContent = "SYNCHRONIZED";
+                this.visual.warpMode = true;
+
+                sound.playSuccessChord();
+                this.logConsole(`[COMPLETE] Quantum synchronization reached 100%. Environment Ready!`, 'highlight');
+
+                // Fire celebration confetti
+                if (window.confetti) {
+                    window.confetti({
+                        particleCount: 90,
+                        spread: 80,
+                        origin: { y: 0.6 },
+                        colors: ['#00f0ff', '#7000ff', '#ff007b', '#00ff88', '#ffd700']
+                    });
+                }
+
+                setTimeout(() => {
+                    this.readyScreen.classList.add('visible');
+                }, 700);
+            }
+
+            restart() {
+                this.progress = 0;
+                this.targetProgress = 0;
+                this.completed = false;
+                this.boostCount = 0;
+                this.boostCounter.textContent = '0x';
+                this.currentStageIndex = -1;
+                this.isPaused = false;
+                this.visual.warpMode = false;
+                document.getElementById('btn-pause').textContent = 'Pause';
+                document.getElementById('btn-pause').classList.remove('active');
+                this.statusModeText.textContent = "INITIALIZING";
+                this.readyScreen.classList.remove('visible');
+                this.logConsole(`[SYS] Sequence reset. Initiating cold boot handshake...`);
+                sound.playBlip(300, 'sawtooth', 0.15);
+            }
+
+            startTelemetryHUD() {
+                const hudBw = document.getElementById('hud-bandwidth');
+                const hudLat = document.getElementById('hud-latency');
+                const hudFps = document.getElementById('hud-fps');
+
+                setInterval(() => {
+                    // Simulated dynamic telemetry metrics
+                    const bw = (2.8 + Math.sin(Date.now() * 0.002) * 1.4 + Math.random() * 0.3).toFixed(2);
+                    hudBw.textContent = `${bw} GB/s`;
+
+                    const lat = (1.2 + Math.random() * 0.9).toFixed(1);
+                    hudLat.textContent = `${lat} ms`;
+
+                    // Calculate real FPS
+                    const now = performance.now();
+                    const delta = (now - this.lastFrameTime) / 1000;
+                    this.lastFrameTime = now;
+                    const fps = Math.min(60, Math.round(1 / (delta || 0.016)));
+                    hudFps.textContent = `${fps}.0`;
+                }, 400);
+            }
+        }
+
+        // Initialize when DOM is ready
+        let app;
+        window.addEventListener('DOMContentLoaded', () => {
+            app = new LoadingApp();
+        });
+    </script>
+</body>
+</html>

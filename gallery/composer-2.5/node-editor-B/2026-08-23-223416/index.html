@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Editor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0e0f14;
+    --surface: #161821;
+    --surface2: #1e2130;
+    --border: #2a2f42;
+    --text: #e4e6f0;
+    --muted: #7a8199;
+    --accent: #6c8cff;
+    --accent-glow: rgba(108, 140, 255, 0.35);
+    --port-in: #5eead4;
+    --port-out: #fbbf24;
+    --wire: #4a5270;
+    --wire-active: #6c8cff;
+    --danger: #f87171;
+    --grid: rgba(255,255,255,0.03);
+    --shadow: 0 8px 32px rgba(0,0,0,0.45);
+    --radius: 10px;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: var(--font); background: var(--bg); color: var(--text); }
+  #app { display: flex; width: 100%; height: 100%; }
+
+  /* Sidebar */
+  #sidebar {
+    width: 240px; min-width: 240px; background: var(--surface);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    z-index: 10;
+  }
+  .sidebar-header {
+    padding: 20px 18px 14px; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .sidebar-header p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .palette { flex: 1; overflow-y: auto; padding: 12px; }
+  .palette-group { margin-bottom: 16px; }
+  .palette-group h3 {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--muted); padding: 0 6px 8px;
+  }
+  .palette-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border-radius: 8px; cursor: grab; margin-bottom: 4px;
+    background: var(--surface2); border: 1px solid transparent;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+    user-select: none;
+  }
+  .palette-item:hover { border-color: var(--border); background: #252a3a; }
+  .palette-item:active { cursor: grabbing; transform: scale(0.97); }
+  .palette-icon {
+    width: 28px; height: 28px; border-radius: 6px; display: flex;
+    align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0;
+  }
+  .palette-item span { font-size: 12px; font-weight: 500; }
+  .sidebar-footer {
+    padding: 14px 18px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); line-height: 1.6;
+  }
+  kbd {
+    display: inline-block; padding: 1px 5px; border-radius: 4px;
+    background: var(--surface2); border: 1px solid var(--border);
+    font-family: var(--mono); font-size: 9px;
+  }
+
+  /* Canvas area */
+  #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+  #canvas {
+    width: 100%; height: 100%; cursor: grab; display: block;
+    background: var(--bg);
+  }
+  #canvas.panning { cursor: grabbing; }
+  #canvas.connecting { cursor: crosshair; }
+
+  /* Toolbar */
+  #toolbar {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px; padding: 4px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    box-shadow: var(--shadow); z-index: 5;
+  }
+  .tool-btn {
+    width: 34px; height: 34px; border: none; border-radius: 7px;
+    background: transparent; color: var(--muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; transition: background 0.15s, color 0.15s;
+  }
+  .tool-btn:hover { background: var(--surface2); color: var(--text); }
+  .tool-btn.active { background: var(--accent); color: #fff; }
+  .tool-sep { width: 1px; background: var(--border); margin: 6px 2px; }
+
+  /* Status bar */
+  #status {
+    position: absolute; bottom: 16px; left: 16px; padding: 8px 14px;
+    border-radius: 8px; background: var(--surface); border: 1px solid var(--border);
+    font-size: 11px; color: var(--muted); z-index: 5; font-family: var(--mono);
+  }
+
+  /* Minimap */
+  #minimap {
+    position: absolute; bottom: 16px; right: 16px; width: 160px; height: 100px;
+    border-radius: 8px; background: var(--surface); border: 1px solid var(--border);
+    overflow: hidden; z-index: 5; opacity: 0.85;
+  }
+  #minimap canvas { width: 100%; height: 100%; }
+
+  /* Context menu */
+  #ctx-menu {
+    position: fixed; display: none; min-width: 160px; padding: 4px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: var(--shadow); z-index: 100;
+  }
+  #ctx-menu.visible { display: block; }
+  .ctx-item {
+    padding: 8px 12px; border-radius: 5px; font-size: 12px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .ctx-item:hover { background: var(--surface2); }
+  .ctx-item.danger { color: var(--danger); }
+  .ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* Toast */
+  #toast {
+    position: fixed; top: 20px; right: 20px; padding: 10px 18px;
+    border-radius: 8px; background: var(--surface2); border: 1px solid var(--border);
+    font-size: 12px; opacity: 0; transform: translateY(-10px);
+    transition: opacity 0.3s, transform 0.3s; z-index: 200; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>Flow Studio</h1>
+      <p>Visual node editor</p>
+    </div>
+    <div class="palette" id="palette"></div>
+    <div class="sidebar-footer">
+      <kbd>Scroll</kbd> zoom &nbsp; <kbd>Space</kbd>+drag pan<br>
+      <kbd>Del</kbd> delete &nbsp; <kbd>Esc</kbd> cancel wire
+    </div>
+  </aside>
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+    <div id="toolbar">
+      <button class="tool-btn active" data-tool="select" title="Select (V)">⬚</button>
+      <button class="tool-btn" data-tool="pan" title="Pan (H)">✋</button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" id="btn-fit" title="Fit view">⊡</button>
+      <button class="tool-btn" id="btn-clear" title="Clear all">🗑</button>
+    </div>
+    <div id="status">nodes: 0 · wires: 0 · zoom: 100%</div>
+    <div id="minimap"><canvas id="minimap-canvas"></canvas></div>
+  </div>
+</div>
+<div id="ctx-menu"></div>
+<div id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const NODE_TYPES = {
+    input:   { label: 'Input',    color: '#5eead4', icon: '▶', inputs: 0, outputs: 1, w: 160, h: 72 },
+    number:  { label: 'Number',   color: '#a78bfa', icon: '#', inputs: 0, outputs: 1, w: 140, h: 72 },
+    add:     { label: 'Add',      color: '#6c8cff', icon: '+', inputs: 2, outputs: 1, w: 130, h: 90 },
+    multiply:{ label: 'Multiply', color: '#6c8cff', icon: '×', inputs: 2, outputs: 1, w: 130, h: 90 },
+    lerp:    { label: 'Lerp',     color: '#6c8cff', icon: '↔', inputs: 3, outputs: 1, w: 130, h: 110 },
+    sine:    { label: 'Sine',     color: '#f472b6', icon: '~', inputs: 1, outputs: 1, w: 130, h: 72 },
+    color:   { label: 'Color',    color: '#fb923c', icon: '◉', inputs: 3, outputs: 1, w: 150, h: 90 },
+    mix:     { label: 'Mix',      color: '#fb923c', icon: '◐', inputs: 3, outputs: 1, w: 140, h: 110 },
+    output:  { label: 'Output',   color: '#f87171', icon: '■', inputs: 1, outputs: 0, w: 150, h: 72 },
+    comment: { label: 'Comment',  color: '#64748b', icon: '💬', inputs: 0, outputs: 0, w: 180, h: 60, comment: true },
+  };
+
+  const GROUPS = [
+    { name: 'Sources', types: ['input', 'number'] },
+    { name: 'Math', types: ['add', 'multiply', 'lerp', 'sine'] },
+    { name: 'Visual', types: ['color', 'mix'] },
+    { name: 'Output', types: ['output'] },
+    { name: 'Utility', types: ['comment'] },
+  ];
+
+  let nodes = [];
+  let wires = [];
+  let nextId = 1;
+  let cam = { x: 0, y: 0, zoom: 1 };
+  let tool = 'select';
+  let selected = new Set();
+  let hoveredNode = null;
+  let hoveredPort = null;
+  let dragState = null;
+  let wireDrag = null;
+  let spaceDown = false;
+  let ctxTarget = null;
+
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvas-wrap');
+  const statusEl = document.getElementById('status');
+  const mmCanvas = document.getElementById('minimap-canvas');
+  const mmCtx = mmCanvas.getContext('2d');
+  const ctxMenu = document.getElementById('ctx-menu');
+  const toastEl = document.getElementById('toast');
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 2000);
+  }
+
+  function uid() { return nextId++; }
+
+  function screenToWorld(sx, sy) {
+    return { x: (sx - cam.x) / cam.zoom, y: (sy - cam.y) / cam.zoom };
+  }
+
+  function worldToScreen(wx, wy) {
+    return { x: wx * cam.zoom + cam.x, y: wy * cam.zoom + cam.y };
+  }
+
+  function getPortPos(node, portIndex, isOutput) {
+    const def = NODE_TYPES[node.type];
+    const side = isOutput ? 'outputs' : 'inputs';
+    const count = def[side];
+    if (count === 0) return null;
+    const spacing = (def.h - 20) / (count + 1);
+    const y = node.y + 14 + spacing * (portIndex + 1);
+    const x = isOutput ? node.x + def.w : node.x;
+    return { x, y };
+  }
+
+  function createNode(type, x, y, extra = {}) {
+    const def = NODE_TYPES[type];
+    const node = {
+      id: uid(), type, x, y,
+      value: extra.value ?? (type === 'number' ? 1 : type === 'input' ? 0.5 : 0),
+      text: extra.text ?? '',
+      ...extra
+    };
+    nodes.push(node);
+    return node;
+  }
+
+  function deleteNode(id) {
+    nodes = nodes.filter(n => n.id !== id);
+    wires = wires.filter(w => {
+      const from = nodes.find(n => n.id === w.fromNode);
+      const to = nodes.find(n => n.id === w.toNode);
+      return from && to;
+    });
+    wires = wires.filter(w => w.fromNode !== id && w.toNode !== id);
+    selected.delete(id);
+  }
+
+  function deleteWire(id) {
+    wires = wires.filter(w => w.id !== id);
+  }
+
+  function hitTestNode(wx, wy) {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      const def = NODE_TYPES[n.type];
+      if (wx >= n.x && wx <= n.x + def.w && wy >= n.y && wy <= n.y + def.h) return n;
+    }
+    return null;
+  }
+
+  function hitTestPort(wx, wy) {
+    const r = 10 / cam.zoom;
+    for (const n of nodes) {
+      const def = NODE_TYPES[n.type];
+      for (let i = 0; i < def.outputs; i++) {
+        const p = getPortPos(n, i, true);
+        if (Math.hypot(wx - p.x, wy - p.y) < r) return { node: n, index: i, isOutput: true };
+      }
+      for (let i = 0; i < def.inputs; i++) {
+        const p = getPortPos(n, i, false);
+        if (Math.hypot(wx - p.x, wy - p.y) < r) return { node: n, index: i, isOutput: false };
+      }
+    }
+    return null;
+  }
+
+  function hitTestWire(wx, wy) {
+    const threshold = 8 / cam.zoom;
+    for (const w of wires) {
+      const from = nodes.find(n => n.id === w.fromNode);
+      const to = nodes.find(n => n.id === w.toNode);
+      if (!from || !to) continue;
+      const p0 = getPortPos(from, w.fromPort, true);
+      const p1 = getPortPos(to, w.toPort, false);
+      const d = distToBezier(wx, wy, p0.x, p0.y, p0.x + 80, p0.y, p1.x - 80, p1.y, p1.x, p1.y);
+      if (d < threshold) return w;
+    }
+    return null;
+  }
+
+  function distToBezier(px, py, x0, y0, x1, y1, x2, y2, x3, y3) {
+    let minD = Infinity;
+    for (let t = 0; t <= 1; t += 0.05) {
+      const x = bez(t, x0, x1, x2, x3);
+      const y = bez(t, y0, y1, y2, y3);
+      minD = Math.min(minD, Math.hypot(px - x, py - y));
+    }
+    return minD;
+  }
+
+  function bez(t, a, b, c, d) {
+    const u = 1 - t;
+    return u*u*u*a + 3*u*u*t*b + 3*u*t*t*c + t*t*t*d;
+  }
+
+  function canConnect(fromNode, fromPort, toNode, toPort) {
+    if (fromNode.id === toNode.id) return false;
+    const exists = wires.some(w =>
+      w.fromNode === fromNode.id && w.fromPort === fromPort &&
+      w.toNode === toNode.id && w.toPort === toPort
+    );
+    if (exists) return false;
+    const occupied = wires.some(w => w.toNode === toNode.id && w.toPort === toPort);
+    return !occupied;
+  }
+
+  function addWire(fromNode, fromPort, toNode, toPort) {
+    if (!canConnect(fromNode, fromPort, toNode, toPort)) return null;
+    const w = { id: uid(), fromNode: fromNode.id, fromPort, toNode: toNode.id, toPort };
+    wires.push(w);
+    return w;
+  }
+
+  function drawGrid() {
+    const step = 24 * cam.zoom;
+    const offX = cam.x % step;
+    const offY = cam.y % step;
+    ctx.fillStyle = '#0e0f14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = offX; x < canvas.width; x += step) {
+      ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+    }
+    for (let y = offY; y < canvas.height; y += step) {
+      ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.beginPath();
+    const bigStep = step * 4;
+    const bOffX = cam.x % bigStep;
+    const bOffY = cam.y % bigStep;
+    for (let x = bOffX; x < canvas.width; x += bigStep) {
+      ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+    }
+    for (let y = bOffY; y < canvas.height; y += bigStep) {
+      ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+    }
+    ctx.stroke();
+  }
+
+  function drawWire(p0, p1, color, width, glow) {
+    const s0 = worldToScreen(p0.x, p0.y);
+    const s1 = worldToScreen(p1.x, p1.y);
+    const cx0 = s0.x + 80 * cam.zoom;
+    const cx1 = s1.x - 80 * cam.zoom;
+    ctx.beginPath();
+    ctx.moveTo(s0.x, s0.y);
+    ctx.bezierCurveTo(cx0, s0.y, cx1, s1.y, s1.x, s1.y);
+    if (glow) {
+      ctx.strokeStyle = glow;
+      ctx.lineWidth = width + 4;
+      ctx.stroke();
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function drawNode(node) {
+    const def = NODE_TYPES[node.type];
+    const s = worldToScreen(node.x, node.y);
+    const w = def.w * cam.zoom;
+    const h = def.h * cam.zoom;
+    const isSelected = selected.has(node.id);
+    const isHovered = hoveredNode === node.id;
+
+    if (isSelected || isHovered) {
+      ctx.shadowColor = def.color + '55';
+      ctx.shadowBlur = isSelected ? 20 : 12;
+    }
+
+    roundRect(s.x, s.y, w, h, 8 * cam.zoom);
+    ctx.fillStyle = '#1a1d2b';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = isSelected ? def.color : isHovered ? '#3a4060' : '#2a2f42';
+    ctx.lineWidth = isSelected ? 2 : 1;
+    ctx.stroke();
+
+    const headerH = 28 * cam.zoom;
+    roundRect(s.x, s.y, w, headerH, 8 * cam.zoom);
+    ctx.save();
+    ctx.beginPath();
+    roundRect(s.x, s.y, w, h, 8 * cam.zoom);
+    ctx.clip();
+    const grad = ctx.createLinearGradient(s.x, s.y, s.x + w, s.y);
+    grad.addColorStop(0, def.color + 'cc');
+    grad.addColorStop(1, def.color + '66');
+    ctx.fillStyle = grad;
+    ctx.fillRect(s.x, s.y, w, headerH);
+    ctx.restore();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = `600 ${11 * cam.zoom}px ${getComputedStyle(document.body).fontFamily}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.icon + '  ' + def.label, s.x + 10 * cam.zoom, s.y + headerH / 2);
+
+    if (def.comment) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = `${11 * cam.zoom}px ${getComputedStyle(document.body).fontFamily}`;
+      const txt = node.text || 'Double-click to edit';
+      ctx.fillText(txt, s.x + 10 * cam.zoom, s.y + headerH + 16 * cam.zoom);
+    }
+
+    if (node.type === 'number') {
+      ctx.fillStyle = '#a78bfa';
+      ctx.font = `500 ${18 * cam.zoom}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText(node.value.toFixed(2), s.x + w / 2, s.y + h / 2 + 8 * cam.zoom);
+    }
+
+    if (node.type === 'input') {
+      const barW = (w - 20 * cam.zoom);
+      const barH = 6 * cam.zoom;
+      const bx = s.x + 10 * cam.zoom;
+      const by = s.y + h - 18 * cam.zoom;
+      roundRect(bx, by, barW, barH, 3 * cam.zoom);
+      ctx.fillStyle = '#2a2f42';
+      ctx.fill();
+      roundRect(bx, by, barW * node.value, barH, 3 * cam.zoom);
+      ctx.fillStyle = def.color;
+      ctx.fill();
+    }
+
+    const portR = 5 * cam.zoom;
+    for (let i = 0; i < def.inputs; i++) {
+      const p = getPortPos(node, i, false);
+      const sp = worldToScreen(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, portR, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1d2b';
+      ctx.fill();
+      ctx.strokeStyle = '#5eead4';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    for (let i = 0; i < def.outputs; i++) {
+      const p = getPortPos(node, i, true);
+      const sp = worldToScreen(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, portR, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1d2b';
+      ctx.fill();
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  function evaluate() {
+    const cache = new Map();
+    function evalNode(id) {
+      if (cache.has(id)) return cache.get(id);
+      const node = nodes.find(n => n.id === id);
+      if (!node) return 0;
+      const ins = wires.filter(w => w.toNode === id).sort((a, b) => a.toPort - b.toPort);
+      const getIn = (port) => {
+        const w = ins.find(wi => wi.toPort === port);
+        if (!w) return 0;
+        return evalNode(w.fromNode);
+      };
+      let val = 0;
+      switch (node.type) {
+        case 'input': case 'number': val = node.value; break;
+        case 'add': val = getIn(0) + getIn(1); break;
+        case 'multiply': val = getIn(0) * getIn(1); break;
+        case 'lerp': val = getIn(0) + (getIn(1) - getIn(0)) * getIn(2); break;
+        case 'sine': val = Math.sin(getIn(0) * Math.PI * 2); break;
+        case 'color': val = { r: getIn(0), g: getIn(1), b: getIn(2) }; break;
+        case 'mix': {
+          const c0 = getIn(0), c1 = getIn(1), t = getIn(2);
+          if (typeof c0 === 'object' && typeof c1 === 'object') {
+            val = { r: c0.r + (c1.r - c0.r) * t, g: c0.g + (c1.g - c0.g) * t, b: c0.b + (c1.b - c0.b) * t };
+          } else val = c0 + (c1 - c0) * t;
+          break;
+        }
+        default: val = getIn(0);
+      }
+      cache.set(id, val);
+      return val;
+    }
+    return evalNode;
+  }
+
+  function drawPreview() {
+    const outNode = nodes.find(n => n.type === 'output');
+    if (!outNode) return;
+    const evalNode = evaluate();
+    const val = evalNode(outNode.id);
+    const s = worldToScreen(outNode.x + NODE_TYPES.output.w + 20, outNode.y + 10);
+    const size = 48 * cam.zoom;
+    ctx.save();
+    if (typeof val === 'object') {
+      ctx.fillStyle = `rgb(${Math.round(val.r*255)},${Math.round(val.g*255)},${Math.round(val.b*255)})`;
+    } else {
+      const v = Math.max(0, Math.min(1, (val + 1) / 2));
+      ctx.fillStyle = `hsl(${200 + v * 60}, 70%, ${30 + v * 40}%)`;
+    }
+    roundRect(s.x, s.y, size, size, 6 * cam.zoom);
+    ctx.fill();
+    ctx.strokeStyle = '#2a2f42';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGrid();
+
+    for (const w of wires) {
+      const from = nodes.find(n => n.id === w.fromNode);
+      const to = nodes.find(n => n.id === w.toNode);
+      if (!from || !to) continue;
+      const p0 = getPortPos(from, w.fromPort, true);
+      const p1 = getPortPos(to, w.toPort, false);
+      drawWire(p0, p1, '#4a5270', 2.5, null);
+    }
+
+    if (wireDrag) {
+      const p0 = getPortPos(wireDrag.node, wireDrag.index, wireDrag.isOutput);
+      const p1 = wireDrag.current;
+      drawWire(p0, p1, '#6c8cff', 2.5, 'rgba(108,140,255,0.3)');
+    }
+
+    for (const n of nodes) drawNode(n);
+    drawPreview();
+    drawMinimap();
+    updateStatus();
+  }
+
+  function drawMinimap() {
+    mmCanvas.width = 160;
+    mmCanvas.height = 100;
+    mmCtx.fillStyle = '#161821';
+    mmCtx.fillRect(0, 0, 160, 100);
+    if (nodes.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      const def = NODE_TYPES[n.type];
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + def.w); maxY = Math.max(maxY, n.y + def.h);
+    }
+    const pad = 40;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const bw = maxX - minX, bh = maxY - minY;
+    const scale = Math.min(150 / bw, 90 / bh);
+
+    for (const w of wires) {
+      const from = nodes.find(n => n.id === w.fromNode);
+      const to = nodes.find(n => n.id === w.toNode);
+      if (!from || !to) continue;
+      const p0 = getPortPos(from, w.fromPort, true);
+      const p1 = getPortPos(to, w.toPort, false);
+      mmCtx.strokeStyle = '#4a5270';
+      mmCtx.lineWidth = 1;
+      mmCtx.beginPath();
+      mmCtx.moveTo(5 + (p0.x - minX) * scale, 5 + (p0.y - minY) * scale);
+      mmCtx.lineTo(5 + (p1.x - minX) * scale, 5 + (p1.y - minY) * scale);
+      mmCtx.stroke();
+    }
+
+    for (const n of nodes) {
+      const def = NODE_TYPES[n.type];
+      mmCtx.fillStyle = def.color;
+      mmCtx.fillRect(5 + (n.x - minX) * scale, 5 + (n.y - minY) * scale, def.w * scale, def.h * scale);
+    }
+
+    const vx = (-cam.x / cam.zoom - minX) * scale + 5;
+    const vy = (-cam.y / cam.zoom - minY) * scale + 5;
+    const vw = (canvas.width / cam.zoom) * scale;
+    const vh = (canvas.height / cam.zoom) * scale;
+    mmCtx.strokeStyle = '#6c8cff';
+    mmCtx.lineWidth = 1;
+    mmCtx.strokeRect(vx, vy, vw, vh);
+  }
+
+  function updateStatus() {
+    statusEl.textContent = `nodes: ${nodes.length} · wires: ${wires.length} · zoom: ${Math.round(cam.zoom * 100)}%`;
+  }
+
+  function resize() {
+    canvas.width = wrap.clientWidth;
+    canvas.height = wrap.clientHeight;
+    render();
+  }
+
+  function fitView() {
+    if (nodes.length === 0) { cam = { x: canvas.width / 2, y: canvas.height / 2, zoom: 1 }; render(); return; }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      const def = NODE_TYPES[n.type];
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + def.w); maxY = Math.max(maxY, n.y + def.h);
+    }
+    const bw = maxX - minX + 80, bh = maxY - minY + 80;
+    const zoom = Math.min(canvas.width / bw, canvas.height / bh, 1.5);
+    cam.zoom = Math.max(0.3, zoom);
+    cam.x = (canvas.width - bw * cam.zoom) / 2 - minX * cam.zoom + 40 * cam.zoom;
+    cam.y = (canvas.height - bh * cam.zoom) / 2 - minY * cam.zoom + 40 * cam.zoom;
+    render();
+  }
+
+  function seedDemo() {
+    const cx = 100, cy = 80;
+    const inp = createNode('input', cx, cy);
+    const num = createNode('number', cx, cy + 100);
+    num.value = 0.75;
+    const sine = createNode('sine', cx + 200, cy + 40);
+    const mul = createNode('multiply', cx + 380, cy + 20);
+    const color = createNode('color', cx + 200, cy + 180);
+    const out = createNode('output', cx + 560, cy + 80);
+    createNode('comment', cx - 20, cy - 50, { text: 'Demo graph — drag nodes around' });
+    addWire(inp, 0, sine, 0);
+    addWire(num, 0, mul, 1);
+    addWire(sine, 0, mul, 0);
+    addWire(mul, 0, color, 0);
+    addWire(mul, 0, color, 1);
+    addWire(mul, 0, color, 2);
+    addWire(color, 0, out, 0);
+    fitView();
+  }
+
+  /* Palette */
+  const palette = document.getElementById('palette');
+  for (const g of GROUPS) {
+    const grp = document.createElement('div');
+    grp.className = 'palette-group';
+    grp.innerHTML = `<h3>${g.name}</h3>`;
+    for (const t of g.types) {
+      const def = NODE_TYPES[t];
+      const item = document.createElement('div');
+      item.className = 'palette-item';
+      item.dataset.type = t;
+      item.innerHTML = `<div class="palette-icon" style="background:${def.color}22;color:${def.color}">${def.icon}</div><span>${def.label}</span>`;
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        dragState = { kind: 'palette', type: t, startX: e.clientX, startY: e.clientY, placed: false };
+      });
+      grp.appendChild(item);
+    }
+    palette.appendChild(grp);
+  }
+
+  /* Events */
+  canvas.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    hideCtxMenu();
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const w = screenToWorld(sx, sy);
+
+    if (spaceDown || tool === 'pan') {
+      dragState = { kind: 'pan', startX: e.clientX, startY: e.clientY, camX: cam.x, camY: cam.y };
+      canvas.classList.add('panning');
+      return;
+    }
+
+    const port = hitTestPort(w.x, w.y);
+    if (port) {
+      if (port.isOutput) {
+        wireDrag = { node: port.node, index: port.index, isOutput: true, current: { x: w.x, y: w.y } };
+        canvas.classList.add('connecting');
+      } else {
+        const existing = wires.find(wi => wi.toNode === port.node.id && wi.toPort === port.index);
+        if (existing) deleteWire(existing.id);
+      }
+      render();
+      return;
+    }
+
+    const node = hitTestNode(w.x, w.y);
+    if (node) {
+      if (!selected.has(node.id) && !e.shiftKey) selected.clear();
+      selected.add(node.id);
+      const offsets = [];
+      for (const id of selected) {
+        const n = nodes.find(nd => nd.id === id);
+        if (n) offsets.push({ id, ox: w.x - n.x, oy: w.y - n.y });
+      }
+      dragState = { kind: 'node', offsets, moved: false };
+      render();
+      return;
+    }
+
+    const wire = hitTestWire(w.x, w.y);
+    if (wire) {
+      selected.clear();
+      selected.add('wire:' + wire.id);
+      render();
+      return;
+    }
+
+    if (!e.shiftKey) selected.clear();
+    dragState = { kind: 'select', startX: sx, startY: sy, endX: sx, endY: sy };
+    render();
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const w = screenToWorld(sx, sy);
+
+    if (wireDrag) {
+      wireDrag.current = { x: w.x, y: w.y };
+      render();
+      return;
+    }
+
+    if (dragState?.kind === 'pan') {
+      cam.x = dragState.camX + (e.clientX - dragState.startX);
+      cam.y = dragState.camY + (e.clientY - dragState.startY);
+      render();
+      return;
+    }
+
+    if (dragState?.kind === 'node') {
+      dragState.moved = true;
+      for (const o of dragState.offsets) {
+        const n = nodes.find(nd => nd.id === o.id);
+        if (n) { n.x = w.x - o.ox; n.y = w.y - o.oy; }
+      }
+      render();
+      return;
+    }
+
+    if (dragState?.kind === 'palette') {
+      if (Math.hypot(e.clientX - dragState.startX, e.clientY - dragState.startY) > 5) {
+        if (!dragState.placed) {
+          createNode(dragState.type, w.x - 65, w.y - 36);
+          dragState.placed = true;
+          dragState.kind = 'node';
+          const n = nodes[nodes.length - 1];
+          selected.clear();
+          selected.add(n.id);
+          dragState.offsets = [{ id: n.id, ox: 65, oy: 36 }];
+        }
+      }
+      return;
+    }
+
+    hoveredNode = hitTestNode(w.x, w.y)?.id ?? null;
+    hoveredPort = hitTestPort(w.x, w.y);
+    canvas.style.cursor = hoveredPort ? 'crosshair' : hoveredNode ? 'default' : (spaceDown ? 'grab' : 'default');
+    render();
+  });
+
+  canvas.addEventListener('mouseup', e => {
+    canvas.classList.remove('panning', 'connecting');
+
+    if (wireDrag) {
+      const rect = canvas.getBoundingClientRect();
+      const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const port = hitTestPort(w.x, w.y);
+      if (port && !port.isOutput && wireDrag.isOutput) {
+        addWire(wireDrag.node, wireDrag.index, port.node, port.index);
+      } else if (port && port.isOutput && !wireDrag.isOutput) {
+        addWire(port.node, port.index, wireDrag.node, wireDrag.index);
+      }
+      wireDrag = null;
+      render();
+    }
+
+    if (dragState?.kind === 'select') {
+      const x0 = Math.min(dragState.startX, dragState.endX ?? dragState.startX);
+      const y0 = Math.min(dragState.startY, dragState.endY ?? dragState.startY);
+      const x1 = Math.max(dragState.startX, dragState.endX ?? dragState.startX);
+      const y1 = Math.max(dragState.startY, dragState.endY ?? dragState.startY);
+      if (x1 - x0 > 4 || y1 - y0 > 4) {
+        const w0 = screenToWorld(x0, y0), w1 = screenToWorld(x1, y1);
+        for (const n of nodes) {
+          const def = NODE_TYPES[n.type];
+          if (n.x + def.w > w0.x && n.x < w1.x && n.y + def.h > w0.y && n.y < w1.y)
+            selected.add(n.id);
+        }
+      }
+    }
+
+    dragState = null;
+    render();
+  });
+
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.15, Math.min(3, cam.zoom * factor));
+    cam.x = sx - (sx - cam.x) * (newZoom / cam.zoom);
+    cam.y = sy - (sy - cam.y) * (newZoom / cam.zoom);
+    cam.zoom = newZoom;
+    render();
+  }, { passive: false });
+
+  canvas.addEventListener('dblclick', e => {
+    const rect = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const node = hitTestNode(w.x, w.y);
+    if (!node) return;
+    if (node.type === 'comment') {
+      const t = prompt('Comment text:', node.text);
+      if (t !== null) node.text = t;
+      render();
+    } else if (node.type === 'number' || node.type === 'input') {
+      const t = prompt('Value (0–1):', node.value);
+      if (t !== null && !isNaN(+t)) node.value = Math.max(0, Math.min(1, +t));
+      render();
+    }
+  });
+
+  canvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const node = hitTestNode(w.x, w.y);
+    const wire = hitTestWire(w.x, w.y);
+    ctxTarget = node ? { kind: 'node', id: node.id } : wire ? { kind: 'wire', id: wire.id } : null;
+    showCtxMenu(e.clientX, e.clientY, ctxTarget);
+  });
+
+  function showCtxMenu(x, y, target) {
+    ctxMenu.innerHTML = '';
+    if (!target) {
+      const addItems = [['Add Input', 'input'], ['Add Number', 'number'], ['Add Output', 'output']];
+      for (const [label, type] of addItems) {
+        const el = document.createElement('div');
+        el.className = 'ctx-item';
+        el.textContent = label;
+        el.onclick = () => {
+          const w = screenToWorld(x - wrap.getBoundingClientRect().left, y - wrap.getBoundingClientRect().top);
+          createNode(type, w.x - 65, w.y - 36);
+          hideCtxMenu();
+          render();
+        };
+        ctxMenu.appendChild(el);
+      }
+    } else if (target.kind === 'node') {
+      const del = document.createElement('div');
+      del.className = 'ctx-item danger';
+      del.textContent = 'Delete node';
+      del.onclick = () => { deleteNode(target.id); hideCtxMenu(); render(); };
+      ctxMenu.appendChild(del);
+    } else {
+      const del = document.createElement('div');
+      del.className = 'ctx-item danger';
+      del.textContent = 'Delete wire';
+      del.onclick = () => { deleteWire(target.id); hideCtxMenu(); render(); };
+      ctxMenu.appendChild(del);
+    }
+    ctxMenu.style.left = x + 'px';
+    ctxMenu.style.top = y + 'px';
+    ctxMenu.classList.add('visible');
+  }
+
+  function hideCtxMenu() { ctxMenu.classList.remove('visible'); }
+
+  document.addEventListener('mousedown', e => {
+    if (!ctxMenu.contains(e.target)) hideCtxMenu();
+    if (dragState?.kind === 'palette' && !dragState.placed) dragState = null;
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (dragState?.kind === 'palette') dragState = null;
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !e.repeat) { spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault(); }
+    if (e.code === 'Escape') { wireDrag = null; selected.clear(); hideCtxMenu(); render(); }
+    if (e.code === 'Delete' || e.code === 'Backspace') {
+      for (const id of [...selected]) {
+        if (String(id).startsWith('wire:')) deleteWire(+String(id).slice(5));
+        else deleteNode(id);
+      }
+      selected.clear();
+      render();
+    }
+    if (e.key === 'v' || e.key === 'V') setTool('select');
+    if (e.key === 'h' || e.key === 'H') setTool('pan');
+  });
+
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space') { spaceDown = false; canvas.style.cursor = 'default'; }
+  });
+
+  function setTool(t) {
+    tool = t;
+    document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  }
+
+  document.querySelectorAll('.tool-btn[data-tool]').forEach(b => {
+    b.addEventListener('click', () => setTool(b.dataset.tool));
+  });
+  document.getElementById('btn-fit').addEventListener('click', fitView);
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    if (nodes.length && confirm('Clear all nodes?')) {
+      nodes = []; wires = []; selected.clear(); render(); toast('Canvas cleared');
+    }
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+  seedDemo();
+})();
+</script>
+</body>
+</html>

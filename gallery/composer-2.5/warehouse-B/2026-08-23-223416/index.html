@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warehouse Flow — Package Logistics Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+    border-bottom: 1px solid #30363d;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #f0f6fc;
+  }
+  header h1 span { color: #58a6ff; font-weight: 400; }
+  .stats {
+    display: flex;
+    gap: 24px;
+    font-size: 0.82rem;
+  }
+  .stat { text-align: center; }
+  .stat-val {
+    font-size: 1.35rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #f0f6fc;
+  }
+  .stat-label { color: #8b949e; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  button {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { background: #30363d; border-color: #8b949e; }
+  button.active { background: #238636; border-color: #2ea043; color: #fff; }
+  select {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+  }
+  #canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: rgba(22,27,34,0.88);
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.72rem;
+    line-height: 1.7;
+    pointer-events: none;
+  }
+  .legend-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .toast {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: rgba(35,134,54,0.92);
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    opacity: 0;
+    transition: opacity 0.4s, transform 0.4s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<header>
+  <h1>WAREHOUSE <span>FLOW</span></h1>
+  <div class="stats">
+    <div class="stat"><div class="stat-val" id="s-delivered">0</div><div class="stat-label">Delivered</div></div>
+    <div class="stat"><div class="stat-val" id="s-queue">0</div><div class="stat-label">In Queue</div></div>
+    <div class="stat"><div class="stat-val" id="s-workers">0</div><div class="stat-label">Active</div></div>
+    <div class="stat"><div class="stat-val" id="s-rate">0</div><div class="stat-label">Pkg/min</div></div>
+  </div>
+  <div class="controls">
+    <select id="speed">
+      <option value="1">1× Speed</option>
+      <option value="2" selected>2× Speed</option>
+      <option value="4">4× Speed</option>
+      <option value="8">8× Speed</option>
+    </select>
+    <button id="btn-pause">Pause</button>
+    <button id="btn-add">+ Worker</button>
+  </div>
+</header>
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div class="legend">
+    <div><span class="legend-dot" style="background:#3fb950"></span>Incoming dock</div>
+    <div><span class="legend-dot" style="background:#f85149"></span>Outgoing dock</div>
+    <div><span class="legend-dot" style="background:#d29922"></span>Staging racks</div>
+    <div><span class="legend-dot" style="background:#58a6ff"></span>Workers</div>
+  </div>
+  <div class="toast" id="toast"></div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvas-wrap');
+  let W, H, dpr = 1;
+  let paused = false;
+  let speed = 2;
+  let tick = 0;
+  let delivered = 0;
+  let deliveredHistory = [];
+  let nextWorkerId = 1;
+  let nextPkgId = 1;
+
+  const COLORS = {
+    floor: '#1a1f26',
+    floorLine: '#252b33',
+    wall: '#21262d',
+    incoming: '#238636',
+    outgoing: '#da3633',
+    rack: '#3d3420',
+    rackShelf: '#5c4a1e',
+    worker: '#58a6ff',
+    workerCarry: '#79c0ff',
+    pkg: ['#f0883e','#a371f7','#56d364','#ffa657','#ff7b72'],
+    truck: '#484f58',
+    truckCab: '#6e7681',
+    shadow: 'rgba(0,0,0,0.35)',
+  };
+
+  const STATE = { IDLE:'idle', TO_IN:'to_in', PICKING:'pick', TO_RACK:'to_rack', DROP:'drop',
+                  TO_RACK2:'to_rack2', PICK2:'pick2', TO_OUT:'to_out', DELIVER:'deliver' };
+
+  let layout = {};
+  let workers = [];
+  let incomingPkgs = [];
+  let rackPkgs = [];
+  let trucks = { in: [], out: [] };
+  const RACK_COLS = 6;
+  const RACK_ROWS = 3;
+  const MAX_RACK = RACK_COLS * RACK_ROWS;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = wrap.clientWidth;
+    H = wrap.clientHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    computeLayout();
+  }
+
+  function computeLayout() {
+    const pad = 24;
+    const dockW = Math.min(120, W * 0.12);
+    const rackW = W - pad * 2 - dockW * 2 - 40;
+    const rackH = H * 0.38;
+    const rackX = pad + dockW + 20;
+    const rackY = H * 0.32;
+
+    layout = {
+      pad, dockW,
+      inDock: { x: pad, y: H * 0.25, w: dockW, h: H * 0.5 },
+      outDock: { x: W - pad - dockW, y: H * 0.25, w: dockW, h: H * 0.5 },
+      rack: { x: rackX, y: rackY, w: rackW, h: rackH, cols: RACK_COLS, rows: RACK_ROWS },
+      inTruck: { x: pad - 60, y: H * 0.38 },
+      outTruck: { x: W - pad - dockW + dockW + 20, y: H * 0.38 },
+      pathY: H * 0.72,
+    };
+
+    layout.rackSlots = [];
+    const sw = layout.rack.w / RACK_COLS;
+    const sh = layout.rack.h / RACK_ROWS;
+    for (let r = 0; r < RACK_ROWS; r++) {
+      for (let c = 0; c < RACK_COLS; c++) {
+        layout.rackSlots.push({
+          x: layout.rack.x + c * sw + sw / 2,
+          y: layout.rack.y + r * sh + sh * 0.55,
+          col: c, row: r,
+        });
+      }
+    }
+  }
+
+  function spawnIncoming() {
+    if (incomingPkgs.length >= 12) return;
+    const pkg = {
+      id: nextPkgId++,
+      color: COLORS.pkg[nextPkgId % COLORS.pkg.length],
+      x: layout.inTruck.x + 40 + Math.random() * 30,
+      y: layout.inTruck.y + 20 + incomingPkgs.length * 8,
+      targetX: layout.inDock.x + layout.inDock.w / 2,
+      targetY: layout.inDock.y + layout.inDock.h * 0.7,
+      inTruck: true,
+    };
+    incomingPkgs.push(pkg);
+  }
+
+  function spawnTrucks() {
+    trucks.in = [{ x: layout.inTruck.x, y: layout.inTruck.y, progress: 0, state: 'parked' }];
+    trucks.out = [{ x: layout.outTruck.x, y: layout.outTruck.y, progress: 0, state: 'waiting', load: 0 }];
+  }
+
+  function createWorker(x, y) {
+    return {
+      id: nextWorkerId++,
+      x, y,
+      tx: x, ty: y,
+      state: STATE.IDLE,
+      speed: 1.2 + Math.random() * 0.3,
+      carry: null,
+      rackSlot: -1,
+      anim: 0,
+      wait: 0,
+      hue: 200 + (nextWorkerId * 37) % 60,
+    };
+  }
+
+  function initWorkers() {
+    workers = [];
+    for (let i = 0; i < 5; i++) {
+      workers.push(createWorker(
+        layout.rack.x + layout.rack.w * (0.2 + i * 0.15),
+        layout.pathY
+      ));
+    }
+  }
+
+  function dist(a, b, c, d) {
+    return Math.hypot(a - c, b - d);
+  }
+
+  function findFreeRackSlot() {
+    const used = new Set(rackPkgs.map(p => p.slot));
+    for (let i = 0; i < layout.rackSlots.length; i++) {
+      if (!used.has(i)) return i;
+    }
+    return -1;
+  }
+
+  function moveToward(w, tx, ty, dt) {
+    const dx = tx - w.x, dy = ty - w.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 3) { w.x = tx; w.y = ty; return true; }
+    const s = w.speed * speed * dt * 60;
+    w.x += (dx / d) * s;
+    w.y += (dy / d) * s;
+    return false;
+  }
+
+  function getIncomingTarget() {
+    const dock = layout.inDock;
+    return {
+      x: dock.x + dock.w / 2 + (Math.random() - 0.5) * 30,
+      y: dock.y + dock.h * 0.65,
+    };
+  }
+
+  function getOutTarget() {
+    const dock = layout.outDock;
+    return {
+      x: dock.x + dock.w / 2,
+      y: dock.y + dock.h * 0.65,
+    };
+  }
+
+  function updateWorker(w, dt) {
+    w.anim += dt * 8;
+    if (w.wait > 0) { w.wait -= dt; return; }
+
+    switch (w.state) {
+      case STATE.IDLE: {
+        const rackPkg = rackPkgs.find(p => !p.reserved);
+        if (rackPkg) {
+          rackPkg.reserved = w.id;
+          w.carryTarget = rackPkg;
+          w.rackSlot = rackPkg.slot;
+          w.state = STATE.TO_RACK2;
+          break;
+        }
+        const pkg = incomingPkgs.find(p => !p.reserved);
+        if (pkg) {
+          pkg.reserved = w.id;
+          w.carryTarget = pkg;
+          const t = getIncomingTarget();
+          w.tx = t.x; w.ty = t.y;
+          w.state = STATE.TO_IN;
+        }
+        break;
+      }
+      case STATE.TO_IN: {
+        if (moveToward(w, w.tx, w.ty, dt)) {
+          w.state = STATE.PICKING;
+          w.wait = 0.3 / speed;
+        }
+        break;
+      }
+      case STATE.PICKING: {
+        const idx = incomingPkgs.indexOf(w.carryTarget);
+        if (idx >= 0) {
+          incomingPkgs.splice(idx, 1);
+          w.carry = { ...w.carryTarget, reserved: false };
+          w.carryTarget = null;
+        }
+        const slot = findFreeRackSlot();
+        if (slot >= 0) {
+          w.rackSlot = slot;
+          const s = layout.rackSlots[slot];
+          w.tx = s.x; w.ty = layout.pathY;
+          w.state = STATE.TO_RACK;
+        } else {
+          w.state = STATE.IDLE;
+        }
+        break;
+      }
+      case STATE.TO_RACK: {
+        const s = layout.rackSlots[w.rackSlot];
+        if (moveToward(w, s.x, layout.pathY, dt)) {
+          w.tx = s.x; w.ty = s.y;
+          w.state = STATE.DROP;
+        }
+        break;
+      }
+      case STATE.DROP: {
+        if (moveToward(w, w.tx, w.ty, dt)) {
+          w.wait = 0.2 / speed;
+          rackPkgs.push({
+            id: w.carry.id,
+            color: w.carry.color,
+            slot: w.rackSlot,
+            reserved: false,
+          });
+          w.carry = null;
+          w.state = STATE.IDLE;
+        }
+        break;
+      }
+      case STATE.TO_RACK2: {
+        const s = layout.rackSlots[w.rackSlot];
+        if (moveToward(w, s.x, layout.pathY, dt)) {
+          w.tx = s.x; w.ty = s.y;
+          w.state = STATE.PICK2;
+        }
+        break;
+      }
+      case STATE.PICK2: {
+        if (moveToward(w, w.tx, w.ty, dt)) {
+          w.wait = 0.25 / speed;
+          const idx = rackPkgs.findIndex(p => p.slot === w.rackSlot);
+          if (idx >= 0) {
+            w.carry = { ...rackPkgs[idx] };
+            rackPkgs.splice(idx, 1);
+          }
+          const t = getOutTarget();
+          w.tx = t.x; w.ty = t.y;
+          w.state = STATE.TO_OUT;
+        }
+        break;
+      }
+      case STATE.TO_OUT: {
+        if (moveToward(w, w.tx, w.ty, dt)) {
+          w.state = STATE.DELIVER;
+          w.wait = 0.3 / speed;
+        }
+        break;
+      }
+      case STATE.DELIVER: {
+        if (w.carry) {
+          delivered++;
+          deliveredHistory.push(Date.now());
+          trucks.out[0].load++;
+          w.carry = null;
+          showToast(`Package #${delivered} loaded onto outbound truck`);
+        }
+        w.state = STATE.IDLE;
+        break;
+      }
+    }
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(showToast._tm);
+    showToast._tm = setTimeout(() => t.classList.remove('show'), 1800);
+  }
+
+  function updateStats() {
+    document.getElementById('s-delivered').textContent = delivered;
+    document.getElementById('s-queue').textContent = incomingPkgs.length + rackPkgs.length;
+    document.getElementById('s-workers').textContent = workers.filter(w => w.state !== STATE.IDLE).length;
+    const now = Date.now();
+    deliveredHistory = deliveredHistory.filter(t => now - t < 60000);
+    const rate = deliveredHistory.length;
+    document.getElementById('s-rate').textContent = rate;
+  }
+
+  function drawFloor() {
+    ctx.fillStyle = COLORS.floor;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = COLORS.floorLine;
+    ctx.lineWidth = 1;
+    const grid = 40;
+    for (let x = 0; x < W; x += grid) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += grid) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    ctx.fillStyle = COLORS.wall;
+    ctx.fillRect(0, 0, W, 18);
+    ctx.fillStyle = '#30363d';
+    ctx.font = '10px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('WAREHOUSE FLOOR B — ZONE 3', W / 2, 12);
+  }
+
+  function drawDock(dock, label, color, side) {
+    ctx.fillStyle = COLORS.wall;
+    ctx.fillRect(dock.x - 4, dock.y - 4, dock.w + 8, dock.h + 8);
+
+    ctx.fillStyle = color + '33';
+    ctx.fillRect(dock.x, dock.y, dock.w, dock.h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(dock.x, dock.y, dock.w, dock.h);
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 11px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, dock.x + dock.w / 2, dock.y + 16);
+
+    ctx.strokeStyle = color + '88';
+    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = 1.5;
+    const ly = dock.y + dock.h * 0.55;
+    ctx.beginPath();
+    ctx.moveTo(dock.x + 8, ly);
+    ctx.lineTo(dock.x + dock.w - 8, ly);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = color + '55';
+      ctx.fillRect(dock.x + 10 + i * (dock.w / 3.5), dock.y + dock.h - 20, 14, 4);
+    }
+  }
+
+  function drawRacks() {
+    const r = layout.rack;
+    ctx.fillStyle = COLORS.rack;
+    ctx.fillRect(r.x - 6, r.y - 20, r.w + 12, r.h + 30);
+
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('STAGING RACKS', r.x + r.w / 2, r.y - 8);
+
+    const sw = r.w / RACK_COLS;
+    const sh = r.h / RACK_ROWS;
+
+    for (let row = 0; row < RACK_ROWS; row++) {
+      for (let col = 0; col < RACK_COLS; col++) {
+        const x = r.x + col * sw;
+        const y = r.y + row * sh;
+        ctx.fillStyle = COLORS.rackShelf;
+        ctx.fillRect(x + 2, y + sh * 0.45, sw - 4, 5);
+        ctx.strokeStyle = '#6e5a20';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 4, y + 4, sw - 8, sh - 8);
+      }
+    }
+
+    rackPkgs.forEach(p => {
+      const s = layout.rackSlots[p.slot];
+      drawPackage(s.x, s.y - 8, p.color, 14);
+    });
+  }
+
+  function drawTruck(x, y, facing, label, load, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    if (facing < 0) ctx.scale(-1, 1);
+
+    ctx.fillStyle = COLORS.shadow;
+    ctx.fillRect(-38, 18, 90, 8);
+
+    ctx.fillStyle = COLORS.truck;
+    ctx.beginPath();
+    ctx.roundRect(-40, -10, 70, 28, 3);
+    ctx.fill();
+
+    ctx.fillStyle = COLORS.truckCab;
+    ctx.beginPath();
+    ctx.roundRect(30, -6, 22, 24, 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#21262d';
+    ctx.fillRect(30, -2, 10, 10);
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 9px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, 5, 6);
+
+    if (load > 0) {
+      for (let i = 0; i < Math.min(load, 8); i++) {
+        drawPackage(-30 + (i % 4) * 14, -2 + Math.floor(i / 4) * 10, COLORS.pkg[i % COLORS.pkg.length], 10);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function drawPackage(x, y, color, size) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = COLORS.shadow;
+    ctx.fillRect(-size / 2 + 2, size / 2, size, 4);
+    ctx.fillStyle = color;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-size / 2, -size / 2, size, size);
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(-size / 2, 0); ctx.lineTo(size / 2, 0); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawWorker(w) {
+    const bob = Math.sin(w.anim) * 1.5;
+    const cx = w.x, cy = w.y + bob;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    const dx = w.tx - w.x;
+    const facing = dx >= 0 ? 1 : -1;
+    ctx.scale(facing, 1);
+
+    ctx.fillStyle = COLORS.shadow;
+    ctx.beginPath();
+    ctx.ellipse(0, 10, 9, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `hsl(${w.hue}, 70%, 55%)`;
+    ctx.beginPath();
+    ctx.roundRect(-7, -2, 14, 16, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffd8a8';
+    ctx.beginPath();
+    ctx.arc(0, -8, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#343a40';
+    ctx.fillRect(-7, -12, 14, 5);
+
+    if (w.carry) {
+      ctx.fillStyle = `hsl(${w.hue}, 70%, 55%)`;
+      ctx.fillRect(-10, -6, 5, 8);
+      ctx.fillRect(5, -6, 5, 8);
+      drawPackage(facing * 14, -10, w.carry.color, 12);
+    }
+
+    const legAnim = Math.sin(w.anim * 2) * 3;
+    ctx.fillStyle = '#495057';
+    ctx.fillRect(-5, 14, 4, 6 + legAnim * 0.3);
+    ctx.fillRect(1, 14, 4, 6 - legAnim * 0.3);
+
+    ctx.restore();
+
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '8px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('W' + w.id, cx, cy - 20);
+  }
+
+  function drawPathArrows() {
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 3;
+    const y = layout.pathY;
+    ctx.beginPath();
+    ctx.moveTo(layout.inDock.x + layout.inDock.w + 10, y);
+    ctx.lineTo(layout.outDock.x - 10, y);
+    ctx.stroke();
+
+    ctx.fillStyle = '#484f58';
+    for (let x = layout.inDock.x + layout.inDock.w + 40; x < layout.outDock.x - 40; x += 60) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x + 10, y);
+      ctx.lineTo(x, y + 4);
+      ctx.fill();
+    }
+  }
+
+  function drawIncomingPkgs() {
+    incomingPkgs.forEach((p, i) => {
+      const dock = layout.inDock;
+      const px = dock.x + dock.w / 2 + ((i % 3) - 1) * 18;
+      const py = dock.y + dock.h * 0.72 + Math.floor(i / 3) * 16;
+      p.x = px; p.y = py;
+      drawPackage(px, py, p.color, 13);
+    });
+  }
+
+  function draw() {
+    drawFloor();
+    drawPathArrows();
+    drawDock(layout.inDock, 'INBOUND', COLORS.incoming, 'left');
+    drawDock(layout.outDock, 'OUTBOUND', COLORS.outgoing, 'right');
+    drawRacks();
+
+    drawTruck(layout.inTruck.x, layout.inTruck.y, 1, 'IN-042', incomingPkgs.length, COLORS.incoming);
+    drawTruck(layout.outTruck.x, layout.outTruck.y, -1, 'OUT-017', trucks.out[0]?.load || 0, COLORS.outgoing);
+
+    drawIncomingPkgs();
+    workers.forEach(drawWorker);
+
+    ctx.fillStyle = 'rgba(22,27,34,0.7)';
+    ctx.fillRect(W - 180, H - 36, 170, 28);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px Segoe UI, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`Tick ${tick}  |  ${workers.length} workers deployed`, W - 14, H - 18);
+  }
+
+  let lastTime = 0;
+  let spawnTimer = 0;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (paused) { draw(); return; }
+
+    const dt = Math.min((now - lastTime) / 1000, 0.05) * speed;
+    lastTime = now;
+    if (dt <= 0) return;
+
+    tick++;
+    spawnTimer += dt;
+    if (spawnTimer > 1.2 / speed) {
+      spawnTimer = 0;
+      spawnIncoming();
+    }
+
+    workers.forEach(w => updateWorker(w, dt / speed));
+
+    if (tick % 30 === 0) updateStats();
+    draw();
+  }
+
+  document.getElementById('btn-pause').addEventListener('click', function() {
+    paused = !paused;
+    this.textContent = paused ? 'Resume' : 'Pause';
+    this.classList.toggle('active', paused);
+    lastTime = performance.now();
+  });
+
+  document.getElementById('speed').addEventListener('change', function() {
+    speed = parseFloat(this.value);
+  });
+
+  document.getElementById('btn-add').addEventListener('click', () => {
+    if (workers.length >= 12) return;
+    workers.push(createWorker(
+      layout.rack.x + Math.random() * layout.rack.w,
+      layout.pathY
+    ));
+    showToast(`Worker W${nextWorkerId - 1} deployed`);
+  });
+
+  window.addEventListener('resize', resize);
+
+  resize();
+  spawnTrucks();
+  initWorkers();
+  for (let i = 0; i < 4; i++) spawnIncoming();
+  updateStats();
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

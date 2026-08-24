@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ecosystem Simulation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0e14;
+      color: #c5d0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 10px 16px;
+      background: linear-gradient(180deg, #121820 0%, #0a0e14 100%);
+      border-bottom: 1px solid #1e2836;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #7ec850;
+      letter-spacing: 0.03em;
+    }
+    .stats {
+      display: flex;
+      gap: 16px;
+      font-size: 0.82rem;
+      flex-wrap: wrap;
+    }
+    .stat { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot.plants { background: #3d9e4f; }
+    .dot.herbivores { background: #e8a838; }
+    .dot.predators { background: #d44a4a; }
+    .dot.decomposers { background: #8b6fc0; }
+    .dot.water { background: #3a8fd4; }
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    footer {
+      padding: 8px 16px;
+      background: #121820;
+      border-top: 1px solid #1e2836;
+      font-size: 0.75rem;
+      color: #6a7890;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      background: #1e2836;
+      border: 1px solid #2a3848;
+      color: #c5d0e0;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      transition: background 0.15s;
+    }
+    button:hover { background: #2a3848; }
+    button.active { background: #2d5a2e; border-color: #3d9e4f; }
+    #season-bar {
+      width: 120px;
+      height: 6px;
+      background: #1e2836;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #season-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3a8fd4, #7ec850, #e8a838, #c47a30);
+      transition: width 0.3s;
+    }
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(10, 14, 20, 0.92);
+      border: 1px solid #2a3848;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      display: none;
+      z-index: 10;
+      max-width: 200px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🌍 Self-Sustaining Ecosystem</h1>
+    <div class="stats">
+      <div class="stat"><span class="dot plants"></span> Plants: <strong id="s-plants">0</strong></div>
+      <div class="stat"><span class="dot herbivores"></span> Herbivores: <strong id="s-herb">0</strong></div>
+      <div class="stat"><span class="dot predators"></span> Predators: <strong id="s-pred">0</strong></div>
+      <div class="stat"><span class="dot decomposers"></span> Decomposers: <strong id="s-decomp">0</strong></div>
+      <div class="stat"><span class="dot water"></span> Moisture: <strong id="s-water">0</strong>%</div>
+      <div class="stat">Season: <strong id="s-season">Spring</strong></div>
+      <div class="stat">Day: <strong id="s-day">1</strong></div>
+    </div>
+  </header>
+  <div id="canvas-wrap">
+    <canvas id="world"></canvas>
+    <div id="tooltip"></div>
+  </div>
+  <footer>
+    <span>Click to add organisms · Scroll to zoom · Drag to pan</span>
+    <div class="controls">
+      <button id="btn-plant" class="active" title="Add plants">🌱 Plant</button>
+      <button id="btn-herb" title="Add herbivore">🐇 Herbivore</button>
+      <button id="btn-pred" title="Add predator">🦊 Predator</button>
+      <button id="btn-rain" title="Trigger rain">🌧 Rain</button>
+      <button id="btn-reset" title="Reset simulation">↺ Reset</button>
+    </div>
+    <div id="season-bar"><div id="season-fill" style="width:25%"></div></div>
+  </footer>
+
+  <script>
+    // ─── Configuration ───────────────────────────────────────────────
+    const CFG = {
+      gridW: 160,
+      gridH: 100,
+      cellSize: 8,
+      tickRate: 4,          // simulation ticks per frame
+      rainInterval: 800,    // ticks between auto-rain
+      seasonLength: 2000,   // ticks per season
+      maxPlants: 8000,
+      maxHerbivores: 400,
+      maxPredators: 80,
+      maxDecomposers: 300,
+    };
+
+    const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+    const SEASON_GROWTH = [1.4, 1.0, 0.6, 0.2];
+    const SEASON_MOISTURE = [0.7, 0.5, 0.6, 0.3];
+
+    // ─── State ───────────────────────────────────────────────────────
+    let canvas, ctx, W, H;
+    let cam = { x: 0, y: 0, zoom: 1 };
+    let drag = null;
+    let brush = 'plant';
+    let tick = 0, day = 1;
+    let seasonIdx = 0;
+    let rainTimer = 0;
+    let isRaining = false;
+    let rainDrops = [];
+
+    // Grid layers
+    let nutrients;   // float 0-1
+    let moisture;    // float 0-1
+    let plants;      // uint8 0-255 growth
+    let deadMatter;  // float 0-1
+
+    // Entities
+    let herbivores = [];
+    let predators = [];
+    let decomposers = [];
+
+    // History for mini graph
+    let history = { plants: [], herb: [], pred: [], len: 120 };
+
+    // ─── Init ────────────────────────────────────────────────────────
+    function initGrid() {
+      const n = CFG.gridW * CFG.gridH;
+      nutrients = new Float32Array(n);
+      moisture = new Float32Array(n);
+      plants = new Uint8Array(n);
+      deadMatter = new Float32Array(n);
+
+      for (let i = 0; i < n; i++) {
+        nutrients[i] = 0.3 + Math.random() * 0.4;
+        moisture[i] = 0.4 + Math.random() * 0.3;
+      }
+
+      // Seed initial plants in clusters
+      for (let c = 0; c < 12; c++) {
+        const cx = Math.floor(Math.random() * CFG.gridW);
+        const cy = Math.floor(Math.random() * CFG.gridH);
+        for (let r = 0; r < 8; r++) {
+          const px = cx + Math.floor(Math.random() * 10 - 5);
+          const py = cy + Math.floor(Math.random() * 10 - 5);
+          if (inBounds(px, py)) {
+            plants[idx(px, py)] = 180 + Math.floor(Math.random() * 75);
+          }
+        }
+      }
+
+      // Initial populations
+      for (let i = 0; i < 30; i++) spawnHerbivore(randomCell());
+      for (let i = 0; i < 8; i++) spawnPredator(randomCell());
+      for (let i = 0; i < 40; i++) spawnDecomposer(randomCell());
+    }
+
+    function idx(x, y) { return y * CFG.gridW + x; }
+    function inBounds(x, y) { return x >= 0 && x < CFG.gridW && y >= 0 && y < CFG.gridH; }
+    function randomCell() {
+      return {
+        x: Math.floor(Math.random() * CFG.gridW),
+        y: Math.floor(Math.random() * CFG.gridH)
+      };
+    }
+
+    // ─── Entity factories ────────────────────────────────────────────
+    function spawnHerbivore(pos) {
+      if (herbivores.length >= CFG.maxHerbivores) return;
+      herbivores.push({
+        x: pos.x + Math.random(), y: pos.y + Math.random(),
+        vx: 0, vy: 0,
+        energy: 80 + Math.random() * 40,
+        age: 0,
+        reproCooldown: 0,
+        hue: 30 + Math.random() * 20,
+      });
+    }
+
+    function spawnPredator(pos) {
+      if (predators.length >= CFG.maxPredators) return;
+      predators.push({
+        x: pos.x + Math.random(), y: pos.y + Math.random(),
+        vx: 0, vy: 0,
+        energy: 120 + Math.random() * 60,
+        age: 0,
+        reproCooldown: 0,
+        hue: 0 + Math.random() * 15,
+      });
+    }
+
+    function spawnDecomposer(pos) {
+      if (decomposers.length >= CFG.maxDecomposers) return;
+      decomposers.push({
+        x: pos.x + Math.random(), y: pos.y + Math.random(),
+        vx: 0, vy: 0,
+        energy: 30 + Math.random() * 20,
+        age: 0,
+      });
+    }
+
+    // ─── Environment ─────────────────────────────────────────────────
+    function seasonGrowth() { return SEASON_GROWTH[seasonIdx]; }
+    function seasonMoisture() { return SEASON_MOISTURE[seasonIdx]; }
+
+    function updateSeason() {
+      const newSeason = Math.floor(tick / CFG.seasonLength) % 4;
+      if (newSeason !== seasonIdx) {
+        seasonIdx = newSeason;
+        document.getElementById('s-season').textContent = SEASONS[seasonIdx];
+      }
+      document.getElementById('season-fill').style.width = ((seasonIdx + 0.5) / 4 * 100) + '%';
+    }
+
+    function triggerRain(intensity = 1) {
+      isRaining = true;
+      rainTimer = 60 * intensity;
+      for (let i = 0; i < 80 * intensity; i++) {
+        rainDrops.push({
+          x: Math.random() * W,
+          y: Math.random() * H * 0.3,
+          speed: 4 + Math.random() * 6,
+          len: 8 + Math.random() * 12,
+        });
+      }
+    }
+
+    function applyRain() {
+      if (!isRaining) return;
+      rainTimer--;
+      if (rainTimer <= 0) isRaining = false;
+
+      for (let i = 0; i < CFG.gridW * CFG.gridH; i++) {
+        moisture[i] = Math.min(1, moisture[i] + 0.008 * seasonMoisture());
+      }
+    }
+
+    function evaporateAndDiffuse() {
+      const w = CFG.gridW, h = CFG.gridH;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = idx(x, y);
+          // Evaporation
+          moisture[i] = Math.max(0.05, moisture[i] - 0.0012 * (1 - seasonMoisture()));
+          // Nutrient diffusion (simple)
+          if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+            const avg = (nutrients[idx(x-1,y)] + nutrients[idx(x+1,y)] +
+                         nutrients[idx(x,y-1)] + nutrients[idx(x,y+1)]) * 0.25;
+            nutrients[i] += (avg - nutrients[i]) * 0.05;
+          }
+        }
+      }
+    }
+
+    // ─── Plant simulation ────────────────────────────────────────────
+    function updatePlants() {
+      const growth = seasonGrowth();
+      let plantCount = 0;
+      const w = CFG.gridW, h = CFG.gridH;
+      const newSeeds = [];
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = idx(x, y);
+          if (plants[i] > 0) plantCount++;
+
+          if (plants[i] > 0 && plants[i] < 255) {
+            const growthRate = nutrients[i] * moisture[i] * growth * 0.8;
+            plants[i] = Math.min(255, plants[i] + growthRate * 3);
+            nutrients[i] = Math.max(0, nutrients[i] - growthRate * 0.002);
+          }
+
+          // Spread seeds
+          if (plants[i] >= 200 && Math.random() < 0.002 * growth) {
+            const dx = x + Math.floor(Math.random() * 5 - 2);
+            const dy = y + Math.floor(Math.random() * 5 - 2);
+            if (inBounds(dx, dy) && plants[idx(dx, dy)] === 0) {
+              newSeeds.push([dx, dy]);
+            }
+          }
+        }
+      }
+
+      for (const [sx, sy] of newSeeds) {
+        if (plantCount >= CFG.maxPlants) break;
+        const si = idx(sx, sy);
+        if (plants[si] === 0) {
+          plants[si] = 40 + Math.floor(Math.random() * 30);
+          plantCount++;
+        }
+      }
+    }
+
+    function eatPlant(gx, gy, amount) {
+      const i = idx(Math.floor(gx), Math.floor(gy));
+      if (plants[i] <= 0) return 0;
+      const eaten = Math.min(amount, plants[i]);
+      plants[i] -= eaten;
+      if (plants[i] <= 0) {
+        deadMatter[i] += 0.15;
+      }
+      return eaten * 0.4;
+    }
+
+    // ─── Movement helpers ────────────────────────────────────────────
+    function findNearestPlants(x, y, radius) {
+      let best = null, bestD = radius * radius;
+      const gx = Math.floor(x), gy = Math.floor(y);
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const px = gx + dx, py = gy + dy;
+          if (!inBounds(px, py)) continue;
+          if (plants[idx(px, py)] > 30) {
+            const d = dx * dx + dy * dy;
+            if (d < bestD) { bestD = d; best = { x: px + 0.5, y: py + 0.5 }; }
+          }
+        }
+      }
+      return best;
+    }
+
+    function findNearest(arr, x, y, radius, filter) {
+      let best = null, bestD = radius * radius;
+      for (const e of arr) {
+        if (filter && !filter(e)) continue;
+        const dx = e.x - x, dy = e.y - y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      return best;
+    }
+
+    function moveEntity(e, targetX, targetY, speed, w, h) {
+      const dx = targetX - e.x, dy = targetY - e.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      e.vx = e.vx * 0.7 + (dx / dist) * speed * 0.3;
+      e.vy = e.vy * 0.7 + (dy / dist) * speed * 0.3;
+      e.x += e.vx;
+      e.y += e.vy;
+      e.x = Math.max(0.5, Math.min(w - 1.5, e.x));
+      e.y = Math.max(0.5, Math.min(h - 1.5, e.y));
+    }
+
+    function wander(e, speed) {
+      e.vx += (Math.random() - 0.5) * 0.3;
+      e.vy += (Math.random() - 0.5) * 0.3;
+      const mag = Math.sqrt(e.vx * e.vx + e.vy * e.vy) || 1;
+      e.vx = (e.vx / mag) * speed;
+      e.vy = (e.vy / mag) * speed;
+      e.x += e.vx;
+      e.y += e.vy;
+      e.x = Math.max(0.5, Math.min(CFG.gridW - 1.5, e.x));
+      e.y = Math.max(0.5, Math.min(CFG.gridH - 1.5, e.y));
+    }
+
+    // ─── Herbivores ──────────────────────────────────────────────────
+    function updateHerbivores() {
+      const toRemove = [];
+      const toAdd = [];
+
+      for (let i = 0; i < herbivores.length; i++) {
+        const h = herbivores[i];
+        h.age++;
+        h.reproCooldown = Math.max(0, h.reproCooldown - 1);
+        h.energy -= 0.15 + seasonGrowth() * 0.05;
+
+        const food = findNearestPlants(h.x, h.y, 12);
+        if (food && h.energy < 100) {
+          moveEntity(h, food.x, food.y, 0.35, CFG.gridW, CFG.gridH);
+          const dist = Math.hypot(food.x - h.x, food.y - h.y);
+          if (dist < 1.2) {
+            h.energy += eatPlant(h.x, h.y, 25);
+          }
+        } else {
+          wander(h, 0.25);
+        }
+
+        // Flee from predators
+        const threat = findNearest(predators, h.x, h.y, 8);
+        if (threat) {
+          const dx = h.x - threat.x, dy = h.y - threat.y;
+          const d = Math.sqrt(dx * dx + dy * dy) || 1;
+          h.vx += (dx / d) * 0.8;
+          h.vy += (dy / d) * 0.8;
+        }
+
+        // Reproduce
+        if (h.energy > 120 && h.reproCooldown <= 0 && herbivores.length < CFG.maxHerbivores) {
+          h.energy *= 0.55;
+          h.reproCooldown = 200;
+          toAdd.push({ x: h.x + (Math.random() - 0.5) * 2, y: h.y + (Math.random() - 0.5) * 2 });
+        }
+
+        if (h.energy <= 0 || h.age > 3000) {
+          const gi = idx(Math.floor(h.x), Math.floor(h.y));
+          deadMatter[gi] = Math.min(1, deadMatter[gi] + 0.3);
+          toRemove.push(i);
+        }
+      }
+
+      for (let i = toRemove.length - 1; i >= 0; i--) herbivores.splice(toRemove[i], 1);
+      for (const pos of toAdd) spawnHerbivore(pos);
+
+      // Auto-spawn if population crashes
+      if (herbivores.length < 5 && plants.some ? countPlants() > 100 : countPlants() > 100) {
+        for (let i = 0; i < 3; i++) spawnHerbivore(randomCell());
+      }
+    }
+
+    function countPlants() {
+      let c = 0;
+      for (let i = 0; i < plants.length; i++) if (plants[i] > 0) c++;
+      return c;
+    }
+
+    // ─── Predators ───────────────────────────────────────────────────
+    function updatePredators() {
+      const toRemove = [];
+      const toAdd = [];
+
+      for (let i = 0; i < predators.length; i++) {
+        const p = predators[i];
+        p.age++;
+        p.reproCooldown = Math.max(0, p.reproCooldown - 1);
+        p.energy -= 0.25;
+
+        const prey = findNearest(herbivores, p.x, p.y, 15);
+        if (prey && p.energy < 150) {
+          moveEntity(p, prey.x, prey.y, 0.45, CFG.gridW, CFG.gridH);
+          const dist = Math.hypot(prey.x - p.x, prey.y - p.y);
+          if (dist < 1.0) {
+            p.energy += prey.energy * 0.7;
+            const gi = idx(Math.floor(prey.x), Math.floor(prey.y));
+            deadMatter[gi] = Math.min(1, deadMatter[gi] + 0.4);
+            const pi = herbivores.indexOf(prey);
+            if (pi >= 0) herbivores.splice(pi, 1);
+          }
+        } else {
+          wander(p, 0.3);
+        }
+
+        if (p.energy > 180 && p.reproCooldown <= 0 && predators.length < CFG.maxPredators) {
+          p.energy *= 0.5;
+          p.reproCooldown = 350;
+          toAdd.push({ x: p.x + (Math.random() - 0.5) * 2, y: p.y + (Math.random() - 0.5) * 2 });
+        }
+
+        if (p.energy <= 0 || p.age > 4000) {
+          const gi = idx(Math.floor(p.x), Math.floor(p.y));
+          deadMatter[gi] = Math.min(1, deadMatter[gi] + 0.5);
+          toRemove.push(i);
+        }
+      }
+
+      for (let i = toRemove.length - 1; i >= 0; i--) predators.splice(toRemove[i], 1);
+      for (const pos of toAdd) spawnPredator(pos);
+
+      if (predators.length < 2 && herbivores.length > 15) {
+        spawnPredator(randomCell());
+      }
+    }
+
+    // ─── Decomposers ─────────────────────────────────────────────────
+    function updateDecomposers() {
+      const toRemove = [];
+      const toAdd = [];
+
+      for (let i = 0; i < decomposers.length; i++) {
+        const d = decomposers[i];
+        d.age++;
+        d.energy -= 0.08;
+
+        // Seek dead matter
+        let bestX = -1, bestY = -1, bestAmt = 0;
+        const gx = Math.floor(d.x), gy = Math.floor(d.y);
+        for (let dy = -6; dy <= 6; dy++) {
+          for (let dx = -6; dx <= 6; dx++) {
+            const px = gx + dx, py = gy + dy;
+            if (!inBounds(px, py)) continue;
+            const gi = idx(px, py);
+            if (deadMatter[gi] > bestAmt) {
+              bestAmt = deadMatter[gi];
+              bestX = px + 0.5;
+              bestY = py + 0.5;
+            }
+          }
+        }
+
+        if (bestAmt > 0.05) {
+          moveEntity(d, bestX, bestY, 0.2, CFG.gridW, CFG.gridH);
+          const gi = idx(Math.floor(d.x), Math.floor(d.y));
+          if (deadMatter[gi] > 0.05) {
+            const consumed = Math.min(0.05, deadMatter[gi]);
+            deadMatter[gi] -= consumed;
+            nutrients[gi] = Math.min(1, nutrients[gi] + consumed * 1.5);
+            d.energy += consumed * 80;
+          }
+        } else {
+          wander(d, 0.15);
+        }
+
+        // Reproduce
+        if (d.energy > 50 && decomposers.length < CFG.maxDecomposers && Math.random() < 0.002) {
+          d.energy *= 0.6;
+          toAdd.push({ x: d.x, y: d.y });
+        }
+
+        if (d.energy <= 0) toRemove.push(i);
+      }
+
+      for (let i = toRemove.length - 1; i >= 0; i--) decomposers.splice(toRemove[i], 1);
+      for (const pos of toAdd) spawnDecomposer(pos);
+
+      if (decomposers.length < 10) {
+        for (let i = 0; i < 5; i++) spawnDecomposer(randomCell());
+      }
+    }
+
+    // ─── Simulation tick ─────────────────────────────────────────────
+    function simulate() {
+      tick++;
+      if (tick % 400 === 0) day++;
+      updateSeason();
+
+      rainTimer--;
+      if (tick % CFG.rainInterval === 0) triggerRain(0.5 + Math.random());
+      applyRain();
+      evaporateAndDiffuse();
+      updatePlants();
+      updateHerbivores();
+      updatePredators();
+      updateDecomposers();
+
+      // Record history
+      if (tick % 10 === 0) {
+        history.plants.push(countPlants());
+        history.herb.push(herbivores.length);
+        history.pred.push(predators.length);
+        if (history.plants.length > history.len) {
+          history.plants.shift();
+          history.herb.shift();
+          history.pred.shift();
+        }
+      }
+
+      updateStats();
+    }
+
+    function updateStats() {
+      document.getElementById('s-plants').textContent = countPlants();
+      document.getElementById('s-herb').textContent = herbivores.length;
+      document.getElementById('s-pred').textContent = predators.length;
+      document.getElementById('s-decomp').textContent = decomposers.length;
+      document.getElementById('s-day').textContent = day;
+
+      let avgMoist = 0;
+      for (let i = 0; i < moisture.length; i++) avgMoist += moisture[i];
+      avgMoist = Math.round(avgMoist / moisture.length * 100);
+      document.getElementById('s-water').textContent = avgMoist;
+    }
+
+    // ─── Rendering ───────────────────────────────────────────────────
+    function render() {
+      ctx.fillStyle = '#0a0e14';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.save();
+      ctx.translate(cam.x, cam.y);
+      ctx.scale(cam.zoom, cam.zoom);
+
+      const cs = CFG.cellSize;
+      const gw = CFG.gridW * cs;
+      const gh = CFG.gridH * cs;
+
+      // Terrain: nutrients + moisture + plants
+      const imgData = ctx.createImageData(gw, gh);
+      const px = imgData.data;
+
+      for (let y = 0; y < CFG.gridH; y++) {
+        for (let x = 0; x < CFG.gridW; x++) {
+          const i = idx(x, y);
+          const pi = (y * CFG.gridW + x) * 4;
+
+          const n = nutrients[i];
+          const m = moisture[i];
+          const p = plants[i] / 255;
+          const d = deadMatter[i];
+
+          // Soil base
+          let r = 30 + n * 40 + d * 20;
+          let g = 25 + n * 30 + d * 10;
+          let b = 20 + m * 50;
+
+          // Plant overlay
+          if (p > 0) {
+            r = r * (1 - p) + (40 + seasonIdx * 10) * p;
+            g = g * (1 - p) + (120 + seasonIdx * 15) * p;
+            b = b * (1 - p) + 30 * p;
+          }
+
+          px[pi] = Math.min(255, r);
+          px[pi + 1] = Math.min(255, g);
+          px[pi + 2] = Math.min(255, b);
+          px[pi + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      // Dead matter overlay spots
+      for (let y = 0; y < CFG.gridH; y++) {
+        for (let x = 0; x < CFG.gridW; x++) {
+          const dm = deadMatter[idx(x, y)];
+          if (dm > 0.1) {
+            ctx.fillStyle = `rgba(80, 60, 40, ${dm * 0.6})`;
+            ctx.fillRect(x * cs, y * cs, cs, cs);
+          }
+        }
+      }
+
+      // Decomposers (small purple dots)
+      for (const d of decomposers) {
+        ctx.beginPath();
+        ctx.arc(d.x * cs, d.y * cs, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(140, 110, 200, ${Math.min(1, d.energy / 40)})`;
+        ctx.fill();
+      }
+
+      // Herbivores
+      for (const h of herbivores) {
+        const size = 3 + (h.energy / 120);
+        ctx.beginPath();
+        ctx.arc(h.x * cs, h.y * cs, size, 0, Math.PI * 2);
+        ctx.fillStyle = `hsl(${h.hue}, 75%, 55%)`;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+
+      // Predators
+      for (const p of predators) {
+        const size = 4 + (p.energy / 150);
+        ctx.beginPath();
+        ctx.arc(p.x * cs, p.y * cs, size, 0, Math.PI * 2);
+        ctx.fillStyle = `hsl(${p.hue}, 70%, 48%)`;
+        ctx.fill();
+        // Eyes
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(p.x * cs - 1.2, p.y * cs - 1, 0.8, 0, Math.PI * 2);
+        ctx.arc(p.x * cs + 1.2, p.y * cs - 1, 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#111';
+        ctx.beginPath();
+        ctx.arc(p.x * cs - 1.2, p.y * cs - 1, 0.4, 0, Math.PI * 2);
+        ctx.arc(p.x * cs + 1.2, p.y * cs - 1, 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Mini population graph
+      drawGraph(gw - 130, 8, 120, 40);
+
+      ctx.restore();
+
+      // Rain overlay (screen space)
+      if (isRaining) {
+        ctx.strokeStyle = 'rgba(100, 160, 220, 0.4)';
+        ctx.lineWidth = 1;
+        for (let i = rainDrops.length - 1; i >= 0; i--) {
+          const drop = rainDrops[i];
+          ctx.beginPath();
+          ctx.moveTo(drop.x, drop.y);
+          ctx.lineTo(drop.x - 2, drop.y + drop.len);
+          ctx.stroke();
+          drop.y += drop.speed;
+          drop.x -= 1;
+          if (drop.y > H) rainDrops.splice(i, 1);
+        }
+        if (rainDrops.length < 20 && isRaining) {
+          for (let i = 0; i < 10; i++) {
+            rainDrops.push({
+              x: Math.random() * W,
+              y: -10,
+              speed: 4 + Math.random() * 6,
+              len: 8 + Math.random() * 12,
+            });
+          }
+        }
+      }
+
+      // Season tint overlay
+      const tints = [
+        'rgba(100, 200, 100, 0.03)',  // spring
+        'rgba(255, 220, 100, 0.04)',  // summer
+        'rgba(200, 120, 50, 0.05)',   // autumn
+        'rgba(180, 200, 255, 0.06)',  // winter
+      ];
+      ctx.fillStyle = tints[seasonIdx];
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    function drawGraph(x, y, w, h) {
+      ctx.fillStyle = 'rgba(10, 14, 20, 0.75)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#2a3848';
+      ctx.strokeRect(x, y, w, h);
+
+      const maxVal = Math.max(
+        ...history.plants, ...history.herb, ...history.pred, 1
+      );
+
+      function drawLine(data, color) {
+        if (data.length < 2) return;
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        for (let i = 0; i < data.length; i++) {
+          const px = x + (i / (history.len - 1)) * w;
+          const py = y + h - (data[i] / maxVal) * (h - 4) - 2;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+
+      drawLine(history.plants, '#3d9e4f');
+      drawLine(history.herb, '#e8a838');
+      drawLine(history.pred, '#d44a4a');
+    }
+
+    // ─── Input ───────────────────────────────────────────────────────
+    function screenToWorld(sx, sy) {
+      return {
+        x: (sx - cam.x) / cam.zoom,
+        y: (sy - cam.y) / cam.zoom,
+      };
+    }
+
+    function worldToGrid(wx, wy) {
+      return {
+        x: Math.floor(wx / CFG.cellSize),
+        y: Math.floor(wy / CFG.cellSize),
+      };
+    }
+
+    function handleClick(sx, sy) {
+      const w = screenToWorld(sx, sy);
+      const g = worldToGrid(w.x, w.y);
+      if (!inBounds(g.x, g.y)) return;
+
+      const pos = { x: g.x, y: g.y };
+      switch (brush) {
+        case 'plant':
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              const px = g.x + dx, py = g.y + dy;
+              if (inBounds(px, py)) {
+                plants[idx(px, py)] = Math.max(plants[idx(px, py)], 150 + Math.floor(Math.random() * 100));
+              }
+            }
+          }
+          break;
+        case 'herbivore':
+          for (let i = 0; i < 3; i++) spawnHerbivore(pos);
+          break;
+        case 'predator':
+          spawnPredator(pos);
+          break;
+      }
+    }
+
+    function setupInput() {
+      canvas.addEventListener('mousedown', e => {
+        if (e.button === 0) {
+          drag = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
+        }
+      });
+      canvas.addEventListener('mousemove', e => {
+        if (drag) {
+          const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+          cam.x = drag.cx + dx;
+          cam.y = drag.cy + dy;
+        }
+      });
+      canvas.addEventListener('mouseup', e => {
+        if (drag && !drag.moved && e.button === 0) {
+          const rect = canvas.getBoundingClientRect();
+          handleClick(e.clientX - rect.left, e.clientY - rect.top);
+        }
+        drag = null;
+      });
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.max(0.3, Math.min(5, cam.zoom * factor));
+        cam.x = mx - (mx - cam.x) * (newZoom / cam.zoom);
+        cam.y = my - (my - cam.y) * (newZoom / cam.zoom);
+        cam.zoom = newZoom;
+      }, { passive: false });
+
+      document.getElementById('btn-plant').onclick = () => setBrush('plant');
+      document.getElementById('btn-herb').onclick = () => setBrush('herbivore');
+      document.getElementById('btn-pred').onclick = () => setBrush('predator');
+      document.getElementById('btn-rain').onclick = () => triggerRain(2);
+      document.getElementById('btn-reset').onclick = reset;
+    }
+
+    function setBrush(b) {
+      brush = b;
+      document.querySelectorAll('.controls button').forEach(btn => btn.classList.remove('active'));
+      const map = { plant: 'btn-plant', herbivore: 'btn-herb', predator: 'btn-pred' };
+      if (map[b]) document.getElementById(map[b]).classList.add('active');
+    }
+
+    function reset() {
+      tick = 0; day = 1; seasonIdx = 0;
+      herbivores = []; predators = []; decomposers = [];
+      history = { plants: [], herb: [], pred: [], len: 120 };
+      initGrid();
+      triggerRain(1);
+    }
+
+    // ─── Main loop ───────────────────────────────────────────────────
+    function resize() {
+      const wrap = document.getElementById('canvas-wrap');
+      W = wrap.clientWidth;
+      H = wrap.clientHeight;
+      canvas.width = W;
+      canvas.height = H;
+      if (cam.x === 0 && cam.y === 0) {
+        cam.x = (W - CFG.gridW * CFG.cellSize * cam.zoom) / 2;
+        cam.y = (H - CFG.gridH * CFG.cellSize * cam.zoom) / 2;
+      }
+    }
+
+    function loop() {
+      for (let i = 0; i < CFG.tickRate; i++) simulate();
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    function start() {
+      canvas = document.getElementById('world');
+      ctx = canvas.getContext('2d');
+      resize();
+      window.addEventListener('resize', resize);
+      setupInput();
+      initGrid();
+      triggerRain(1.5);
+      loop();
+    }
+
+    start();
+  </script>
+</body>
+</html>

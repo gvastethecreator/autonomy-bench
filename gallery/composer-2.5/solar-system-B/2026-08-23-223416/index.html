@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Miniature Solar System</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #e8eaf0;
+    }
+    canvas { display: block; }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.5rem 2rem;
+    }
+    header h1 {
+      font-size: 1.35rem;
+      font-weight: 300;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      opacity: 0.85;
+    }
+    header p {
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+      opacity: 0.45;
+      letter-spacing: 0.08em;
+    }
+    #hud {
+      align-self: flex-end;
+      text-align: right;
+      font-size: 0.72rem;
+      line-height: 1.7;
+      opacity: 0.55;
+      letter-spacing: 0.04em;
+    }
+    #legend {
+      position: fixed;
+      left: 2rem;
+      bottom: 1.5rem;
+      pointer-events: none;
+      font-size: 0.68rem;
+      opacity: 0.4;
+      line-height: 1.9;
+    }
+    .dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-right: 0.45rem;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <header>
+      <h1>Solar System</h1>
+      <p>Drag to orbit · Scroll to zoom · Double-click to reset</p>
+    </header>
+    <div id="hud">
+      <div id="speed-label">Time: 1×</div>
+      <div id="focus-label">Focus: Sun</div>
+    </div>
+  </div>
+  <div id="legend"></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const PLANETS = [
+      { name: "Mercury", radius: 0.38, orbit: 5.8,  color: 0xb5b5b5, speed: 4.15, tilt: 0.03, hasRing: false },
+      { name: "Venus",   radius: 0.72, orbit: 8.2,  color: 0xe8cda0, speed: 1.62, tilt: 0.02, hasRing: false },
+      { name: "Earth",   radius: 0.82, orbit: 11.0, color: 0x4a90d9, speed: 1.00, tilt: 0.04, hasRing: false, moon: true },
+      { name: "Mars",    radius: 0.55, orbit: 14.2, color: 0xc1440e, speed: 0.53, tilt: 0.03, hasRing: false },
+      { name: "Jupiter", radius: 2.2,  orbit: 20.0, color: 0xd4a574, speed: 0.084, tilt: 0.02, hasRing: false },
+      { name: "Saturn",  radius: 1.85, orbit: 27.0, color: 0xe8d5a3, speed: 0.034, tilt: 0.05, hasRing: true },
+      { name: "Uranus",  radius: 1.35, orbit: 34.0, color: 0x7ec8c8, speed: 0.012, tilt: 0.98, hasRing: true },
+      { name: "Neptune", radius: 1.3,  orbit: 40.0, color: 0x3d5a9e, speed: 0.006, tilt: 0.03, hasRing: false },
+    ];
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x020208, 0.0018);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+    camera.position.set(0, 28, 52);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 8;
+    controls.maxDistance = 120;
+    controls.target.set(0, 0, 0);
+
+    // Starfield
+    const starCount = 6000;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(starCount * 3);
+    const starCol = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const r = 300 + Math.random() * 400;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      starPos[i * 3 + 2] = r * Math.cos(phi);
+      const warmth = 0.6 + Math.random() * 0.4;
+      starCol[i * 3] = warmth;
+      starCol[i * 3 + 1] = warmth * (0.85 + Math.random() * 0.15);
+      starCol[i * 3 + 2] = 1;
+    }
+    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+    starGeo.setAttribute("color", new THREE.BufferAttribute(starCol, 3));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+      size: 0.9, vertexColors: true, transparent: true, opacity: 0.85, sizeAttenuation: true,
+    }));
+    scene.add(stars);
+
+    // Sun
+    const sunGroup = new THREE.Group();
+    scene.add(sunGroup);
+
+    const sunCore = new THREE.Mesh(
+      new THREE.SphereGeometry(3.2, 64, 64),
+      new THREE.MeshBasicMaterial({ color: 0xfff4d0 })
+    );
+    sunGroup.add(sunCore);
+
+    const sunGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(4.2, 32, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffaa33, transparent: true, opacity: 0.25 })
+    );
+    sunGroup.add(sunGlow);
+
+    const sunCorona = new THREE.Mesh(
+      new THREE.SphereGeometry(5.5, 32, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.08 })
+    );
+    sunGroup.add(sunCorona);
+
+    const sunLight = new THREE.PointLight(0xfff0cc, 3.5, 200, 1.2);
+    sunGroup.add(sunLight);
+
+    const ambient = new THREE.AmbientLight(0x1a1a2e, 0.15);
+    scene.add(ambient);
+
+    // Orbit path material
+    const orbitMat = new THREE.LineBasicMaterial({ color: 0x334466, transparent: true, opacity: 0.22 });
+
+    const planetMeshes = [];
+    const orbitLines = [];
+
+    PLANETS.forEach((p, idx) => {
+      const group = new THREE.Group();
+      scene.add(group);
+
+      // Orbit ring
+      const orbitCurve = new THREE.EllipseCurve(0, 0, p.orbit, p.orbit, 0, Math.PI * 2, false, 0);
+      const orbitPts = orbitCurve.getPoints(128).map(v => new THREE.Vector3(v.x, 0, v.y));
+      const orbitGeo = new THREE.BufferGeometry().setFromPoints(orbitPts);
+      const orbitLine = new THREE.Line(orbitGeo, orbitMat);
+      scene.add(orbitLine);
+      orbitLines.push(orbitLine);
+
+      // Planet pivot for orbit
+      const pivot = new THREE.Group();
+      group.add(pivot);
+
+      const body = new THREE.Mesh(
+        new THREE.SphereGeometry(p.radius, 32, 32),
+        new THREE.MeshStandardMaterial({
+          color: p.color,
+          roughness: 0.75,
+          metalness: 0.05,
+        })
+      );
+      body.position.x = p.orbit;
+      body.rotation.z = p.tilt;
+      pivot.add(body);
+
+      if (p.hasRing) {
+        const ringGeo = new THREE.RingGeometry(p.radius * 1.4, p.radius * 2.2, 64);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: p.name === "Saturn" ? 0xc9b896 : 0x88bbcc,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.55,
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2 + (p.name === "Uranus" ? 1.2 : 0.15);
+        body.add(ring);
+      }
+
+      if (p.moon) {
+        const moonPivot = new THREE.Group();
+        body.add(moonPivot);
+        const moon = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18, 16, 16),
+          new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.9 })
+        );
+        moon.position.x = 1.6;
+        moonPivot.add(moon);
+        planetMeshes.push({ pivot: moonPivot, speed: 3.5, angle: Math.random() * Math.PI * 2, mesh: moon, isMoon: true });
+      }
+
+      planetMeshes.push({
+        pivot,
+        speed: p.speed,
+        angle: (idx / PLANETS.length) * Math.PI * 2,
+        mesh: body,
+        data: p,
+        isMoon: false,
+      });
+
+      // Legend entry
+      const legend = document.getElementById("legend");
+      const row = document.createElement("div");
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      dot.style.background = "#" + p.color.toString(16).padStart(6, "0");
+      row.appendChild(dot);
+      row.appendChild(document.createTextNode(p.name));
+      legend.appendChild(row);
+    });
+
+    // Asteroid belt
+    const asteroidCount = 400;
+    const asteroidGeo = new THREE.BufferGeometry();
+    const asteroidPos = new Float32Array(asteroidCount * 3);
+    for (let i = 0; i < asteroidCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = 16.5 + Math.random() * 2.5;
+      asteroidPos[i * 3] = Math.cos(angle) * r;
+      asteroidPos[i * 3 + 1] = (Math.random() - 0.5) * 0.8;
+      asteroidPos[i * 3 + 2] = Math.sin(angle) * r;
+    }
+    asteroidGeo.setAttribute("position", new THREE.BufferAttribute(asteroidPos, 3));
+    const asteroids = new THREE.Points(asteroidGeo, new THREE.PointsMaterial({
+      color: 0x887766, size: 0.25, transparent: true, opacity: 0.6,
+    }));
+    scene.add(asteroids);
+
+    let timeScale = 1;
+    let elapsed = 0;
+    const speedLabel = document.getElementById("speed-label");
+    const focusLabel = document.getElementById("focus-label");
+
+    addEventListener("wheel", (e) => {
+      if (e.shiftKey) {
+        timeScale = Math.max(0.1, Math.min(20, timeScale + (e.deltaY > 0 ? -0.3 : 0.3)));
+        speedLabel.textContent = `Time: ${timeScale.toFixed(1)}×`;
+      }
+    }, { passive: true });
+
+    addEventListener("dblclick", () => {
+      controls.target.set(0, 0, 0);
+      camera.position.set(0, 28, 52);
+      focusLabel.textContent = "Focus: Sun";
+    });
+
+    renderer.domElement.addEventListener("click", (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(mouse, camera);
+      const bodies = planetMeshes.filter(p => !p.isMoon).map(p => p.mesh);
+      const hits = ray.intersectObjects(bodies);
+      if (hits.length) {
+        const hit = hits[0].object;
+        const entry = planetMeshes.find(p => p.mesh === hit);
+        if (entry) {
+          controls.target.copy(hit.getWorldPosition(new THREE.Vector3()));
+          focusLabel.textContent = `Focus: ${entry.data.name}`;
+        }
+      }
+    });
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta() * timeScale;
+      elapsed += dt;
+
+      sunGroup.rotation.y += dt * 0.08;
+      sunGlow.scale.setScalar(1 + Math.sin(elapsed * 1.5) * 0.04);
+      sunCorona.scale.setScalar(1 + Math.sin(elapsed * 0.7) * 0.06);
+
+      planetMeshes.forEach(p => {
+        p.angle += dt * p.speed * 0.15;
+        p.pivot.rotation.y = p.angle;
+        if (!p.isMoon) p.mesh.rotation.y += dt * 0.4;
+      });
+
+      stars.rotation.y += dt * 0.002;
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
