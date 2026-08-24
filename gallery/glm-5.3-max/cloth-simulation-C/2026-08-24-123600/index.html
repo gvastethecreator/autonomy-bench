@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>VELUM — Cloth Simulation</title>
+<style>
+  :root{
+    --bg:#0b0d12;
+    --ink:#e9e4d8;
+    --dim:rgba(233,228,216,.58);
+    --faint:rgba(233,228,216,.34);
+    --accent:#e6b56b;
+    --hair:rgba(233,228,216,.1);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,Menlo,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--mono);
+    overflow:hidden;-webkit-user-select:none;user-select:none;
+  }
+  #scene{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+  body.grabbing #scene{cursor:grabbing}
+  body.cutting  #scene{cursor:crosshair}
+  body.pinhot   #scene{cursor:pointer}
+
+  /* ---------- overlays ---------- */
+  .vignette{
+    position:fixed;inset:0;z-index:8;pointer-events:none;
+    background:radial-gradient(120% 92% at 50% 42%, transparent 52%, rgba(4,5,8,.62) 100%);
+  }
+  .grain{
+    position:fixed;inset:-60%;width:220%;height:220%;z-index:9;pointer-events:none;
+    opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.62'/%3E%3C/svg%3E");
+    animation:grain .9s steps(1) infinite;
+  }
+  @keyframes grain{
+    0%{transform:translate(0,0)}20%{transform:translate(-2%,3%)}
+    40%{transform:translate(3%,-2%)}60%{transform:translate(-3%,-3%)}
+    80%{transform:translate(2%,2%)}100%{transform:translate(0,0)}
+  }
+  .veil{
+    position:fixed;inset:0;z-index:10;pointer-events:none;background:#06070b;
+    animation:veil 1.5s ease .15s forwards;
+  }
+  @keyframes veil{to{opacity:0;visibility:hidden}}
+
+  /* ---------- brand ---------- */
+  .brand{position:fixed;top:28px;left:32px;z-index:5;max-width:360px;pointer-events:none;
+    animation:rise .9s cubic-bezier(.2,.7,.2,1) .2s backwards}
+  .kicker{
+    font:500 10px/1.6 var(--mono);letter-spacing:.34em;text-transform:uppercase;
+    color:var(--accent);opacity:.9;
+  }
+  h1{
+    font:600 clamp(34px,5.2vw,54px)/1 var(--serif);
+    letter-spacing:.3em;text-transform:uppercase;text-indent:.06em;
+    color:#f2ead9;margin:12px 0 0;text-shadow:0 2px 34px rgba(0,0,0,.55);
+  }
+  .rule{width:58px;height:1px;margin:16px 0 14px;
+    background:linear-gradient(90deg,var(--accent),transparent)}
+  .sub{font:400 11.5px/1.75 var(--mono);color:var(--dim);letter-spacing:.02em}
+
+  /* ---------- stats ---------- */
+  .stats{position:fixed;top:32px;right:34px;z-index:5;text-align:right;pointer-events:none;
+    font:500 10.5px/2 var(--mono);letter-spacing:.06em;
+    animation:rise .9s cubic-bezier(.2,.7,.2,1) .35s backwards}
+  .stats .k{color:rgba(233,228,216,.36);margin-right:12px;
+    letter-spacing:.2em;text-transform:uppercase;font-size:9px}
+  .stats b{font-weight:500;color:#cfc8ba;font-variant-numeric:tabular-nums}
+
+  /* ---------- control panel ---------- */
+  .panel{
+    position:fixed;left:50%;bottom:26px;z-index:6;
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:center;
+    padding:13px 20px;border:1px solid var(--hair);border-radius:16px;
+    background:rgba(12,14,19,.6);
+    -webkit-backdrop-filter:blur(16px) saturate(1.25);backdrop-filter:blur(16px) saturate(1.25);
+    box-shadow:0 22px 55px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.05);
+    max-width:calc(100vw - 26px);
+    animation:riseP .9s cubic-bezier(.2,.7,.2,1) .5s backwards;
+  }
+  .ctl{display:flex;flex-direction:column;gap:8px}
+  .lab{display:flex;justify-content:space-between;gap:14px;
+    font:600 9px/1 var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--faint)}
+  .lab b{color:var(--accent);font-weight:600;letter-spacing:.05em;font-variant-numeric:tabular-nums}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:116px;height:14px;background:transparent;cursor:ew-resize}
+  input[type=range]::-webkit-slider-runnable-track{
+    height:2px;border-radius:2px;
+    background:linear-gradient(90deg,rgba(230,181,107,.55),rgba(230,181,107,.1))}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:11px;height:11px;border-radius:50%;margin-top:-4.5px;
+    background:#0d0f14;border:1.5px solid var(--accent);
+    box-shadow:0 0 0 3px rgba(230,181,107,.12);transition:transform .15s,box-shadow .15s}
+  input[type=range]:hover::-webkit-slider-thumb{
+    transform:scale(1.25);box-shadow:0 0 0 5px rgba(230,181,107,.18)}
+  input[type=range]::-moz-range-track{
+    height:2px;border-radius:2px;
+    background:linear-gradient(90deg,rgba(230,181,107,.55),rgba(230,181,107,.1))}
+  input[type=range]::-moz-range-thumb{
+    width:9px;height:9px;border-radius:50%;background:#0d0f14;
+    border:1.5px solid var(--accent);box-shadow:0 0 0 3px rgba(230,181,107,.12)}
+  .div{width:1px;height:28px;background:var(--hair)}
+  button{
+    font:600 10px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+    padding:9px 15px;border-radius:999px;cursor:pointer;transition:all .18s}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .chip{border:1px solid rgba(233,228,216,.15);color:var(--faint);background:transparent}
+  .chip:hover{color:var(--dim);border-color:rgba(233,228,216,.32)}
+  .chip.on{
+    color:#f3d9ab;border-color:rgba(230,181,107,.65);background:rgba(230,181,107,.1);
+    box-shadow:0 0 0 3px rgba(230,181,107,.06),inset 0 0 14px rgba(230,181,107,.05)}
+  .act{
+    border:none;color:#1a1005;
+    background:linear-gradient(180deg,#f0c98a,#d8a151);
+    box-shadow:0 5px 20px rgba(216,161,81,.28)}
+  .act:hover{filter:brightness(1.07)}
+  .act:active{transform:translateY(1px) scale(.97)}
+  .ghost{border:1px solid rgba(233,228,216,.16);color:var(--dim);background:transparent}
+  .ghost:hover{border-color:rgba(233,228,216,.36);color:var(--ink)}
+
+  /* ---------- hint ---------- */
+  .hint{
+    position:fixed;bottom:6px;left:50%;transform:translateX(-50%);z-index:5;
+    font:500 9px/1 var(--mono);letter-spacing:.18em;color:rgba(233,228,216,.26);
+    white-space:nowrap;pointer-events:none}
+  .coarse{display:none}
+  @media (pointer:coarse){.fine{display:none}.coarse{display:inline}}
+
+  @keyframes rise {from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes riseP{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
+
+  @media (max-width:760px){
+    .brand{top:20px;left:20px;max-width:270px}
+    .stats{display:none}
+    .panel{gap:11px;padding:11px 14px;bottom:20px}
+    input[type=range]{width:86px}
+    .div{display:none}
+    .hint{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .grain{animation:none}
+    *{animation-delay:0s!important;animation-duration:.001s!important}
+  }
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="Interactive cloth simulation"></canvas>
+
+<header class="brand">
+  <p class="kicker">real-time cloth · verlet · wind</p>
+  <h1>Velum</h1>
+  <div class="rule"></div>
+  <p class="sub">Weighted silk pinned to the dark, breathing in a field of layered sines. Pull it. Cut it. Let it fall.</p>
+</header>
+
+<aside class="stats" aria-hidden="true">
+  <div><span class="k">fps</span><b id="stFps">—</b></div>
+  <div><span class="k">points</span><b id="stPts">—</b></div>
+  <div><span class="k">links</span><b id="stLinks">—</b></div>
+  <div><span class="k">torn</span><b id="stTorn">—</b></div>
+  <div><span class="k">wind</span><b id="stWind">—</b></div>
+</aside>
+
+<section class="panel" id="panel">
+  <label class="ctl"><span class="lab">wind<b id="vWind">0.42</b></span>
+    <input id="rWind" type="range" min="0" max="1" step="0.01" value="0.42" aria-label="Wind strength"></label>
+  <label class="ctl"><span class="lab">gravity<b id="vGrav">1.00</b></span>
+    <input id="rGrav" type="range" min="0" max="2" step="0.05" value="1" aria-label="Gravity"></label>
+  <label class="ctl"><span class="lab">drape<b id="vStiff">4</b></span>
+    <input id="rStiff" type="range" min="2" max="6" step="1" value="4" aria-label="Stiffness"></label>
+  <span class="div"></span>
+  <button class="chip" id="cWire" aria-pressed="false">wireframe</button>
+  <button class="chip on" id="cTear" aria-pressed="true">tearable</button>
+  <button class="chip on" id="cPins" aria-pressed="true">pinned</button>
+  <span class="div"></span>
+  <button class="act" id="bGust">gust</button>
+  <button class="ghost" id="bReset">reset</button>
+</section>
+
+<p class="hint">
+  <span class="fine">drag — pull&nbsp;&nbsp;·&nbsp;&nbsp;right-drag — cut&nbsp;&nbsp;·&nbsp;&nbsp;double-click pin — release&nbsp;&nbsp;·&nbsp;&nbsp;keys&nbsp; g·r·w·t·p</span>
+  <span class="coarse">drag the silk to pull it</span>
+</p>
+
+<div class="vignette" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="veil" id="veil" aria-hidden="true"></div>
+<noscript><p style="position:fixed;top:50%;width:100%;text-align:center">This simulation needs JavaScript.</p></noscript>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================================================
+   VELUM — a real-time cloth study
+   Verlet particles + structural / shear / bend constraints,
+   quad-normal lighting, painter's-algorithm rendering.
+   ============================================================ */
+
+const $ = id => document.getElementById(id);
+const canvas = $('scene');
+const ctx = canvas.getContext('2d');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TAU = Math.PI * 2;
+const FOV = 1050;                       // perspective focal length (px)
+
+/* lights (unit vectors, x right / y down / z toward viewer) */
+const norm3 = (x, y, z) => { const l = Math.sqrt(x*x + y*y + z*z); return [x/l, y/l, z/l]; };
+const LK = norm3(-0.46, -0.74, 0.50);   // warm key, upper-left front
+const LF = norm3( 0.82, -0.20, 0.34);   // cool fill, right
+const LH = norm3(LK[0], LK[1], LK[2] + 1); // half vector for sheen
+
+/* silk gradient stops (top of cloth -> bottom) */
+const STOPS = [
+  [0.00, 247, 218, 162],
+  [0.30, 236, 170,  98],
+  [0.55, 208,  97,  60],
+  [0.78, 161,  47,  54],
+  [1.00,  92,  28,  44]
+];
+function gradColor(v){
+  v = v < 0 ? 0 : v > 1 ? 1 : v;
+  for (let k = 1; k < STOPS.length; k++){
+    if (v <= STOPS[k][0]){
+      const a = STOPS[k-1], b = STOPS[k];
+      const f = (v - a[0]) / (b[0] - a[0]);
+      return [a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f, a[3]+(b[3]-a[3])*f];
+    }
+  }
+  const L = STOPS[STOPS.length-1];
+  return [L[1], L[2], L[3]];
+}
+
+/* ---------- parameters bound to the UI ---------- */
+const params = { wind: REDUCED ? 0.12 : 0.42, gravity: 1, stiff: 4, wire: false, tear: true, pins: true };
+
+/* ---------- module state ---------- */
+let vw = 0, vh = 0, dpr = 1, bg = null, floorY = 0;
+let cols = 0, rows = 0, W = 0, H = 0, NP = 0, sp = 0, NL = 0, QC = 0;
+let px, py, pz, ox, oy, oz;             // position + previous (Verlet)
+let afx, afy, afz;                      // per-step accelerations
+let sx, sy, ssr, pnn;                   // screen cache + pinned flags
+let cA, cB, cR, cRel, cT, cKind, cAlive;
+let qIdx, qLnk, qAliveNow, depth;
+let order = [];
+let rowR, rowG, rowB;
+let pinHome = [];
+let dust = [];
+let linksAlive = 0, tornCount = 0;
+let simT = 0, accum = 0;
+let viewX = 0, viewY = 0, mX = 0, mY = 0;
+let grab = -1, hoverPin = -1, cutting = false, lastCX = 0, lastCY = 0;
+let gustT0 = -99, gustAmp = 0, nextGust = 1.0, lastWind = 0.3;
+let lowQ = false, fpsEma = 60, lastStat = 0, lastFrameT = performance.now();
+
+/* ============================================================
+   build — (re)create the cloth, scene and backdrop
+   ============================================================ */
+function build(){
+  vw = innerWidth; vh = innerHeight;
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width  = Math.round(vw * dpr);
+  canvas.height = Math.round(vh * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  floorY = Math.round(vh * 0.93);
+  viewX = vw / 2; viewY = vh * 0.44; mX = vw / 2; mY = vh / 2;
+  grab = -1; hoverPin = -1; cutting = false;
+  document.body.classList.remove('grabbing', 'cutting');
+
+  /* grid sizing to viewport */
+  const clothW = Math.min(vw < 640 ? vw * 0.9 : vw * 0.74, 980);
+  cols = Math.max(34, Math.min(64, Math.round(clothW / 16)));
+  sp = clothW / cols;
+  rows = Math.max(20, Math.min(46, Math.round(Math.min(vh * 0.56, 560) / sp)));
+  W = cols + 1; H = rows + 1; NP = W * H;
+
+  px = new Float32Array(NP); py = new Float32Array(NP); pz = new Float32Array(NP);
+  ox = new Float32Array(NP); oy = new Float32Array(NP); oz = new Float32Array(NP);
+  afx = new Float32Array(NP); afy = new Float32Array(NP); afz = new Float32Array(NP);
+  sx = new Float32Array(NP); sy = new Float32Array(NP); ssr = new Float32Array(NP);
+  pnn = new Uint8Array(NP);
+
+  const x0 = (vw - cols * sp) / 2;
+  const y0 = Math.max(64, vh * 0.13);
+  for (let j = 0; j <= rows; j++){
+    for (let i = 0; i <= cols; i++){
+      const k = j * W + i;
+      px[k] = x0 + i * sp;
+      py[k] = y0 + j * sp - (REDUCED ? 0 : 22 * (1 - j / rows)); // gathered, settles on load
+      pz[k] = REDUCED ? 0 : Math.sin(i * 0.34) * 11 * (j / rows) + Math.sin(j * 0.31 + i * 0.05) * 5;
+      ox[k] = px[k]; oy[k] = py[k]; oz[k] = pz[k];
+      pnn[k] = 0;
+    }
+  }
+
+  /* pins along the top edge — swags hang between them */
+  pinHome.length = 0;
+  const every = Math.max(4, Math.round(cols / 8));
+  for (let i = 0; i <= cols; i++){
+    if (i === cols || i % every === 0){
+      pnn[i] = 1;
+      pinHome.push({ i, x: px[i], y: py[i], z: pz[i] });
+    }
+  }
+
+  /* constraints — structural / shear / bend */
+  const nStruct = cols * (rows + 1) + (cols + 1) * rows;
+  const nShear  = 2 * cols * rows;
+  const nBend   = (cols - 1) * (rows + 1) + (cols + 1) * (rows - 1);
+  NL = nStruct + nShear + nBend;
+  cA = new Int32Array(NL); cB = new Int32Array(NL);
+  cR = new Float32Array(NL); cRel = new Float32Array(NL);
+  cT = new Uint8Array(NL); cKind = new Uint8Array(NL); cAlive = new Uint8Array(NL);
+
+  const idR = new Int32Array(NP), idD = new Int32Array(NP);
+  let ci = 0;
+  for (let j = 0; j <= rows; j++){
+    for (let i = 0; i <= cols; i++){
+      const a = j * W + i;
+      if (i < cols){ idR[a] = ci; cA[ci]=a; cB[ci]=a+1; cR[ci]=sp;    cRel[ci]=1;    cT[ci]=1; cKind[ci]=0; cAlive[ci]=1; ci++; }
+      if (j < rows){ idD[a] = ci; cA[ci]=a; cB[ci]=a+W; cR[ci]=sp;    cRel[ci]=1;    cT[ci]=1; cKind[ci]=0; cAlive[ci]=1; ci++; }
+    }
+  }
+  const dg = sp * Math.SQRT2;
+  for (let j = 0; j < rows; j++){
+    for (let i = 0; i < cols; i++){
+      const a = j * W + i;
+      cA[ci]=a;   cB[ci]=a+W+1; cR[ci]=dg;    cRel[ci]=0.5;  cT[ci]=0; cKind[ci]=1; cAlive[ci]=1; ci++;
+      cA[ci]=a+1; cB[ci]=a+W;   cR[ci]=dg;    cRel[ci]=0.5;  cT[ci]=0; cKind[ci]=1; cAlive[ci]=1; ci++;
+    }
+  }
+  for (let j = 0; j <= rows; j++){
+    for (let i = 0; i <= cols; i++){
+      const a = j * W + i;
+      if (i + 2 <= cols){ cA[ci]=a; cB[ci]=a+2;   cR[ci]=sp*2; cRel[ci]=0.22; cT[ci]=0; cKind[ci]=2; cAlive[ci]=1; ci++; }
+      if (j + 2 <= rows){ cA[ci]=a; cB[ci]=a+2*W; cR[ci]=sp*2; cRel[ci]=0.22; cT[ci]=0; cKind[ci]=2; cAlive[ci]=1; ci++; }
+    }
+  }
+  NL = ci; linksAlive = NL; tornCount = 0;
+
+  /* render quads + their four structural links */
+  QC = cols * rows;
+  qIdx = new Int32Array(QC * 4); qLnk = new Int32Array(QC * 4);
+  qAliveNow = new Uint8Array(QC); depth = new Float32Array(QC);
+  order.length = QC;
+  let q = 0;
+  for (let j = 0; j < rows; j++){
+    for (let i = 0; i < cols; i++, q++){
+      const a = j * W + i, b = a + 1, d = a + W, c = d + 1;
+      qIdx[q*4]=a; qIdx[q*4+1]=b; qIdx[q*4+2]=c; qIdx[q*4+3]=d;
+      qLnk[q*4]=idR[a]; qLnk[q*4+1]=idR[d]; qLnk[q*4+2]=idD[a]; qLnk[q*4+3]=idD[b];
+      order[q] = q;
+    }
+  }
+
+  /* per-row base colors */
+  rowR = new Float32Array(rows); rowG = new Float32Array(rows); rowB = new Float32Array(rows);
+  for (let j = 0; j < rows; j++){
+    const c = gradColor((j + 0.5) / rows);
+    rowR[j] = c[0]; rowG[j] = c[1]; rowB[j] = c[2];
+  }
+
+  /* dust motes */
+  dust.length = 0;
+  for (let i = 0; i < 70; i++){
+    dust.push({
+      x: Math.random()*vw, y: Math.random()*vh, z: (Math.random()*2-1)*220,
+      vx: (Math.random()*2-1)*4, vy: (Math.random()*2-1)*2.5,
+      r: 0.7 + Math.random()*1.4, a: 0.04 + Math.random()*0.13,
+      tw: 0.4 + Math.random()*1.2, ph: Math.random()*TAU
+    });
+  }
+
+  paintBG();
+}
+
+/* pre-rendered static backdrop */
+function paintBG(){
+  bg = document.createElement('canvas');
+  bg.width = Math.round(vw * dpr); bg.height = Math.round(vh * dpr);
+  const b = bg.getContext('2d');
+  b.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const base = b.createLinearGradient(0, 0, 0, vh);
+  base.addColorStop(0, '#10131a'); base.addColorStop(0.55, '#0c0e13'); base.addColorStop(1, '#08090d');
+  b.fillStyle = base; b.fillRect(0, 0, vw, vh);
+
+  let g = b.createRadialGradient(vw*0.1, vh*0.04, 0, vw*0.1, vh*0.04, vh*0.95);
+  g.addColorStop(0, 'rgba(58,84,128,0.10)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  b.fillStyle = g; b.fillRect(0, 0, vw, vh);
+
+  g = b.createRadialGradient(vw/2, vh*0.36, 0, vw/2, vh*0.36, Math.max(vw*0.42, 520));
+  g.addColorStop(0, 'rgba(226,168,104,0.14)');
+  g.addColorStop(0.55, 'rgba(190,120,80,0.05)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  b.fillStyle = g; b.fillRect(0, 0, vw, vh);
+
+  const top = floorY - 90;
+  g = b.createLinearGradient(0, top, 0, vh);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(3,4,6,0.72)');
+  b.fillStyle = g; b.fillRect(0, top, vw, vh - top);
+
+  b.fillStyle = 'rgba(214,190,150,0.07)'; b.fillRect(0, floorY, vw, 1);
+  b.fillStyle = 'rgba(214,190,150,0.02)'; b.fillRect(0, floorY + 1, vw, 8);
+}
+
+/* ============================================================
+   physics — one fixed substep
+   ============================================================ */
+function step(h){
+  simT += h;
+  const t = simT;
+
+  /* wind envelope: base + decaying gusts + slow ambient breathing */
+  const gEnv = gustAmp * Math.exp(-2.4 * (t - gustT0));
+  const amb  = 0.5 + 0.5 * Math.sin(t * 0.23) * Math.sin(t * 0.411 + 1.7);
+  const wt = params.wind * (0.82 + 0.35 * amb) + gEnv * 1.9 + 0.05;
+  lastWind = wt;
+
+  /* accelerations: gravity everywhere */
+  const G = 2400 * params.gravity;
+  afx.fill(0); afy.fill(G); afz.fill(0);
+
+  /* aerodynamic wind: force along each quad's normal (billowing) */
+  const WK = 3100;
+  for (let q = 0; q < QC; q++){
+    const l = q * 4;
+    if (!(cAlive[qLnk[l]] & cAlive[qLnk[l+1]] & cAlive[qLnk[l+2]] & cAlive[qLnk[l+3]])) continue;
+    const a = qIdx[l], b = qIdx[l+1], c = qIdx[l+2], d = qIdx[l+3];
+    const e1x = px[c]-px[a], e1y = py[c]-py[a], e1z = pz[c]-pz[a];
+    const e2x = px[d]-px[b], e2y = py[d]-py[b], e2z = pz[d]-pz[b];
+    let nx = e1y*e2z - e1z*e2y, ny = e1z*e2x - e1x*e2z, nz = e1x*e2y - e1y*e2x;
+    const nl = Math.sqrt(nx*nx + ny*ny + nz*nz);
+    if (nl < 1e-6) continue;
+    nx /= nl; ny /= nl; nz /= nl;
+    const mx = (px[a]+px[b]+px[c]+px[d]) * 0.25;
+    const my = (py[a]+py[b]+py[c]+py[d]) * 0.25;
+    const s1 = Math.sin(t*1.35 + my*0.011);
+    const s2 = Math.sin(t*2.05 + mx*0.0085 + 2.1);
+    const s3 = Math.sin(t*0.72 + (mx+my)*0.0052 + 4.4);
+    const wS = wt * (0.72 + 0.38*s2);
+    const wxv = wS * (0.55 + 0.45*s1);
+    const wyv = wS * 0.16 * s1;
+    const wzv = wS * (1.05 + 0.35*s3);
+    const k = (nx*wxv + ny*wyv + nz*wzv) * WK * 0.25;
+    const kx = nx*k, ky = ny*k, kz = nz*k;
+    afx[a]+=kx; afy[a]+=ky; afz[a]+=kz;
+    afx[b]+=kx; afy[b]+=ky; afz[b]+=kz;
+    afx[c]+=kx; afy[c]+=ky; afz[c]+=kz;
+    afx[d]+=kx; afy[d]+=ky; afz[d]+=kz;
+  }
+
+  /* Verlet integration */
+  const damp = 0.9885, hh = h * h;
+  for (let i = 0; i < NP; i++){
+    if (pnn[i]){ ox[i]=px[i]; oy[i]=py[i]; oz[i]=pz[i]; continue; }
+    let vx = (px[i]-ox[i]) * damp, vy = (py[i]-oy[i]) * damp, vz = (pz[i]-oz[i]) * damp;
+    if (vx >  90) vx =  90; else if (vx < -90) vx = -90;
+    if (vy >  90) vy =  90; else if (vy < -90) vy = -90;
+    if (vz >  90) vz =  90; else if (vz < -90) vz = -90;
+    ox[i] = px[i]; oy[i] = py[i]; oz[i] = pz[i];
+    px[i] += vx + afx[i]*hh; py[i] += vy + afy[i]*hh; pz[i] += vz + afz[i]*hh;
+  }
+
+  /* grabbed point follows the cursor */
+  if (grab >= 0){
+    const sc = FOV / (FOV + pz[grab]);
+    px[grab] = (mX - viewX) / sc;
+    py[grab] = (mY - viewY) / sc;
+    ox[grab] = px[grab]; oy[grab] = py[grab]; oz[grab] = pz[grab];
+  }
+
+  /* constraint relaxation */
+  const iters = Math.max(2, Math.min(lowQ ? 3 : 6, params.stiff | 0));
+  const tearOn = params.tear;
+  for (let it = 0; it < iters; it++){
+    for (let ci = 0; ci < NL; ci++){
+      if (!cAlive[ci]) continue;
+      const a = cA[ci], b = cB[ci];
+      let dx = px[b]-px[a], dy = py[b]-py[a], dz = pz[b]-pz[a];
+      const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (d < 1e-6) continue;
+      const rest = cR[ci];
+      if (tearOn && cT[ci] && d > rest * 2.75){ killLink(ci); continue; }
+      const f = (d - rest) / d * 0.5 * cRel[ci];
+      dx *= f; dy *= f; dz *= f;
+      if (!pnn[a]){ px[a]+=dx; py[a]+=dy; pz[a]+=dz; }
+      if (!pnn[b]){ px[b]-=dx; py[b]-=dy; pz[b]-=dz; }
+    }
+  }
+
+  /* pins and world bounds */
+  for (let k = 0; k < pinHome.length; k++){
+    const p = pinHome[k];
+    if (pnn[p.i]){ px[p.i]=p.x; py[p.i]=p.y; pz[p.i]=p.z; ox[p.i]=p.x; oy[p.i]=p.y; oz[p.i]=p.z; }
+  }
+  for (let i = 0; i < NP; i++){
+    if (pnn[i]) continue;
+    if (py[i] > floorY){
+      py[i] = floorY;
+      ox[i] = px[i] - (px[i]-ox[i]) * 0.45;   // friction on the floor
+      oy[i] = py[i];
+      oz[i] = pz[i] - (pz[i]-oz[i]) * 0.5;
+    }
+    if (px[i] < -60)     { px[i] = -60;     ox[i] = px[i]; }
+    if (px[i] > vw + 60) { px[i] = vw + 60; ox[i] = px[i]; }
+    if (pz[i] >  300)    { pz[i] =  300;    oz[i] = pz[i]; }
+    if (pz[i] < -460)    { pz[i] = -460;    oz[i] = pz[i]; }
+  }
+}
+
+function killLink(ci){
+  if (cAlive[ci]){ cAlive[ci] = 0; linksAlive--; tornCount++; }
+}
+
+function gust(amp){ gustT0 = simT; gustAmp = amp; }
+
+/* ============================================================
+   render
+   ============================================================ */
+function drawDust(minZ, maxZ, t){
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < dust.length; i++){
+    const d = dust[i];
+    if (d.z < minZ || d.z >= maxZ) continue;
+    const sc = FOV / (FOV + d.z);
+    const a = d.a * (0.55 + 0.45 * Math.sin(t * d.tw + d.ph));
+    ctx.fillStyle = 'rgba(255,224,178,' + a.toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(viewX + d.x * sc, viewY + d.y * sc, Math.max(0.5, d.r * sc * 1.6), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function updateDust(dt, t){
+  const drift = 6 + lastWind * 26;
+  for (let i = 0; i < dust.length; i++){
+    const d = dust[i];
+    d.x += (d.vx + drift + Math.sin(t*0.5 + d.ph)*3) * dt;
+    d.y += (d.vy + Math.cos(t*0.4 + d.ph)*2) * dt;
+    if (d.x > vw + 60) d.x = -50; else if (d.x < -60) d.x = vw + 50;
+    if (d.y > vh + 40) d.y = -30; else if (d.y < -40) d.y = vh + 30;
+  }
+}
+
+function render(t, dt){
+  /* gentle camera parallax toward the cursor */
+  const tvx = vw/2   + (mX - vw/2)   * 0.014;
+  const tvy = vh*0.44 + (mY - vh*0.44) * 0.012;
+  viewX += (tvx - viewX) * 0.04;
+  viewY += (tvy - viewY) * 0.04;
+
+  ctx.drawImage(bg, 0, 0, vw, vh);
+
+  /* project all points once */
+  let sumX = 0, lowY = -1e9;
+  for (let i = 0; i < NP; i++){
+    const sc = FOV / (FOV + pz[i]);
+    sx[i] = viewX + px[i] * sc;
+    sy[i] = viewY + py[i] * sc;
+    ssr[i] = sc;
+    sumX += px[i];
+    if (py[i] > lowY) lowY = py[i];
+  }
+  const ccx = sumX / NP;
+
+  /* soft ground shadow */
+  const shR = cols * sp * 0.6;
+  const shA = 0.32 * Math.max(0.1, 1 - (floorY - lowY) / 340);
+  ctx.save();
+  ctx.translate(ccx, floorY + 16);
+  ctx.scale(1, 0.1);
+  const sg = ctx.createRadialGradient(0, 0, shR * 0.1, 0, 0, shR);
+  sg.addColorStop(0, 'rgba(2,3,5,' + shA.toFixed(3) + ')');
+  sg.addColorStop(1, 'rgba(2,3,5,0)');
+  ctx.fillStyle = sg;
+  ctx.beginPath(); ctx.arc(0, 0, shR, 0, TAU); ctx.fill();
+  ctx.restore();
+
+  if (!lowQ) updateDust(dt, t);
+  drawDust(-1000, 0, t);
+
+  /* depth of each quad + liveness */
+  for (let q = 0; q < QC; q++){
+    const l = q * 4;
+    qAliveNow[q] = cAlive[qLnk[l]] & cAlive[qLnk[l+1]] & cAlive[qLnk[l+2]] & cAlive[qLnk[l+3]];
+    depth[q] = pz[qIdx[l]] + pz[qIdx[l+1]] + pz[qIdx[l+2]] + pz[qIdx[l+3]];
+  }
+
+  if (params.wire){
+    /* faint sheet + wire links */
+    ctx.fillStyle = 'rgba(233,200,150,0.055)';
+    for (let q = 0; q < QC; q++){
+      if (!qAliveNow[q]) continue;
+      const l = q * 4, a = qIdx[l], b = qIdx[l+1], c = qIdx[l+2], d = qIdx[l+3];
+      ctx.beginPath();
+      ctx.moveTo(sx[a], sy[a]); ctx.lineTo(sx[b], sy[b]);
+      ctx.lineTo(sx[c], sy[c]); ctx.lineTo(sx[d], sy[d]);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(240,214,166,0.42)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let ci = 0; ci < NL; ci++){
+      if (!cAlive[ci] || cKind[ci] === 2) continue;
+      const a = cA[ci], b = cB[ci];
+      ctx.moveTo(sx[a], sy[a]); ctx.lineTo(sx[b], sy[b]);
+    }
+    ctx.stroke();
+  } else {
+    /* painter's sort: far quads first */
+    order.sort((p, q) => depth[p] - depth[q]);
+    for (let n = 0; n < QC; n++){
+      const q = order[n];
+      if (!qAliveNow[q]) continue;
+      const l = q * 4, a = qIdx[l], b = qIdx[l+1], c = qIdx[l+2], d = qIdx[l+3];
+
+      /* quad normal in 3D */
+      const e1x = px[c]-px[a], e1y = py[c]-py[a], e1z = pz[c]-pz[a];
+      const e2x = px[d]-px[b], e2y = py[d]-py[b], e2z = pz[d]-pz[b];
+      let nx = e1y*e2z - e1z*e2y, ny = e1z*e2x - e1x*e2z, nz = e1x*e2y - e1y*e2x;
+      const nl = Math.sqrt(nx*nx + ny*ny + nz*nz);
+      if (nl < 1e-6) continue;
+      nx /= nl; ny /= nl; nz /= nl;
+
+      /* base silk color, slightly deepened toward the side edges */
+      const j = (q / cols) | 0, i = q - j * cols;
+      const edge = 1 - Math.abs((i + 0.5) / cols - 0.5) * 2;
+      const br = rowR[j] * (0.9 + 0.1 * edge);
+      const bgc = rowG[j] * (0.93 + 0.07 * edge);
+      const bbc = rowB[j];
+
+      /* two-sided lighting + sheen */
+      const lam = Math.abs(nx*LK[0] + ny*LK[1] + nz*LK[2]);
+      const fil = Math.abs(nx*LF[0] + ny*LF[1] + nz*LF[2]);
+      const d0 = Math.abs(nx*LH[0] + ny*LH[1] + nz*LH[2]);
+      const d2v = d0*d0, d4 = d2v*d2v, d8 = d4*d4, d16 = d8*d8;
+      const spec = d16 * d8 * d2v;                 /* |dot|^26 */
+      const side = nz > 0 ? 1 : 0.88;
+      const lit = (0.22 + 1.02 * lam) * side;
+
+      let r = br  * lit + 22 * fil + 215 * spec;
+      let g = bgc * lit + 30 * fil + 192 * spec;
+      let b2 = bbc * lit + 48 * fil + 158 * spec;
+
+      /* depth fog toward the backdrop */
+      const zq = depth[q] * 0.25;
+      const fog = Math.min(0.42, Math.max(0, (-zq + 40) / 560));
+      if (fog > 0){ const fm = 1 - fog; r = r*fm + 15*fog; g = g*fm + 17*fog; b2 = b2*fm + 23*fog; }
+      if (r > 255) r = 255; if (g > 255) g = 255; if (b2 > 255) b2 = 255;
+
+      ctx.fillStyle = 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b2|0) + ')';
+
+      /* fill with slight outward growth to hide seams */
+      const qx = (sx[a]+sx[b]+sx[c]+sx[d]) * 0.25;
+      const qy = (sy[a]+sy[b]+sy[c]+sy[d]) * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(qx + (sx[a]-qx)*1.06, qy + (sy[a]-qy)*1.06);
+      ctx.lineTo(qx + (sx[b]-qx)*1.06, qy + (sy[b]-qy)*1.06);
+      ctx.lineTo(qx + (sx[c]-qx)*1.06, qy + (sy[c]-qy)*1.06);
+      ctx.lineTo(qx + (sx[d]-qx)*1.06, qy + (sy[d]-qy)*1.06);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  if (!lowQ) drawDust(0, 1000, t);
+
+  /* pins */
+  for (let k = 0; k < pinHome.length; k++){
+    const p = pinHome[k];
+    if (!pnn[p.i]) continue;
+    const X = sx[p.i], Y = sy[p.i];
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath(); ctx.arc(X, Y + 1.5, 5, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#c9a15f';
+    ctx.beginPath(); ctx.arc(X, Y, 4.2, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#f4e0b0';
+    ctx.beginPath(); ctx.arc(X - 1.1, Y - 1.2, 1.5, 0, TAU); ctx.fill();
+    if (hoverPin === p.i){
+      ctx.strokeStyle = 'rgba(244,208,140,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(X, Y, 8, 0, TAU); ctx.stroke();
+    }
+  }
+
+  /* grab feedback ring */
+  if (grab >= 0){
+    ctx.strokeStyle = 'rgba(244,218,160,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(sx[grab], sy[grab], 9, 0, TAU); ctx.stroke();
+    ctx.fillStyle = 'rgba(244,218,160,0.9)';
+    ctx.beginPath(); ctx.arc(sx[grab], sy[grab], 2, 0, TAU); ctx.fill();
+  }
+
+  /* cutter halo */
+  if (cutting){
+    ctx.strokeStyle = 'rgba(238,150,128,0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath(); ctx.arc(mX, mY, 16, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+/* ============================================================
+   main loop — fixed-step physics, rAF rendering
+   ============================================================ */
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = (now - lastFrameT) / 1000;
+  lastFrameT = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt < 0) dt = 0;
+
+  accum += dt;
+  const h = 1 / 120;
+  let steps = 0;
+  const maxSteps = lowQ ? 2 : 3;
+  while (accum >= h && steps < maxSteps){ step(h); accum -= h; steps++; }
+  if (accum > h * 4) accum = 0;
+
+  if (!REDUCED && simT > nextGust){
+    gust(0.4 + Math.random() * 0.45);
+    nextGust = simT + 11 + Math.random() * 9;
+  }
+
+  if (dt > 0) fpsEma += (1 / dt - fpsEma) * 0.06;
+  if (!lowQ && fpsEma < 38) lowQ = true;
+  else if (lowQ && fpsEma > 55) lowQ = false;
+
+  render(now / 1000, dt);
+
+  if (now - lastStat > 300){ updateStats(); lastStat = now; }
+}
+
+function updateStats(){
+  $('stFps').textContent = String(Math.max(0, Math.round(fpsEma)));
+  $('stPts').textContent = NP.toLocaleString('en-US');
+  $('stLinks').textContent = linksAlive.toLocaleString('en-US');
+  $('stTorn').textContent = tornCount.toLocaleString('en-US');
+  $('stWind').textContent = lastWind.toFixed(2);
+}
+
+/* ============================================================
+   pointer interaction — grab / cut / release pins
+   ============================================================ */
+function findPinNear(){
+  hoverPin = -1;
+  let bd = 15 * 15;
+  for (let k = 0; k < pinHome.length; k++){
+    const p = pinHome[k];
+    if (!pnn[p.i]) continue;
+    const dx = sx[p.i] - mX, dy = sy[p.i] - mY;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bd){ bd = d2; hoverPin = p.i; }
+  }
+  return hoverPin;
+}
+
+function cutSegment(x1, y1, x2, y2){
+  const r2 = 15 * 15;
+  const dxs = x2 - x1, dys = y2 - y1;
+  const len2 = dxs*dxs + dys*dys;
+  for (let ci = 0; ci < NL; ci++){
+    if (!cAlive[ci]) continue;
+    const a = cA[ci], b = cB[ci];
+    const mx = (px[a]+px[b]) * 0.5, my = (py[a]+py[b]) * 0.5, mz = (pz[a]+pz[b]) * 0.5;
+    const sc = FOV / (FOV + mz);
+    const X = viewX + mx * sc, Y = viewY + my * sc;
+    let tt = 0;
+    if (len2 > 0){
+      tt = ((X-x1)*dxs + (Y-y1)*dys) / len2;
+      tt = tt < 0 ? 0 : tt > 1 ? 1 : tt;
+    }
+    const ddx = X - (x1 + dxs*tt), ddy = Y - (y1 + dys*tt);
+    if (ddx*ddx + ddy*ddy < r2) killLink(ci);
+  }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+  mX = e.clientX; mY = e.clientY;
+  hoverPin = -1;
+  document.body.classList.remove('pinhot');
+  if (e.button === 2 || (e.button === 0 && e.ctrlKey)){
+    cutting = true; lastCX = mX; lastCY = mY;
+    document.body.classList.add('cutting');
+    cutAtPoint(mX, mY);
+    return;
+  }
+  if (e.button !== 0) return;
+  let best = -1, bd = 30 * 30;
+  for (let i = 0; i < NP; i++){
+    if (pnn[i]) continue;
+    const dx = sx[i] - mX, dy = sy[i] - mY;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bd){ bd = d2; best = i; }
+  }
+  if (best >= 0){ grab = best; document.body.classList.add('grabbing'); }
+});
+
+function cutAtPoint(x, y){ cutSegment(x, y, x + 0.01, y); }
+
+canvas.addEventListener('pointermove', e => {
+  mX = e.clientX; mY = e.clientY;
+  if (cutting){
+    cutSegment(lastCX, lastCY, mX, mY);
+    lastCX = mX; lastCY = mY;
+    return;
+  }
+  if (grab < 0){
+    findPinNear();
+    document.body.classList.toggle('pinhot', hoverPin >= 0);
+  }
+});
+
+function endPointer(){
+  grab = -1; cutting = false;
+  document.body.classList.remove('grabbing', 'cutting', 'pinhot');
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('dblclick', e => {
+  mX = e.clientX; mY = e.clientY;
+  if (findPinNear() >= 0) pnn[hoverPin] = 0;   // release that pin
+});
+
+/* ============================================================
+   UI wiring
+   ============================================================ */
+function bindRange(id, labelId, apply, fmt){
+  const el = $(id), lb = $(labelId);
+  const show = () => { lb.textContent = fmt(parseFloat(el.value)); };
+  el.addEventListener('input', () => { apply(parseFloat(el.value)); show(); });
+  show();
+}
+bindRange('rWind', 'vWind', v => params.wind = v, v => v.toFixed(2));
+bindRange('rGrav', 'vGrav', v => params.gravity = v, v => v.toFixed(2));
+bindRange('rStiff', 'vStiff', v => params.stiff = v | 0, v => String(v | 0));
+
+const chips = {
+  cWire: $('cWire'), cTear: $('cTear'), cPins: $('cPins')
+};
+function syncChips(){
+  chips.cWire.classList.toggle('on', params.wire);
+  chips.cWire.setAttribute('aria-pressed', String(params.wire));
+  chips.cTear.classList.toggle('on', params.tear);
+  chips.cTear.setAttribute('aria-pressed', String(params.tear));
+  chips.cPins.classList.toggle('on', params.pins);
+  chips.cPins.setAttribute('aria-pressed', String(params.pins));
+}
+chips.cWire.addEventListener('click', () => { params.wire = !params.wire; syncChips(); });
+chips.cTear.addEventListener('click', () => { params.tear = !params.tear; syncChips(); });
+chips.cPins.addEventListener('click', () => setPins(!params.pins));
+
+function setPins(on){
+  params.pins = on;
+  if (on){
+    for (const p of pinHome){
+      pnn[p.i] = 1;
+      px[p.i] = p.x; py[p.i] = p.y; pz[p.i] = p.z;
+      ox[p.i] = p.x; oy[p.i] = p.y; oz[p.i] = p.z;
+    }
+  } else {
+    for (const p of pinHome) pnn[p.i] = 0;
+  }
+  syncChips();
+}
+
+function doGust(){ gust(0.85 + params.wind * 1.6); }
+function doReset(){
+  params.pins = true;
+  build();
+  syncChips();
+  updateStats();
+  if (!REDUCED) gust(0.5);            // small billow on reset
+}
+$('bGust').addEventListener('click', doGust);
+$('bReset').addEventListener('click', doReset);
+
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'g') doGust();
+  else if (k === 'r') doReset();
+  else if (k === 'w'){ params.wire = !params.wire; syncChips(); }
+  else if (k === 't'){ params.tear = !params.tear; syncChips(); }
+  else if (k === 'p') setPins(!params.pins);
+});
+
+let rsT = 0;
+addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(build, 150); });
+
+/* reflect any adjusted defaults into the inputs */
+$('rWind').value = String(params.wind);
+$('vWind').textContent = params.wind.toFixed(2);
+
+/* go */
+build();
+syncChips();
+updateStats();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

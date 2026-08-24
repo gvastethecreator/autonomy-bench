@@ -154,7 +154,16 @@
       text-wrap: balance;
     }
     .mark-emoji {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       flex-shrink: 0;
+      box-sizing: content-box;
+      width: 1.15em;
+      min-width: 1.15em;
+      height: 1em;
+      overflow: hidden;
+      white-space: nowrap;
       line-height: 1;
       font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
       font-size: 0.9em;
@@ -1572,7 +1581,7 @@
     <header class="mast">
       <div class="brand">
         <h1 class="mark" id="mark" aria-label="Autonomy Bench">
-          <span class="mark-emoji" id="mark-emoji" hidden aria-hidden="true"></span>
+          <span class="mark-emoji" id="mark-emoji" aria-hidden="true"></span>
           <span class="mark-text" id="mark-text">Autonomy Bench</span>
         </h1>
         <a class="repo" href="https://github.com/gvastethecreator/autonomy-bench" target="_blank" rel="noopener noreferrer">
@@ -1787,6 +1796,13 @@
       el.style.transform = '';
       el.style.marginInlineStart = '';
     }
+    function restoreScrambleVoice(el) {
+      if (el.id === 'mark-emoji') {
+        el.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      el.removeAttribute('aria-hidden');
+    }
     function scrambleTo(el, next, kind) {
       if (!el) return Promise.resolve();
       const text = String(next ?? '');
@@ -1802,29 +1818,40 @@
       if (targetMid) stopMotion(targetMid);
       if (reduceMotion.matches || !canScrambleText(text) || prev === text) {
         el.textContent = text;
-        el.removeAttribute('aria-hidden');
+        restoreScrambleVoice(el);
         return Promise.resolve();
       }
       const spec = SCRAMBLE[kind] || SCRAMBLE.label;
-      const parts = splitChangedText(prev, text);
+      const slot = el.id === 'mark-emoji';
       let target = el;
-      const dest = parts.prefix || parts.suffix ? parts.toMid : text;
-      if (!dest) {
-        el.textContent = text;
-        return Promise.resolve();
-      }
-      if (parts.prefix || parts.suffix) {
-        el.innerHTML = (parts.prefix ? '<span class="scramble-keep">' + esc(parts.prefix) + '</span>' : '')
-          + '<span class="scramble-mid"></span>'
-          + (parts.suffix ? '<span class="scramble-keep">' + esc(parts.suffix) + '</span>' : '');
-        target = el.querySelector('.scramble-mid');
-        target.textContent = parts.fromMid;
+      let dest = text;
+      let fromMid = '';
+      if (slot) {
+        el.textContent = prev ? 'A' : '';
+        dest = 'A';
+      } else {
+        const parts = splitChangedText(prev, text);
+        dest = parts.prefix || parts.suffix ? parts.toMid : text;
+        fromMid = parts.fromMid;
+        if (!dest) {
+          el.textContent = text;
+          restoreScrambleVoice(el);
+          return Promise.resolve();
+        }
+        if (parts.prefix || parts.suffix) {
+          el.innerHTML = (parts.prefix ? '<span class="scramble-keep">' + esc(parts.prefix) + '</span>' : '')
+            + '<span class="scramble-mid"></span>'
+            + (parts.suffix ? '<span class="scramble-keep">' + esc(parts.suffix) + '</span>' : '');
+          target = el.querySelector('.scramble-mid');
+          target.textContent = parts.fromMid;
+        }
       }
       if (el.id !== 'mark' && el.tagName !== 'H1' && el.tagName !== 'H2') el.setAttribute('aria-hidden', 'true');
+      const settleAt = spec.duration > 0 ? 1 - spec.settleDuration / spec.duration : 1;
       const anim = animate(target, {
         innerHTML: scrambleText({
           text: dest,
-          override: parts.fromMid ? false : '',
+          override: fromMid ? false : '',
           chars: spec.chars,
           cursor: spec.cursor,
           perturbation: spec.perturbation,
@@ -1832,14 +1859,17 @@
           settleDuration: spec.settleDuration,
           duration: spec.duration,
           from: spec.from
-        })
+        }),
+        onRender: slot ? (self) => {
+          if (self.progress >= settleAt) el.textContent = text;
+        } : undefined
       });
       motionAnims.set(el, anim);
       motionAnims.set(target, anim);
       return Promise.resolve(anim).then(() => {
         if (motionAnims.get(el) !== anim) return;
         el.textContent = text;
-        el.removeAttribute('aria-hidden');
+        restoreScrambleVoice(el);
         motionAnims.delete(el);
         motionAnims.delete(target);
       }, () => {});
@@ -1851,6 +1881,7 @@
     }
     function waitCopyMotion() {
       return Promise.all([
+        motionPromise(document.getElementById('mark-emoji')),
         motionPromise(document.getElementById('mark-text')),
         motionPromise(document.getElementById('experiment-short')),
         motionPromise(document.getElementById('stage-loader-text')),
@@ -1860,18 +1891,11 @@
     function liveCopy() {
       const currentExp = CATALOG.experiments.find(e => e.id === state.experiment) || {};
       const title = (currentExp.title || state.experiment || 'Autonomy') + ' Bench';
-      paintMarkEmoji();
       return Promise.all([
+        scrambleTo(document.getElementById('mark-emoji'), experimentMark(state.experiment), 'title'),
         scrambleTo(document.getElementById('mark-text'), title, 'title'),
         paintExperimentShort()
       ]);
-    }
-    function paintMarkEmoji() {
-      const el = document.getElementById('mark-emoji');
-      if (!el) return;
-      const mark = experimentMark(state.experiment);
-      el.hidden = !mark;
-      el.textContent = mark || '';
     }
     function paintExperimentShort() {
       const el = document.getElementById('experiment-short');
