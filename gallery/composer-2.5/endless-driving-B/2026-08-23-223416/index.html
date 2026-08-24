@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Endless Night Drive</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+    #overlay {
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #hud {
+      position: absolute; bottom: 28px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 32px;
+      align-items: flex-end;
+    }
+    .gauge {
+      text-align: center;
+      color: rgba(180, 210, 255, 0.85);
+      text-shadow: 0 0 12px rgba(100, 160, 255, 0.6);
+    }
+    .gauge .value {
+      font-size: 2.4rem;
+      font-weight: 300;
+      letter-spacing: 0.08em;
+      font-variant-numeric: tabular-nums;
+    }
+    .gauge .label {
+      font-size: 0.65rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      opacity: 0.55;
+      margin-top: 2px;
+    }
+    #title {
+      position: absolute; top: 32px; left: 40px;
+      color: rgba(255, 255, 255, 0.12);
+      font-size: 0.7rem;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+    }
+    #hint {
+      position: absolute; bottom: 28px; right: 40px;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+    }
+    #vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,20,0.55) 100%);
+    }
+    #start-screen {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, #0a0a1a 0%, #000 70%);
+      z-index: 100;
+      cursor: pointer;
+      transition: opacity 1.2s ease;
+    }
+    #start-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #start-screen h1 {
+      color: #e8eeff;
+      font-weight: 200;
+      font-size: clamp(1.8rem, 5vw, 3rem);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    #start-screen p {
+      color: rgba(180, 200, 255, 0.45);
+      font-size: 0.85rem;
+      letter-spacing: 0.15em;
+    }
+    #start-screen .pulse {
+      margin-top: 48px;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #6af;
+      box-shadow: 0 0 20px #6af, 0 0 40px #48f;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.4); }
+    }
+  </style>
+</head>
+<body>
+  <div id="start-screen">
+    <h1>Midnight Run</h1>
+    <p>Click to start the engine</p>
+    <div class="pulse"></div>
+  </div>
+  <div id="overlay">
+    <div id="title">Endless Night Drive</div>
+    <div id="hud">
+      <div class="gauge">
+        <div class="value" id="speed">0</div>
+        <div class="label">KM/H</div>
+      </div>
+      <div class="gauge">
+        <div class="value" id="distance">0</div>
+        <div class="label">KM</div>
+      </div>
+    </div>
+    <div id="hint">↑ accelerate · ↓ brake · ← → steer</div>
+    <div id="vignette"></div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    // ─── Constants ───────────────────────────────────────────────
+    const ROAD_WIDTH = 14;
+    const SEGMENT_LENGTH = 40;
+    const SEGMENT_COUNT = 24;
+    const LANE_COUNT = 3;
+    const BASE_SPEED = 0.55;
+    const MAX_SPEED = 1.4;
+    const ACCEL = 0.012;
+    const BRAKE = 0.025;
+    const FRICTION = 0.004;
+    const STEER_SPEED = 0.035;
+    const MAX_STEER = 0.55;
+
+    // ─── State ───────────────────────────────────────────────────
+    let speed = 0;
+    let targetSpeed = BASE_SPEED;
+    let steer = 0;
+    let lateralOffset = 0;
+    let distanceTraveled = 0;
+    let time = 0;
+    let running = false;
+    const keys = {};
+
+    const speedEl = document.getElementById('speed');
+    const distEl = document.getElementById('distance');
+    const startScreen = document.getElementById('start-screen');
+
+    // ─── Renderer ────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.9;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020208);
+    scene.fog = new THREE.FogExp2(0x080818, 0.012);
+
+    const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 600);
+    camera.position.set(0, 1.35, 2.2);
+
+    // ─── Post-processing ─────────────────────────────────────────
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.55, 0.5, 0.88
+    );
+    composer.addPass(bloom);
+
+    // ─── Lighting ────────────────────────────────────────────────
+    const ambient = new THREE.AmbientLight(0x1a2040, 0.35);
+    scene.add(ambient);
+
+    const moonLight = new THREE.DirectionalLight(0x8899cc, 0.25);
+    moonLight.position.set(-30, 80, -60);
+    scene.add(moonLight);
+
+    // Headlights
+    const headLightL = new THREE.SpotLight(0xfff8e8, 12, 80, Math.PI / 5, 0.6, 1.2);
+    headLightL.position.set(-0.6, 0.8, 1.5);
+    headLightL.target.position.set(-0.6, 0, -30);
+    scene.add(headLightL, headLightL.target);
+
+    const headLightR = new THREE.SpotLight(0xfff8e8, 12, 80, Math.PI / 5, 0.6, 1.2);
+    headLightR.position.set(0.6, 0.8, 1.5);
+    headLightR.target.position.set(0.6, 0, -30);
+    scene.add(headLightR, headLightR.target);
+
+    // ─── Sky dome with stars ─────────────────────────────────────
+    function createStarField() {
+      const count = 3000;
+      const geo = new THREE.BufferGeometry();
+      const positions = new Float32Array(count * 3);
+      const sizes = new Float32Array(count);
+      for (let i = 0; i < count; i++) {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(Math.random() * 0.8);
+        const r = 280 + Math.random() * 40;
+        positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.cos(phi);
+        positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+        sizes[i] = Math.random() * 1.5 + 0.3;
+      }
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+      const mat = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.8,
+        transparent: true,
+        opacity: 0.85,
+        sizeAttenuation: true,
+        depthWrite: false,
+      });
+      return new THREE.Points(geo, mat);
+    }
+    const stars = createStarField();
+    scene.add(stars);
+
+    // Moon
+    const moonGeo = new THREE.SphereGeometry(6, 32, 32);
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xdde8ff });
+    const moon = new THREE.Mesh(moonGeo, moonMat);
+    moon.position.set(-80, 120, -200);
+    scene.add(moon);
+    const moonGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(8, 32, 32),
+      new THREE.MeshBasicMaterial({ color: 0x6688cc, transparent: true, opacity: 0.15 })
+    );
+    moonGlow.position.copy(moon.position);
+    scene.add(moonGlow);
+
+    // ─── Distant city glow ───────────────────────────────────────
+    function createCitySilhouette() {
+      const group = new THREE.Group();
+      const colors = [0x1a0830, 0x0a1830, 0x180828, 0x081828];
+      for (let i = 0; i < 80; i++) {
+        const w = 3 + Math.random() * 12;
+        const h = 8 + Math.random() * 45;
+        const d = 3 + Math.random() * 8;
+        const geo = new THREE.BoxGeometry(w, h, d);
+        const mat = new THREE.MeshBasicMaterial({
+          color: colors[Math.floor(Math.random() * colors.length)],
+          transparent: true,
+          opacity: 0.7,
+        });
+        const b = new THREE.Mesh(geo, mat);
+        b.position.set(
+          (Math.random() - 0.5) * 400,
+          h / 2 - 2,
+          -180 - Math.random() * 120
+        );
+        group.add(b);
+
+        // Window lights
+        if (Math.random() > 0.4) {
+          const wl = Math.min(w, h) * 0.15;
+          const win = new THREE.Mesh(
+            new THREE.PlaneGeometry(wl, wl),
+            new THREE.MeshBasicMaterial({
+              color: Math.random() > 0.5 ? 0xffaa66 : 0x66aaff,
+              transparent: true,
+              opacity: 0.3 + Math.random() * 0.5,
+            })
+          );
+          win.position.set(b.position.x, b.position.y + (Math.random() - 0.3) * h * 0.4, b.position.z + d / 2 + 0.1);
+          group.add(win);
+        }
+      }
+      return group;
+    }
+    const cityLeft = createCitySilhouette();
+    cityLeft.position.x = -60;
+    scene.add(cityLeft);
+    const cityRight = createCitySilhouette();
+    cityRight.position.x = 60;
+    scene.add(cityRight);
+
+    // ─── Road system ─────────────────────────────────────────────
+    const roadGroup = new THREE.Group();
+    scene.add(roadGroup);
+
+    const roadMat = new THREE.MeshStandardMaterial({
+      color: 0x111118,
+      roughness: 0.95,
+      metalness: 0.05,
+    });
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xccccaa });
+    const curbMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.9 });
+
+    const segments = [];
+    const sideObjects = [];
+
+    function createRoadSegment(z) {
+      const seg = new THREE.Group();
+      seg.userData.z = z;
+
+      // Road surface
+      const road = new THREE.Mesh(
+        new THREE.PlaneGeometry(ROAD_WIDTH, SEGMENT_LENGTH),
+        roadMat
+      );
+      road.rotation.x = -Math.PI / 2;
+      road.position.y = 0;
+      road.receiveShadow = true;
+      seg.add(road);
+
+      // Curbs
+      for (const side of [-1, 1]) {
+        const curb = new THREE.Mesh(
+          new THREE.BoxGeometry(0.4, 0.15, SEGMENT_LENGTH),
+          curbMat
+        );
+        curb.position.set(side * (ROAD_WIDTH / 2 + 0.2), 0.075, 0);
+        seg.add(curb);
+      }
+
+      // Lane dashes
+      const laneW = ROAD_WIDTH / LANE_COUNT;
+      for (let lane = 1; lane < LANE_COUNT; lane++) {
+        const x = -ROAD_WIDTH / 2 + lane * laneW;
+        for (let d = -SEGMENT_LENGTH / 2 + 2; d < SEGMENT_LENGTH / 2; d += 6) {
+          const dash = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.12, 2.5),
+            lineMat
+          );
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(x, 0.01, d);
+          seg.add(dash);
+        }
+      }
+
+      // Center double yellow
+      for (let d = -SEGMENT_LENGTH / 2 + 1; d < SEGMENT_LENGTH / 2; d += 4) {
+        for (const off of [-0.15, 0.15]) {
+          const yLine = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.1, 2),
+            new THREE.MeshBasicMaterial({ color: 0xccaa33 })
+          );
+          yLine.rotation.x = -Math.PI / 2;
+          yLine.position.set(off, 0.012, d);
+          seg.add(yLine);
+        }
+      }
+
+      // Edge reflectors
+      for (let d = -SEGMENT_LENGTH / 2 + 3; d < SEGMENT_LENGTH / 2; d += 8) {
+        for (const side of [-1, 1]) {
+          const ref = new THREE.Mesh(
+            new THREE.BoxGeometry(0.08, 0.08, 0.3),
+            new THREE.MeshBasicMaterial({ color: side === -1 ? 0xff4444 : 0xcccccc })
+          );
+          ref.position.set(side * (ROAD_WIDTH / 2 + 0.05), 0.04, d);
+          seg.add(ref);
+        }
+      }
+
+      seg.position.z = z;
+      roadGroup.add(seg);
+      return seg;
+    }
+
+    function createStreetLight(x, z) {
+      const g = new THREE.Group();
+      g.userData.z = z;
+      g.userData.baseX = x;
+
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.08, 5.5, 8),
+        new THREE.MeshStandardMaterial({ color: 0x333340, metalness: 0.6, roughness: 0.4 })
+      );
+      pole.position.y = 2.75;
+      g.add(pole);
+
+      const arm = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.06, 0.06),
+        pole.material
+      );
+      arm.position.set(x > 0 ? -0.5 : 0.5, 5.3, 0);
+      g.add(arm);
+
+      const lamp = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.15, 0.3),
+        new THREE.MeshBasicMaterial({ color: 0xffeecc })
+      );
+      lamp.position.set(x > 0 ? -1 : 1, 5.15, 0);
+      g.add(lamp);
+
+      const light = new THREE.PointLight(0xffaa66, 0.8, 18, 2);
+      light.position.set(x > 0 ? -1 : 1, 4.8, 0);
+      g.add(light);
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+      return g;
+    }
+
+    function createTree(x, z) {
+      const g = new THREE.Group();
+      g.userData.z = z;
+      g.userData.baseX = x;
+
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.25, 2.5, 6),
+        new THREE.MeshStandardMaterial({ color: 0x1a1510, roughness: 1 })
+      );
+      trunk.position.y = 1.25;
+      g.add(trunk);
+
+      const foliage = new THREE.Mesh(
+        new THREE.ConeGeometry(1.2 + Math.random() * 0.8, 4 + Math.random() * 2, 7),
+        new THREE.MeshStandardMaterial({ color: 0x0a180a, roughness: 1 })
+      );
+      foliage.position.y = 4;
+      g.add(foliage);
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+      return g;
+    }
+
+    function createTrafficCar(z, lane) {
+      const g = new THREE.Group();
+      g.userData.z = z;
+      g.userData.lane = lane;
+      g.userData.speed = 0.3 + Math.random() * 0.4;
+
+      const laneW = ROAD_WIDTH / LANE_COUNT;
+      const x = -ROAD_WIDTH / 2 + lane * laneW + laneW / 2;
+
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 0.7, 3.2),
+        new THREE.MeshStandardMaterial({
+          color: [0x224466, 0x662233, 0x334422, 0x443355][Math.floor(Math.random() * 4)],
+          roughness: 0.3,
+          metalness: 0.6,
+        })
+      );
+      body.position.y = 0.55;
+      g.add(body);
+
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(1.3, 0.5, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.2, metalness: 0.8 })
+      );
+      cabin.position.set(0, 1.0, -0.2);
+      g.add(cabin);
+
+      // Taillights
+      for (const side of [-0.7, 0.7]) {
+        const tail = new THREE.Mesh(
+          new THREE.BoxGeometry(0.25, 0.15, 0.05),
+          new THREE.MeshBasicMaterial({ color: 0xff2200 })
+        );
+        tail.position.set(side, 0.5, 1.6);
+        g.add(tail);
+      }
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+      return g;
+    }
+
+    // Initialize road segments
+    for (let i = 0; i < SEGMENT_COUNT; i++) {
+      segments.push(createRoadSegment(-i * SEGMENT_LENGTH));
+    }
+
+    // Side scenery pools
+    const streetLights = [];
+    const trees = [];
+    const trafficCars = [];
+
+    for (let i = 0; i < 30; i++) {
+      const z = -i * 25 - Math.random() * 10;
+      streetLights.push(createStreetLight(-ROAD_WIDTH / 2 - 2.5, z));
+      streetLights.push(createStreetLight(ROAD_WIDTH / 2 + 2.5, z + 12));
+    }
+    for (let i = 0; i < 40; i++) {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      const x = side * (ROAD_WIDTH / 2 + 4 + Math.random() * 8);
+      trees.push(createTree(x, -i * 18 - Math.random() * 8));
+    }
+    for (let i = 0; i < 8; i++) {
+      const lane = Math.floor(Math.random() * LANE_COUNT);
+      trafficCars.push(createTrafficCar(-80 - i * 60 - Math.random() * 40, lane));
+    }
+
+    // ─── Player car (visible hood) ───────────────────────────────
+    const carGroup = new THREE.Group();
+    scene.add(carGroup);
+
+    const hood = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.3, 2.5),
+      new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.2, metalness: 0.85 })
+    );
+    hood.position.set(0, 0.85, 1.8);
+    carGroup.add(hood);
+
+    const dash = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 0.5, 0.8),
+      new THREE.MeshStandardMaterial({ color: 0x0a0a12, roughness: 0.8 })
+    );
+    dash.position.set(0, 1.0, 2.5);
+    carGroup.add(dash);
+
+    // Dashboard glow
+    const dashGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.4, 0.15),
+      new THREE.MeshBasicMaterial({ color: 0x2244aa, transparent: true, opacity: 0.4 })
+    );
+    dashGlow.position.set(0, 1.05, 2.85);
+    carGroup.add(dashGlow);
+
+    // Steering wheel silhouette
+    const wheel = new THREE.Mesh(
+      new THREE.TorusGeometry(0.18, 0.025, 8, 24),
+      new THREE.MeshStandardMaterial({ color: 0x222230 })
+    );
+    wheel.position.set(-0.35, 1.05, 2.3);
+    wheel.rotation.x = -0.4;
+    carGroup.add(wheel);
+
+    // Windshield frame
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x111118 });
+    const frameL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.6, 1.2), frameMat);
+    frameL.position.set(-0.85, 1.3, 2.0);
+    carGroup.add(frameL);
+    const frameR = frameL.clone();
+    frameR.position.x = 0.85;
+    carGroup.add(frameR);
+
+    // ─── Rain particles ──────────────────────────────────────────
+    const rainCount = 800;
+    const rainGeo = new THREE.BufferGeometry();
+    const rainPos = new Float32Array(rainCount * 3);
+    for (let i = 0; i < rainCount; i++) {
+      rainPos[i * 3] = (Math.random() - 0.5) * 30;
+      rainPos[i * 3 + 1] = Math.random() * 15;
+      rainPos[i * 3 + 2] = -Math.random() * 40;
+    }
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    const rain = new THREE.Points(
+      rainGeo,
+      new THREE.PointsMaterial({
+        color: 0xaabbcc,
+        size: 0.06,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+      })
+    );
+    rain.position.z = -5;
+    scene.add(rain);
+
+    // ─── Audio (engine hum) ──────────────────────────────────────
+    let audioCtx, engineOsc, engineGain, windNoise;
+
+    function initAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      engineOsc = audioCtx.createOscillator();
+      engineGain = audioCtx.createGain();
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 180;
+
+      engineOsc.type = 'sawtooth';
+      engineOsc.frequency.value = 55;
+      engineGain.gain.value = 0;
+
+      engineOsc.connect(filter);
+      filter.connect(engineGain);
+      engineGain.connect(audioCtx.destination);
+      engineOsc.start();
+
+      // Wind noise
+      const bufferSize = 2 * audioCtx.sampleRate;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+      windNoise = audioCtx.createBufferSource();
+      windNoise.buffer = noiseBuffer;
+      windNoise.loop = true;
+      const windGain = audioCtx.createGain();
+      windGain.gain.value = 0;
+      const windFilter = audioCtx.createBiquadFilter();
+      windFilter.type = 'bandpass';
+      windFilter.frequency.value = 400;
+      windFilter.Q.value = 0.5;
+      windNoise.connect(windFilter);
+      windFilter.connect(windGain);
+      windGain.connect(audioCtx.destination);
+      windNoise.start();
+      windNoise.windGain = windGain;
+    }
+
+    function updateAudio() {
+      if (!audioCtx) return;
+      const t = speed / MAX_SPEED;
+      engineOsc.frequency.setTargetAtTime(55 + t * 80, audioCtx.currentTime, 0.1);
+      engineGain.gain.setTargetAtTime(0.015 + t * 0.025, audioCtx.currentTime, 0.1);
+      windNoise.windGain.gain.setTargetAtTime(t * 0.012, audioCtx.currentTime, 0.1);
+    }
+
+    // ─── Input ───────────────────────────────────────────────────
+    window.addEventListener('keydown', e => { keys[e.code] = true; });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    startScreen.addEventListener('click', () => {
+      if (running) return;
+      running = true;
+      initAudio();
+      startScreen.classList.add('hidden');
+      targetSpeed = BASE_SPEED;
+    });
+
+    // ─── Recycling helpers ───────────────────────────────────────
+    function recycleSegment(seg) {
+      let minZ = Infinity;
+      for (const s of segments) minZ = Math.min(minZ, s.position.z);
+      seg.position.z = minZ - SEGMENT_LENGTH;
+    }
+
+    function recycleSideObject(obj, pool, spacing) {
+      let minZ = Infinity;
+      for (const o of pool) minZ = Math.min(minZ, o.position.z);
+      obj.position.z = minZ - spacing - Math.random() * spacing * 0.5;
+      if (obj.userData.baseX !== undefined) {
+        obj.position.x = obj.userData.baseX + (Math.random() - 0.5) * 0.5;
+      }
+    }
+
+    function recycleTrafficCar(car) {
+      let minZ = Infinity;
+      for (const c of trafficCars) minZ = Math.min(minZ, c.position.z);
+      car.position.z = minZ - 80 - Math.random() * 60;
+      car.userData.lane = Math.floor(Math.random() * LANE_COUNT);
+      const laneW = ROAD_WIDTH / LANE_COUNT;
+      car.position.x = -ROAD_WIDTH / 2 + car.userData.lane * laneW + laneW / 2;
+      car.userData.speed = 0.3 + Math.random() * 0.4;
+    }
+
+    // ─── Animation loop ──────────────────────────────────────────
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      time += dt;
+
+      if (running) {
+        // Input
+        if (keys['ArrowUp'] || keys['KeyW']) targetSpeed = Math.min(targetSpeed + ACCEL, MAX_SPEED);
+        if (keys['ArrowDown'] || keys['KeyS']) targetSpeed = Math.max(targetSpeed - BRAKE, 0.1);
+        if (keys['ArrowLeft'] || keys['KeyA']) steer = Math.max(steer - STEER_SPEED, -MAX_STEER);
+        else if (keys['ArrowRight'] || keys['KeyD']) steer = Math.min(steer + STEER_SPEED, MAX_STEER);
+        else steer *= 0.92;
+
+        // Auto-cruise when no input
+        if (!keys['ArrowUp'] && !keys['KeyW'] && !keys['ArrowDown'] && !keys['KeyS']) {
+          targetSpeed += (BASE_SPEED - targetSpeed) * 0.02;
+        }
+
+        speed += (targetSpeed - speed) * 0.08;
+        if (speed < 0.05) speed = 0.05;
+
+        lateralOffset += steer * speed * dt * 8;
+        lateralOffset *= 0.98;
+        lateralOffset = THREE.MathUtils.clamp(lateralOffset, -ROAD_WIDTH / 2 + 1.5, ROAD_WIDTH / 2 - 1.5);
+
+        const moveZ = speed * 60 * dt;
+        distanceTraveled += moveZ * 0.001;
+
+        // Move road segments
+        for (const seg of segments) {
+          seg.position.z += moveZ;
+          if (seg.position.z > SEGMENT_LENGTH) recycleSegment(seg);
+        }
+
+        // Side objects
+        for (const sl of streetLights) {
+          sl.position.z += moveZ;
+          if (sl.position.z > 20) recycleSideObject(sl, streetLights, 25);
+        }
+        for (const t of trees) {
+          t.position.z += moveZ;
+          if (t.position.z > 20) recycleSideObject(t, trees, 18);
+        }
+
+        // Traffic
+        for (const car of trafficCars) {
+          const relSpeed = (speed - car.userData.speed) * 60 * dt;
+          car.position.z += moveZ - car.userData.speed * 60 * dt;
+          if (car.position.z > 15) recycleTrafficCar(car);
+        }
+
+        // Camera sway
+        const swayX = steer * 0.3 + Math.sin(time * 1.2) * 0.015 * speed;
+        const swayY = 1.35 + Math.sin(time * 2.5) * 0.008 * speed;
+        camera.position.x = lateralOffset * 0.15 + swayX;
+        camera.position.y = swayY;
+        camera.position.z = 2.2;
+        camera.rotation.z = -steer * 0.08;
+        camera.rotation.x = Math.sin(time * 0.8) * 0.005 * speed;
+
+        // Headlights follow steer
+        headLightL.target.position.x = -0.6 + steer * 2;
+        headLightR.target.position.x = 0.6 + steer * 2;
+
+        // Car group follows
+        carGroup.position.x = lateralOffset * 0.1;
+        carGroup.rotation.y = -steer * 0.15;
+        wheel.rotation.z = -steer * 1.5;
+
+        // Rain
+        const rainArr = rain.geometry.attributes.position.array;
+        for (let i = 0; i < rainCount; i++) {
+          rainArr[i * 3 + 1] -= dt * (12 + speed * 20);
+          rainArr[i * 3 + 2] -= dt * speed * 30;
+          if (rainArr[i * 3 + 1] < 0) {
+            rainArr[i * 3] = (Math.random() - 0.5) * 30 + lateralOffset * 0.2;
+            rainArr[i * 3 + 1] = 12 + Math.random() * 5;
+            rainArr[i * 3 + 2] = -Math.random() * 40;
+          }
+        }
+        rain.geometry.attributes.position.needsUpdate = true;
+
+        // HUD
+        speedEl.textContent = Math.round(speed * 120);
+        distEl.textContent = distanceTraveled.toFixed(1);
+
+        updateAudio();
+      }
+
+      // Subtle star twinkle
+      stars.rotation.y = time * 0.002;
+
+      composer.render();
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+      bloom.resolution.set(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

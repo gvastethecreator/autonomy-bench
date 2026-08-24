@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meridian Tower — Elevator Simulation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-deep: #0a0e17;
+    --bg-panel: rgba(14, 20, 32, 0.92);
+    --glass: rgba(255, 255, 255, 0.04);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --accent: #3d9eff;
+    --accent-glow: rgba(61, 158, 255, 0.35);
+    --warm: #ffb347;
+    --warm-glow: rgba(255, 179, 71, 0.25);
+    --success: #4ade80;
+    --text: #e8edf5;
+    --text-dim: #7a8ba3;
+    --shaft: #121824;
+    --floor-height: 52px;
+    --elevator-width: 68px;
+    --num-floors: 18;
+    --num-shafts: 4;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background: var(--bg-deep);
+    color: var(--text);
+  }
+
+  /* Ambient background */
+  .ambient {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 80%, rgba(61, 158, 255, 0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 85% 20%, rgba(255, 179, 71, 0.06) 0%, transparent 50%),
+      linear-gradient(180deg, #0d1220 0%, #0a0e17 40%, #080b12 100%);
+  }
+
+  .ambient::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    opacity: 0.5;
+  }
+
+  #app {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 280px 1fr 260px;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+    gap: 0;
+  }
+
+  /* Header */
+  header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 28px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .brand-icon {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, var(--accent) 0%, #2563eb 100%);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    box-shadow: 0 4px 20px var(--accent-glow);
+  }
+
+  .brand h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .brand span {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  .clock {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.4rem;
+    font-weight: 500;
+    color: var(--warm);
+    text-shadow: 0 0 30px var(--warm-glow);
+  }
+
+  .clock-label {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: center;
+    margin-top: 2px;
+  }
+
+  /* Side panels */
+  .panel {
+    background: var(--bg-panel);
+    border-right: 1px solid var(--glass-border);
+    padding: 20px;
+    overflow-y: auto;
+    backdrop-filter: blur(16px);
+  }
+
+  .panel-right {
+    border-right: none;
+    border-left: 1px solid var(--glass-border);
+  }
+
+  .panel h2 {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    font-weight: 500;
+  }
+
+  /* Stats cards */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 14px;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+
+  .stat-card:hover {
+    border-color: rgba(61, 158, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.5rem;
+    font-weight: 500;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .stat-card.accent .stat-value { color: var(--accent); }
+  .stat-card.warm .stat-value { color: var(--warm); }
+  .stat-card.success .stat-value { color: var(--success); }
+
+  /* Elevator status list */
+  .elevator-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+
+  .elevator-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    font-size: 0.82rem;
+    transition: all 0.3s;
+  }
+
+  .elevator-item.active {
+    border-color: rgba(61, 158, 255, 0.3);
+    background: rgba(61, 158, 255, 0.06);
+  }
+
+  .elevator-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .elevator-info { flex: 1; min-width: 0; }
+  .elevator-info .floor { font-weight: 500; }
+  .elevator-info .state { font-size: 0.72rem; color: var(--text-dim); }
+
+  .direction-arrow {
+    font-size: 1rem;
+    opacity: 0.7;
+  }
+
+  .direction-arrow.up { color: var(--success); }
+  .direction-arrow.down { color: #f87171; }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .control-group label {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .speed-slider {
+    width: 100%;
+    -webkit-appearance: none;
+    height: 4px;
+    background: var(--glass-border);
+    border-radius: 2px;
+    outline: none;
+  }
+
+  .speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    color: var(--text);
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn:hover {
+    background: rgba(61, 158, 255, 0.12);
+    border-color: rgba(61, 158, 255, 0.3);
+  }
+
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), #2563eb);
+    border-color: transparent;
+    font-weight: 500;
+  }
+
+  .btn.primary:hover {
+    box-shadow: 0 4px 20px var(--accent-glow);
+    transform: translateY(-1px);
+  }
+
+  /* Main building view */
+  .building-view {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+      radial-gradient(ellipse 100% 80% at 50% 100%, rgba(61, 158, 255, 0.04) 0%, transparent 60%);
+  }
+
+  .building-container {
+    position: relative;
+    display: flex;
+    gap: 0;
+    filter: drop-shadow(0 20px 60px rgba(0, 0, 0, 0.5));
+  }
+
+  /* Floor labels column */
+  .floor-labels {
+    display: flex;
+    flex-direction: column-reverse;
+    padding-right: 12px;
+    justify-content: flex-start;
+  }
+
+  .floor-label {
+    height: var(--floor-height);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding-right: 8px;
+    transition: color 0.3s;
+  }
+
+  .floor-label.lobby {
+    color: var(--warm);
+    font-weight: 500;
+  }
+
+  .floor-label.active {
+    color: var(--accent);
+  }
+
+  /* Shaft bank */
+  .shaft-bank {
+    display: flex;
+    gap: 6px;
+    position: relative;
+  }
+
+  .shaft {
+    width: var(--elevator-width);
+    height: calc(var(--floor-height) * var(--num-floors));
+    background: var(--shaft);
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .shaft::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent calc(var(--floor-height) - 1px),
+      rgba(255, 255, 255, 0.03) calc(var(--floor-height) - 1px),
+      rgba(255, 255, 255, 0.03) var(--floor-height)
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .shaft-label {
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  /* Elevator car */
+  .elevator-car {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    height: calc(var(--floor-height) - 6px);
+    border-radius: 4px;
+    z-index: 2;
+    transition: bottom 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+
+  .elevator-car::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      transparent 30%,
+      transparent 70%,
+      rgba(0, 0, 0, 0.2) 100%);
+    pointer-events: none;
+    z-index: 3;
+  }
+
+  .car-interior {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 4px;
+    gap: 1px;
+  }
+
+  .car-floor-indicator {
+    position: absolute;
+    top: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(0, 0, 0, 0.4);
+    padding: 1px 5px;
+    border-radius: 3px;
+    z-index: 4;
+  }
+
+  .passenger-dots {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px;
+    max-width: 90%;
+    padding: 0 4px;
+  }
+
+  .passenger-dot {
+    width: 6px;
+    height: 8px;
+    border-radius: 2px 2px 1px 1px;
+    opacity: 0.85;
+  }
+
+  .elevator-car.moving {
+    box-shadow:
+      0 6px 24px rgba(61, 158, 255, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+
+  .elevator-car.doors-open {
+    animation: doorPulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes doorPulse {
+    0%, 100% { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 0 rgba(74, 222, 128, 0); }
+    50% { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 12px 2px rgba(74, 222, 128, 0.3); }
+  }
+
+  /* Call indicators on shafts */
+  .call-indicator {
+    position: absolute;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .call-indicator.up {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.6);
+  }
+
+  .call-indicator.down {
+    background: #f87171;
+    box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
+    left: 4px;
+    right: auto;
+  }
+
+  .call-indicator.active { opacity: 1; }
+
+  /* Floor lobby strip */
+  .lobby-strip {
+    display: flex;
+    flex-direction: column-reverse;
+    margin-left: 16px;
+    width: 120px;
+  }
+
+  .lobby-floor {
+    height: var(--floor-height);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-left: 8px;
+    border-left: 2px solid transparent;
+    transition: border-color 0.3s, background 0.3s;
+  }
+
+  .lobby-floor.has-waiters {
+    border-left-color: rgba(255, 179, 71, 0.4);
+    background: rgba(255, 179, 71, 0.03);
+  }
+
+  .waiter-group {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+
+  .waiter {
+    width: 8px;
+    height: 12px;
+    border-radius: 3px 3px 2px 2px;
+    animation: waiterIdle 2s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.15s);
+  }
+
+  @keyframes waiterIdle {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+  }
+
+  .call-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: auto;
+    padding-right: 4px;
+  }
+
+  .call-btn {
+    width: 14px;
+    height: 10px;
+    border-radius: 2px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    cursor: default;
+    font-size: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    transition: all 0.2s;
+  }
+
+  .call-btn.lit-up {
+    background: rgba(74, 222, 128, 0.3);
+    border-color: var(--success);
+    color: var(--success);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
+  }
+
+  .call-btn.lit-down {
+    background: rgba(248, 113, 113, 0.3);
+    border-color: #f87171;
+    color: #f87171;
+    box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
+  }
+
+  /* Activity log */
+  .activity-log {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+
+  .log-entry {
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    color: var(--text-dim);
+    animation: logFadeIn 0.4s ease;
+  }
+
+  .log-entry .time {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+    margin-right: 6px;
+    font-size: 0.65rem;
+  }
+
+  @keyframes logFadeIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* Footer */
+  footer {
+    grid-column: 1 / -1;
+    padding: 10px 28px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    backdrop-filter: blur(16px);
+  }
+
+  .rush-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .rush-bar {
+    width: 120px;
+    height: 4px;
+    background: var(--glass-border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .rush-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--warm), #ef4444);
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Particles canvas */
+  #particles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.4;
+  }
+
+  /* Responsive */
+  @media (max-width: 1100px) {
+    #app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto auto;
+    }
+    .panel { display: none; }
+    .panel-right { display: block; grid-row: 4; max-height: 180px; }
+  }
+</style>
+</head>
+<body>
+<div class="ambient"></div>
+
+<div id="app">
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⬆</div>
+      <div>
+        <h1>Meridian Tower</h1>
+        <span>Office Elevator Control · Floors 1–18</span>
+      </div>
+    </div>
+    <div>
+      <div class="clock" id="simClock">08:42</div>
+      <div class="clock-label">Simulation Time</div>
+    </div>
+  </header>
+
+  <aside class="panel panel-left">
+    <h2>Live Metrics</h2>
+    <div class="stat-grid">
+      <div class="stat-card accent">
+        <div class="stat-value" id="statTrips">0</div>
+        <div class="stat-label">Trips Today</div>
+      </div>
+      <div class="stat-card warm">
+        <div class="stat-value" id="statWaiting">0</div>
+        <div class="stat-label">Waiting</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-value" id="statServed">0</div>
+        <div class="stat-label">Passengers</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statAvgWait">—</div>
+        <div class="stat-label">Avg Wait</div>
+      </div>
+    </div>
+
+    <h2>Elevator Fleet</h2>
+    <div class="elevator-list" id="elevatorList"></div>
+
+    <h2>Controls</h2>
+    <div class="controls">
+      <div class="control-group">
+        <label>Simulation Speed</label>
+        <input type="range" class="speed-slider" id="speedSlider" min="1" max="8" value="3">
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btnPause">Pause</button>
+        <button class="btn primary" id="btnRush">Morning Rush</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="building-view">
+    <canvas id="particles"></canvas>
+    <div class="building-container" id="buildingContainer">
+      <div class="floor-labels" id="floorLabels"></div>
+      <div class="shaft-bank" id="shaftBank"></div>
+      <div class="lobby-strip" id="lobbyStrip"></div>
+    </div>
+  </main>
+
+  <aside class="panel panel-right">
+    <h2>Activity Feed</h2>
+    <div class="activity-log" id="activityLog"></div>
+  </aside>
+
+  <footer>
+    <div class="rush-indicator">
+      <span>Building Load</span>
+      <div class="rush-bar"><div class="rush-fill" id="rushFill" style="width: 35%"></div></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background: var(--success)"></div> Up Call</div>
+      <div class="legend-item"><div class="legend-dot" style="background: #f87171"></div> Down Call</div>
+      <div class="legend-item"><div class="legend-dot" style="background: var(--warm)"></div> Waiting</div>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const CONFIG = {
+    floors: 18,
+    shafts: 4,
+    capacity: 8,
+    floorHeight: 52,
+    baseSpeed: 0.35,
+    loadTime: 1.2,
+    unloadTime: 0.8,
+    spawnRate: 0.04,
+    rushMultiplier: 3.5,
+  };
+
+  const ELEVATOR_COLORS = [
+    { bg: 'linear-gradient(180deg, #2a5080 0%, #1a3050 100%)', accent: '#3d9eff' },
+    { bg: 'linear-gradient(180deg, #4a3870 0%, #2a2048 100%)', accent: '#a78bfa' },
+    { bg: 'linear-gradient(180deg, #385848 0%, #203828 100%)', accent: '#4ade80' },
+    { bg: 'linear-gradient(180deg, #604838 0%, #382818 100%)', accent: '#ffb347' },
+  ];
+
+  const PERSON_COLORS = [
+    '#3d9eff', '#ffb347', '#4ade80', '#a78bfa', '#f472b6',
+    '#38bdf8', '#fb923c', '#34d399', '#c084fc', '#fbbf24',
+  ];
+
+  const FLOOR_NAMES = {
+    1: 'Lobby', 2: 'Retail', 3: 'Café', 4: 'Conf A',
+    5: 'Open Plan', 6: 'Open Plan', 7: 'Open Plan', 8: 'Open Plan',
+    9: 'Engineering', 10: 'Engineering', 11: 'Product', 12: 'Product',
+    13: 'Design', 14: 'Design', 15: 'Executive', 16: 'Executive',
+    17: 'Penthouse', 18: 'Roof Deck',
+  };
+
+  let simTime = 8 * 60 + 42;
+  let speed = 3;
+  let paused = false;
+  let rushMode = false;
+  let totalTrips = 0;
+  let totalServed = 0;
+  let waitTimes = [];
+
+  const state = {
+    elevators: [],
+    floorCalls: [],
+    waiters: [],
+    nextId: 1,
+  };
+
+  class Elevator {
+    constructor(id, shaft) {
+      this.id = id;
+      this.shaft = shaft;
+      this.floor = 1;
+      this.targetFloor = 1;
+      this.direction = 0;
+      this.passengers = [];
+      this.state = 'idle';
+      this.doorTimer = 0;
+      this.destinations = new Set();
+      this.pendingCalls = [];
+    }
+
+    get position() { return this.floor; }
+
+    canBoard() {
+      return this.state === 'doors_open' && this.passengers.length < CONFIG.capacity;
+    }
+
+    addPassenger(person) {
+      if (this.passengers.length >= CONFIG.capacity) return false;
+      this.passengers.push(person);
+      this.destinations.add(person.destFloor);
+      return true;
+    }
+
+    removePassengersAt(floor) {
+      const leaving = this.passengers.filter(p => p.destFloor === floor);
+      this.passengers = this.passengers.filter(p => p.destFloor !== floor);
+      leaving.forEach(p => {
+        totalServed++;
+        waitTimes.push(p.waitTime);
+        if (waitTimes.length > 100) waitTimes.shift();
+      });
+      this.destinations.delete(floor);
+      return leaving.length;
+    }
+
+    updateDestinations() {
+      this.destinations = new Set(this.passengers.map(p => p.destFloor));
+    }
+
+    chooseDirection() {
+      if (this.destinations.size === 0 && this.pendingCalls.length === 0) {
+        this.direction = 0;
+        return;
+      }
+
+      const allTargets = [...this.destinations, ...this.pendingCalls.map(c => c.floor)];
+      const above = allTargets.filter(f => f > this.floor);
+      const below = allTargets.filter(f => f < this.floor);
+
+      if (this.direction === 1 && above.length > 0) return;
+      if (this.direction === -1 && below.length > 0) return;
+
+      if (above.length > 0 && below.length > 0) {
+        const distAbove = Math.min(...above) - this.floor;
+        const distBelow = this.floor - Math.max(...below);
+        this.direction = distAbove <= distBelow ? 1 : -1;
+      } else if (above.length > 0) {
+        this.direction = 1;
+      } else if (below.length > 0) {
+        this.direction = -1;
+      } else {
+        this.direction = 0;
+      }
+    }
+
+    shouldStopAt(floor) {
+      if (this.destinations.has(floor)) return true;
+      return this.pendingCalls.some(c => c.floor === floor);
+    }
+
+    tick(dt) {
+      if (this.state === 'moving') {
+        const moveSpeed = CONFIG.baseSpeed * speed * dt;
+        const diff = this.targetFloor - this.floor;
+
+        if (Math.abs(diff) < moveSpeed) {
+          this.floor = this.targetFloor;
+          this.state = 'doors_open';
+          this.doorTimer = CONFIG.loadTime;
+
+          const unloaded = this.removePassengersAt(this.floor);
+          if (unloaded > 0) {
+            log(`${this.label} · ${unloaded} exited F${this.floor}`);
+          }
+
+          this.pendingCalls = this.pendingCalls.filter(c => c.floor !== this.floor);
+          state.floorCalls[this.floor].up = false;
+          state.floorCalls[this.floor].down = false;
+
+          boardPassengers(this);
+        } else {
+          this.floor += Math.sign(diff) * moveSpeed;
+        }
+      } else if (this.state === 'doors_open') {
+        this.doorTimer -= dt;
+        if (this.doorTimer <= 0) {
+          this.state = 'idle';
+          this.updateDestinations();
+          this.planNextMove();
+        }
+      } else if (this.state === 'idle') {
+        this.planNextMove();
+      }
+    }
+
+    planNextMove() {
+      this.updateDestinations();
+
+      const calls = state.floorCalls
+        .map((c, i) => ({ floor: i, up: c.up, down: c.down }))
+        .filter(c => c.up || c.down);
+
+      this.pendingCalls = calls.filter(c => {
+        if (this.direction === 1) return c.floor >= this.floor;
+        if (this.direction === -1) return c.floor <= this.floor;
+        return true;
+      });
+
+      if (this.destinations.size === 0 && this.pendingCalls.length === 0) {
+        this.direction = 0;
+        return;
+      }
+
+      this.chooseDirection();
+
+      let nextFloor = null;
+      const targets = [...this.destinations, ...this.pendingCalls.map(c => c.floor)];
+
+      if (this.direction === 1) {
+        const above = targets.filter(f => f > this.floor + 0.01);
+        if (above.length) nextFloor = Math.min(...above);
+      } else if (this.direction === -1) {
+        const below = targets.filter(f => f < this.floor - 0.01);
+        if (below.length) nextFloor = Math.max(...below);
+      }
+
+      if (nextFloor === null) {
+        this.direction = 0;
+        this.chooseDirection();
+        if (this.direction === 1) {
+          const above = targets.filter(f => f > this.floor);
+          if (above.length) nextFloor = Math.min(...above);
+        } else if (this.direction === -1) {
+          const below = targets.filter(f => f < this.floor);
+          if (below.length) nextFloor = Math.max(...below);
+        }
+      }
+
+      if (nextFloor !== null && nextFloor !== this.floor) {
+        this.targetFloor = nextFloor;
+        this.state = 'moving';
+        totalTrips++;
+      }
+    }
+
+    get label() { return `Elevator ${String.fromCharCode(65 + this.id)}`; }
+  }
+
+  function init() {
+    for (let i = 0; i < CONFIG.floors; i++) {
+      state.floorCalls.push({ up: false, down: false });
+    }
+
+    for (let s = 0; s < CONFIG.shafts; s++) {
+      state.elevators.push(new Elevator(s, s));
+    }
+
+    buildDOM();
+    initParticles();
+    log('System online · Morning shift commencing');
+    requestAnimationFrame(loop);
+  }
+
+  function buildDOM() {
+    const floorLabels = document.getElementById('floorLabels');
+    const shaftBank = document.getElementById('shaftBank');
+    const lobbyStrip = document.getElementById('lobbyStrip');
+
+    for (let f = 1; f <= CONFIG.floors; f++) {
+      const label = document.createElement('div');
+      label.className = 'floor-label' + (f === 1 ? ' lobby' : '');
+      label.textContent = f === 1 ? 'L' : f;
+      label.dataset.floor = f;
+      floorLabels.appendChild(label);
+
+      const lobby = document.createElement('div');
+      lobby.className = 'lobby-floor';
+      lobby.dataset.floor = f;
+      lobby.innerHTML = `
+        <div class="waiter-group" id="waiters-${f}"></div>
+        <div class="call-buttons">
+          <div class="call-btn" id="call-up-${f}" title="Up">▲</div>
+          <div class="call-btn" id="call-down-${f}" title="Down">▼</div>
+        </div>`;
+      lobbyStrip.appendChild(lobby);
+    }
+
+    for (let s = 0; s < CONFIG.shafts; s++) {
+      const shaft = document.createElement('div');
+      shaft.className = 'shaft';
+      shaft.id = `shaft-${s}`;
+      shaft.innerHTML = `<div class="shaft-label">${String.fromCharCode(65 + s)}</div>`;
+
+      const car = document.createElement('div');
+      car.className = 'elevator-car';
+      car.id = `car-${s}`;
+      car.style.background = ELEVATOR_COLORS[s].bg;
+      car.style.bottom = '3px';
+      car.innerHTML = `
+        <div class="car-floor-indicator" id="car-floor-${s}">L</div>
+        <div class="car-interior">
+          <div class="passenger-dots" id="car-passengers-${s}"></div>
+        </div>`;
+      shaft.appendChild(car);
+
+      for (let f = 1; f <= CONFIG.floors; f++) {
+        const upInd = document.createElement('div');
+        upInd.className = 'call-indicator up';
+        upInd.id = `ind-up-${s}-${f}`;
+        upInd.style.bottom = `${(f - 1) * CONFIG.floorHeight + CONFIG.floorHeight / 2 - 4}px`;
+        shaft.appendChild(upInd);
+
+        const downInd = document.createElement('div');
+        downInd.className = 'call-indicator down';
+        downInd.id = `ind-down-${s}-${f}`;
+        downInd.style.bottom = `${(f - 1) * CONFIG.floorHeight + CONFIG.floorHeight / 2 - 4}px`;
+        shaft.appendChild(downInd);
+      }
+
+      shaftBank.appendChild(shaft);
+    }
+
+    updateElevatorList();
+  }
+
+  function spawnPerson() {
+    const rate = (rushMode ? CONFIG.spawnRate * CONFIG.rushMultiplier : CONFIG.spawnRate) * speed;
+    if (Math.random() > rate) return;
+
+    let floor;
+    const hour = Math.floor(simTime / 60);
+
+    if (hour >= 8 && hour < 10) {
+      floor = Math.random() < 0.75 ? 1 : Math.floor(Math.random() * (CONFIG.floors - 1)) + 2;
+    } else if (hour >= 17 && hour < 19) {
+      floor = Math.random() < 0.6 ? Math.floor(Math.random() * (CONFIG.floors - 1)) + 2 : 1;
+    } else {
+      floor = Math.floor(Math.random() * CONFIG.floors) + 1;
+    }
+
+    let dest;
+    do {
+      dest = Math.floor(Math.random() * CONFIG.floors) + 1;
+    } while (dest === floor);
+
+    const person = {
+      id: state.nextId++,
+      floor,
+      destFloor: dest,
+      color: PERSON_COLORS[Math.floor(Math.random() * PERSON_COLORS.length)],
+      waitTime: 0,
+      waitStart: simTime,
+    };
+
+    state.waiters.push(person);
+
+    if (dest > floor) {
+      state.floorCalls[floor].up = true;
+    } else {
+      state.floorCalls[floor].down = true;
+    }
+
+    assignElevator(person);
+  }
+
+  function assignElevator(person) {
+    let best = null;
+    let bestScore = Infinity;
+
+    for (const elev of state.elevators) {
+      const dist = Math.abs(elev.floor - person.floor);
+      let score = dist;
+
+      if (elev.direction === 1 && person.destFloor > person.floor && elev.floor <= person.floor) {
+        score *= 0.5;
+      } else if (elev.direction === -1 && person.destFloor < person.floor && elev.floor >= person.floor) {
+        score *= 0.5;
+      }
+
+      if (elev.state === 'idle') score *= 0.7;
+      score += elev.passengers.length * 0.3;
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = elev;
+      }
+    }
+  }
+
+  function boardPassengers(elevator) {
+    const floor = Math.round(elevator.floor);
+    const toBoard = state.waiters.filter(w => w.floor === floor);
+
+    for (const person of toBoard) {
+      if (elevator.passengers.length >= CONFIG.capacity) break;
+
+      const goingUp = person.destFloor > floor;
+      const goingDown = person.destFloor < floor;
+
+      if (elevator.direction === 1 && !goingUp && elevator.passengers.length > 0) continue;
+      if (elevator.direction === -1 && !goingDown && elevator.passengers.length > 0) continue;
+
+      if (elevator.addPassenger(person)) {
+        state.waiters = state.waiters.filter(w => w.id !== person.id);
+        person.waitTime = simTime - person.waitStart;
+
+        const stillWaiting = state.waiters.filter(w => w.floor === floor);
+        if (stillWaiting.length === 0) {
+          state.floorCalls[floor].up = stillWaiting.some(w => w.destFloor > floor);
+          state.floorCalls[floor].down = stillWaiting.some(w => w.destFloor < floor);
+        }
+      }
+    }
+
+    elevator.doorTimer = CONFIG.loadTime + elevator.passengers.length * 0.1;
+  }
+
+  function updateWaiters(dt) {
+    for (const w of state.waiters) {
+      w.waitTime = simTime - w.waitStart;
+    }
+  }
+
+  function updateDOM() {
+    for (const elev of state.elevators) {
+      const car = document.getElementById(`car-${elev.id}`);
+      const floorInd = document.getElementById(`car-floor-${elev.id}`);
+      const passengers = document.getElementById(`car-passengers-${elev.id}`);
+
+      const bottom = (elev.floor - 1) * CONFIG.floorHeight + 3;
+      car.style.bottom = `${bottom}px`;
+      car.classList.toggle('moving', elev.state === 'moving');
+      car.classList.toggle('doors-open', elev.state === 'doors_open');
+
+      const displayFloor = Math.round(elev.floor);
+      floorInd.textContent = displayFloor === 1 ? 'L' : displayFloor;
+
+      passengers.innerHTML = elev.passengers.map(p =>
+        `<div class="passenger-dot" style="background:${p.color}"></div>`
+      ).join('');
+    }
+
+    for (let f = 1; f <= CONFIG.floors; f++) {
+      const waitersEl = document.getElementById(`waiters-${f}`);
+      const lobbyEl = waitersEl.parentElement;
+      const floorWaiters = state.waiters.filter(w => w.floor === f);
+
+      lobbyEl.classList.toggle('has-waiters', floorWaiters.length > 0);
+      waitersEl.innerHTML = floorWaiters.slice(0, 12).map((w, i) =>
+        `<div class="waiter" style="background:${w.color};--i:${i}"></div>`
+      ).join('');
+
+      const upBtn = document.getElementById(`call-up-${f}`);
+      const downBtn = document.getElementById(`call-down-${f}`);
+      upBtn.classList.toggle('lit-up', state.floorCalls[f - 1]?.up);
+      downBtn.classList.toggle('lit-down', state.floorCalls[f - 1]?.down);
+    }
+
+    for (let s = 0; s < CONFIG.shafts; s++) {
+      for (let f = 1; f <= CONFIG.floors; f++) {
+        const upInd = document.getElementById(`ind-up-${s}-${f}`);
+        const downInd = document.getElementById(`ind-down-${s}-${f}`);
+        if (upInd) upInd.classList.toggle('active', state.floorCalls[f - 1]?.up);
+        if (downInd) downInd.classList.toggle('active', state.floorCalls[f - 1]?.down);
+      }
+    }
+
+    document.getElementById('statTrips').textContent = totalTrips;
+    document.getElementById('statWaiting').textContent = state.waiters.length;
+    document.getElementById('statServed').textContent = totalServed;
+
+    const avgWait = waitTimes.length > 0
+      ? (waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length).toFixed(1) + 'm'
+      : '—';
+    document.getElementById('statAvgWait').textContent = avgWait;
+
+    const load = Math.min(100, (state.waiters.length / 30) * 100);
+    document.getElementById('rushFill').style.width = `${load}%`;
+
+    const hours = Math.floor(simTime / 60);
+    const mins = Math.floor(simTime % 60);
+    document.getElementById('simClock').textContent =
+      `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+
+    updateElevatorList();
+  }
+
+  function updateElevatorList() {
+    const list = document.getElementById('elevatorList');
+    list.innerHTML = state.elevators.map(e => {
+      const floor = Math.round(e.floor);
+      const floorLabel = floor === 1 ? 'Lobby' : `Floor ${floor}`;
+      const stateLabel = {
+        idle: 'Idle',
+        moving: e.direction === 1 ? 'Ascending' : 'Descending',
+        doors_open: 'Boarding',
+      }[e.state] || e.state;
+
+      const arrow = e.direction === 1 ? '↑' : e.direction === -1 ? '↓' : '·';
+      const arrowClass = e.direction === 1 ? 'up' : e.direction === -1 ? 'down' : '';
+
+      return `<div class="elevator-item ${e.state !== 'idle' ? 'active' : ''}">
+        <div class="elevator-badge" style="background:${ELEVATOR_COLORS[e.id].bg};color:${ELEVATOR_COLORS[e.id].accent}">
+          ${String.fromCharCode(65 + e.id)}
+        </div>
+        <div class="elevator-info">
+          <div class="floor">${floorLabel} · ${e.passengers.length}/${CONFIG.capacity}</div>
+          <div class="state">${stateLabel}</div>
+        </div>
+        <div class="direction-arrow ${arrowClass}">${arrow}</div>
+      </div>`;
+    }).join('');
+  }
+
+  const logEntries = [];
+  function log(msg) {
+    const hours = Math.floor(simTime / 60);
+    const mins = Math.floor(simTime % 60);
+    const time = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    logEntries.unshift({ time, msg });
+    if (logEntries.length > 30) logEntries.pop();
+
+    const el = document.getElementById('activityLog');
+    el.innerHTML = logEntries.map(e =>
+      `<div class="log-entry"><span class="time">${e.time}</span>${e.msg}</div>`
+    ).join('');
+  }
+
+  let lastTime = performance.now();
+  let accum = 0;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (paused) { lastTime = now; return; }
+
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+    accum += dt * speed;
+
+    while (accum >= 0.05) {
+      accum -= 0.05;
+      simTime += 0.05 / 60;
+
+      for (const elev of state.elevators) {
+        elev.tick(0.05);
+      }
+
+      updateWaiters(0.05);
+      spawnPerson();
+    }
+
+    updateDOM();
+    drawParticles(now);
+  }
+
+  /* Particles */
+  let particles = [];
+  let particleCtx;
+  let particleCanvas;
+
+  function initParticles() {
+    particleCanvas = document.getElementById('particles');
+    particleCtx = particleCanvas.getContext('2d');
+    resizeParticles();
+    window.addEventListener('resize', resizeParticles);
+
+    for (let i = 0; i < 40; i++) {
+      particles.push({
+        x: Math.random(),
+        y: Math.random(),
+        size: Math.random() * 2 + 0.5,
+        speed: Math.random() * 0.0003 + 0.0001,
+        opacity: Math.random() * 0.3 + 0.1,
+      });
+    }
+  }
+
+  function resizeParticles() {
+    const view = document.querySelector('.building-view');
+    particleCanvas.width = view.clientWidth;
+    particleCanvas.height = view.clientHeight;
+  }
+
+  function drawParticles(now) {
+    if (!particleCtx) return;
+    particleCtx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+
+    for (const p of particles) {
+      p.y -= p.speed * speed;
+      if (p.y < 0) { p.y = 1; p.x = Math.random(); }
+
+      particleCtx.beginPath();
+      particleCtx.arc(p.x * particleCanvas.width, p.y * particleCanvas.height, p.size, 0, Math.PI * 2);
+      particleCtx.fillStyle = `rgba(200, 220, 255, ${p.opacity})`;
+      particleCtx.fill();
+    }
+  }
+
+  /* Controls */
+  document.getElementById('speedSlider').addEventListener('input', e => {
+    speed = parseInt(e.target.value);
+  });
+
+  document.getElementById('btnPause').addEventListener('click', () => {
+    paused = !paused;
+    document.getElementById('btnPause').textContent = paused ? 'Resume' : 'Pause';
+  });
+
+  document.getElementById('btnRush').addEventListener('click', () => {
+    rushMode = !rushMode;
+    document.getElementById('btnRush').textContent = rushMode ? 'End Rush' : 'Morning Rush';
+    log(rushMode ? 'Morning rush activated' : 'Rush period ended');
+    if (rushMode) {
+      for (let i = 0; i < 15; i++) spawnPerson();
+    }
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>

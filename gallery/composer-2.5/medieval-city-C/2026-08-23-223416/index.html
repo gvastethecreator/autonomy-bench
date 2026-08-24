@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aldermere — Living Medieval City</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0806; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 40%, transparent 40%, rgba(8,5,3,0.55) 100%);
+  }
+  #title {
+    position: fixed; top: 28px; left: 32px;
+    font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+    color: rgba(255, 235, 200, 0.92);
+    text-shadow: 0 2px 12px rgba(0,0,0,0.7);
+    pointer-events: none;
+    animation: fadeIn 2.5s ease-out;
+  }
+  #title h1 {
+    font-size: clamp(1.4rem, 3vw, 2.2rem);
+    font-weight: 400; letter-spacing: 0.18em;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  #title p {
+    font-size: clamp(0.75rem, 1.4vw, 0.95rem);
+    letter-spacing: 0.12em; opacity: 0.65;
+    font-style: italic;
+  }
+  #hint {
+    position: fixed; bottom: 24px; right: 28px;
+    font-family: system-ui, sans-serif; font-size: 11px;
+    color: rgba(255,220,180,0.35); letter-spacing: 0.08em;
+    pointer-events: none; animation: fadeIn 3s ease-out 1s both;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+<div id="overlay"></div>
+<div id="title">
+  <h1>Aldermere</h1>
+  <p>A living city at dusk</p>
+</div>
+<div id="hint">Drag to orbit · Scroll to zoom</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ─── Seeded RNG ───────────────────────────────────────────────
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const SEED = 847291;
+const rng = mulberry32(SEED);
+const rand = (a = 0, b = 1) => a + rng() * (b - a);
+const pick = arr => arr[Math.floor(rng() * arr.length)];
+
+// ─── Palette ────────────────────────────────────────────────
+const COL = {
+  skyTop: 0x1a1428,
+  skyHorizon: 0x6b3a28,
+  fog: 0x3d2a22,
+  stone: 0x8a8078,
+  stoneDark: 0x5c554e,
+  timber: 0x4a3525,
+  roofRed: 0x7a3028,
+  roofBrown: 0x5c3a22,
+  roofSlate: 0x3a4048,
+  roofGold: 0x8a6830,
+  wall: 0x6e6660,
+  wallTop: 0x7a7268,
+  grass: 0x3a5230,
+  grassDark: 0x2a3a22,
+  water: 0x2a4858,
+  torch: 0xffaa44,
+  window: 0xffcc66,
+  banner: 0x8a2028,
+  bannerAlt: 0x1a3a6a,
+  tree: 0x2a4828,
+  trunk: 0x3a2818,
+};
+
+// ─── Scene setup ────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(COL.skyTop);
+scene.fog = new THREE.FogExp2(COL.fog, 0.008);
+
+const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.5, 400);
+camera.position.set(55, 38, 55);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.04;
+controls.maxPolarAngle = Math.PI / 2.05;
+controls.minDistance = 18;
+controls.maxDistance = 120;
+controls.target.set(0, 6, 0);
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+
+// ─── Lighting ─────────────────────────────────────────────────
+const hemi = new THREE.HemisphereLight(0x8866aa, 0x2a1810, 0.45);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffaa66, 1.8);
+sun.position.set(-40, 30, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 150;
+sun.shadow.camera.left = -60;
+sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60;
+sun.shadow.camera.bottom = -60;
+sun.shadow.bias = -0.0003;
+scene.add(sun);
+
+const moonFill = new THREE.DirectionalLight(0x4466aa, 0.25);
+moonFill.position.set(30, 20, -40);
+scene.add(moonFill);
+
+const ambientWarm = new THREE.AmbientLight(0x332218, 0.35);
+scene.add(ambientWarm);
+
+// ─── Materials factory ────────────────────────────────────────
+const matCache = {};
+function mat(color, opts = {}) {
+  const key = color + JSON.stringify(opts);
+  if (!matCache[key]) {
+    matCache[key] = new THREE.MeshStandardMaterial({
+      color, roughness: opts.rough ?? 0.85, metalness: opts.metal ?? 0.05,
+      emissive: opts.emissive ?? 0x000000, emissiveIntensity: opts.emissiveInt ?? 0,
+      flatShading: opts.flat ?? false,
+    });
+  }
+  return matCache[key];
+}
+
+// ─── Geometry helpers ─────────────────────────────────────────
+const cityGroup = new THREE.Group();
+scene.add(cityGroup);
+
+const animated = [];
+const lights = [];
+const smokeSystems = [];
+
+function box(w, h, d, material, x, y, z, parent = cityGroup, castShadow = true) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.position.set(x, y + h / 2, z);
+  m.castShadow = castShadow;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function roof(w, d, h, material, x, y, z, parent = cityGroup) {
+  const geo = new THREE.ConeGeometry(Math.max(w, d) * 0.72, h, 4);
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y + h / 2, z);
+  m.rotation.y = Math.PI / 4;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function gableRoof(w, d, h, material, x, y, z, parent = cityGroup) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-w / 2, 0);
+  shape.lineTo(0, h);
+  shape.lineTo(w / 2, 0);
+  shape.lineTo(-w / 2, 0);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false });
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x - w / 2, y, z - d / 2);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+// ─── Ground & river ───────────────────────────────────────────
+const groundGeo = new THREE.PlaneGeometry(200, 200, 64, 64);
+const pos = groundGeo.attributes.position;
+for (let i = 0; i < pos.count; i++) {
+  const x = pos.getX(i), y = pos.getY(i);
+  const dist = Math.sqrt(x * x + y * y);
+  const riverVal = Math.exp(-((x + 8) ** 2) / 120) * Math.exp(-(y ** 2) / 800);
+  const hill = Math.sin(x * 0.04) * Math.cos(y * 0.035) * 1.5 + Math.max(0, 8 - dist * 0.08) * 0.3;
+  pos.setZ(i, hill - riverVal * 3.5);
+}
+groundGeo.computeVertexNormals();
+
+const ground = new THREE.Mesh(groundGeo, mat(COL.grass, { rough: 0.95 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+cityGroup.add(ground);
+
+// River
+const riverGeo = new THREE.PlaneGeometry(14, 180, 32, 64);
+const rpos = riverGeo.attributes.position;
+for (let i = 0; i < rpos.count; i++) {
+  const x = rpos.getX(i), y = rpos.getY(i);
+  rpos.setZ(i, Math.sin(y * 0.08 + x * 0.2) * 0.15 + Math.sin(y * 0.025) * 0.4);
+}
+riverGeo.computeVertexNormals();
+
+const waterMat = new THREE.MeshStandardMaterial({
+  color: COL.water, roughness: 0.15, metalness: 0.6,
+  transparent: true, opacity: 0.82,
+  emissive: 0x112233, emissiveIntensity: 0.08,
+});
+const river = new THREE.Mesh(riverGeo, waterMat);
+river.rotation.x = -Math.PI / 2;
+river.position.set(-6, 0.12, 0);
+cityGroup.add(river);
+animated.push({ type: 'water', mesh: river, mat: waterMat });
+
+// Bridge
+function buildBridge(bz) {
+  const bg = new THREE.Group();
+  bg.position.set(-6, 0.5, bz);
+  for (let side of [-1, 1]) {
+    for (let i = 0; i < 5; i++) {
+      box(0.5, 0.4, 3.2, mat(COL.stoneDark), side * 5.5, 0, i * 3.2 - 6.4, bg);
+    }
+    for (let i = 0; i < 6; i++) {
+      box(0.35, 2.2, 0.35, mat(COL.stoneDark), side * 5.5, 0.8, i * 2.8 - 7, bg);
+    }
+  }
+  box(12, 0.35, 16, mat(COL.stone), 0, 1.8, 0, bg);
+  // Arch supports
+  for (let i = -1; i <= 1; i++) {
+    box(1.2, 2.5, 1.2, mat(COL.stoneDark), i * 4, 0.5, 0, bg);
+  }
+  cityGroup.add(bg);
+}
+buildBridge(-15);
+buildBridge(18);
+
+// ─── City wall ring ───────────────────────────────────────────
+function buildWalls() {
+  const radius = 42;
+  const segments = 48;
+  const gateAngles = [0, Math.PI * 0.55, Math.PI * 1.3];
+
+  for (let i = 0; i < segments; i++) {
+    const a0 = (i / segments) * Math.PI * 2;
+    const a1 = ((i + 1) / segments) * Math.PI * 2;
+    const mid = (a0 + a1) / 2;
+
+    let isGate = false;
+    for (const ga of gateAngles) {
+      if (Math.abs(Math.atan2(Math.sin(mid - ga), Math.cos(mid - ga))) < 0.15) isGate = true;
+    }
+
+    const x = Math.cos(mid) * radius;
+    const z = Math.sin(mid) * radius;
+
+    if (isGate) {
+      // Gate towers
+      buildTower(x, z, 10, 3.5, true);
+      continue;
+    }
+
+    const len = radius * (a1 - a0) * 1.02;
+    const wg = new THREE.Group();
+    wg.position.set(x, 0, z);
+    wg.rotation.y = -mid + Math.PI / 2;
+
+    box(len, 5, 2.2, mat(COL.wall), 0, 2, 0, wg);
+    // Crenellations
+    const crenCount = Math.floor(len / 1.4);
+    for (let c = 0; c < crenCount; c++) {
+      const cx = -len / 2 + c * 1.4 + 0.7;
+      box(0.8, 1.2, 0.8, mat(COL.wallTop), cx, 5.2, 0, wg);
+    }
+    cityGroup.add(wg);
+
+    if (i % 6 === 0) buildTower(x, z, 12 + rand(0, 4), 3, false);
+  }
+}
+
+function buildTower(x, z, height, width, isGate) {
+  const tg = new THREE.Group();
+  tg.position.set(x, 0, z);
+  box(width, height, width, mat(COL.stoneDark), 0, 0, 0, tg);
+  roof(width * 1.3, width * 1.3, height * 0.35, mat(COL.roofSlate), 0, height, 0, tg);
+
+  if (isGate) {
+    const gateW = width * 1.8;
+    box(gateW, height * 0.55, width * 0.6, mat(COL.stoneDark), 0, 0, 0, tg);
+    // Portcullis gap
+    box(gateW * 0.4, height * 0.45, width * 0.8, mat(0x000000, { emissive: 0x000000 }), 0, 0, 0, tg, false);
+  }
+
+  // Torch
+  if (rand() > 0.3) addTorch(0, height * 0.6, width * 0.6, tg);
+  addBanner(0, height * 0.85, 0, tg, pick([COL.banner, COL.bannerAlt]));
+
+  cityGroup.add(tg);
+}
+
+// ─── Buildings ────────────────────────────────────────────────
+const GRID = 11;
+const CELL = 6.5;
+const occupied = new Set();
+
+function key(gx, gz) { return gx + ',' + gz; }
+
+function isNearRiver(gx, gz) {
+  const wx = gx * CELL - (GRID * CELL) / 2;
+  return Math.abs(wx + 6) < 9;
+}
+
+function isInsideWalls(gx, gz) {
+  const wx = gx * CELL - (GRID * CELL) / 2;
+  const wz = gz * CELL - (GRID * CELL) / 2;
+  return Math.sqrt(wx * wx + wz * wz) < 36;
+}
+
+function buildHouse(gx, gz, type) {
+  if (occupied.has(key(gx, gz))) return;
+  occupied.add(key(gx, gz));
+
+  const wx = gx * CELL - (GRID * CELL) / 2 + rand(-0.8, 0.8);
+  const wz = gz * CELL - (GRID * CELL) / 2 + rand(-0.8, 0.8);
+  const hg = new THREE.Group();
+  hg.position.set(wx, 0, wz);
+  hg.rotation.y = rand(0, Math.PI * 2);
+
+  const w = rand(3, 5);
+  const d = rand(3, 5);
+  const h = type === 'tall' ? rand(7, 11) : type === 'shop' ? rand(4, 6) : rand(5, 8);
+
+  const wallMat = mat(pick([COL.stone, COL.stoneDark, COL.timber]));
+  const roofMat = mat(pick([COL.roofRed, COL.roofBrown, COL.roofSlate]));
+
+  // Timber frame pattern
+  box(w, h, d, wallMat, 0, 0, 0, hg);
+
+  if (rand() > 0.4) {
+    const tfMat = mat(COL.timber);
+    box(w + 0.15, 0.3, d + 0.15, tfMat, 0, h * 0.3, 0, hg, false);
+    box(w + 0.15, 0.3, d + 0.15, tfMat, 0, h * 0.65, 0, hg, false);
+    box(0.25, h, 0.25, tfMat, -w / 2, 0, -d / 2, hg, false);
+    box(0.25, h, 0.25, tfMat, w / 2, 0, -d / 2, hg, false);
+  }
+
+  if (type === 'shop') {
+    gableRoof(w + 0.6, d + 0.6, 2.5, roofMat, 0, h, 0, hg);
+    // Awning
+    box(w + 1.2, 0.08, 1.8, mat(COL.banner), 0, h * 0.55, d / 2 + 0.8, hg, false);
+  } else {
+    roof(w + 0.5, d + 0.5, rand(2.5, 4), roofMat, 0, h, 0, hg);
+  }
+
+  // Windows with warm glow
+  const winCount = Math.floor(rand(1, 4));
+  for (let i = 0; i < winCount; i++) {
+    const wy = rand(h * 0.25, h * 0.75);
+    const wx2 = pick([-w / 2 - 0.02, w / 2 + 0.02]);
+    const winMesh = box(0.6, 0.8, 0.08, mat(COL.window, { emissive: COL.window, emissiveInt: rand(0.4, 1.2) }), wx2, wy - 0.4, rand(-d * 0.2, d * 0.2), hg, false);
+    animated.push({ type: 'window', mesh: winMesh, phase: rand(0, Math.PI * 2) });
+  }
+
+  // Chimney & smoke
+  if (rand() > 0.35) {
+    const cx = rand(-w * 0.3, w * 0.3);
+    const cz = rand(-d * 0.3, d * 0.3);
+    box(0.5, rand(1.5, 2.5), 0.5, mat(COL.stoneDark), cx, h, cz, hg, false);
+    addSmoke(wx + cx, h + 2, wz + cz);
+  }
+
+  cityGroup.add(hg);
+}
+
+function buildCathedral() {
+  const cg = new THREE.Group();
+  cg.position.set(8, 0, -8);
+
+  box(14, 8, 22, mat(COL.stone), 0, 0, 0, cg);
+  box(8, 14, 8, mat(COL.stoneDark), 0, 0, -4, cg);
+  gableRoof(16, 24, 6, mat(COL.roofSlate), -2, 8, -2, cg);
+
+  // Spire
+  const spireGeo = new THREE.ConeGeometry(2.5, 22, 8);
+  const spire = new THREE.Mesh(spireGeo, mat(COL.roofSlate));
+  spire.position.set(0, 22, -4);
+  spire.castShadow = true;
+  cg.add(spire);
+
+  // Rose window glow
+  const rose = new THREE.Mesh(
+    new THREE.CircleGeometry(1.8, 16),
+    mat(COL.window, { emissive: COL.window, emissiveInt: 1.5 })
+  );
+  rose.position.set(0, 10, -8.01);
+  cg.add(rose);
+  animated.push({ type: 'window', mesh: rose, phase: 0 });
+
+  // Flying buttresses hint
+  for (let i = -1; i <= 1; i++) {
+    box(0.6, 6, 4, mat(COL.stoneDark), i * 8, 2, 2, cg);
+  }
+
+  // Banners
+  addBanner(-5, 12, -10, cg, COL.banner);
+  addBanner(5, 12, -10, cg, COL.bannerAlt);
+
+  cityGroup.add(cg);
+  for (let gx = 3; gx <= 5; gx++) for (let gz = 1; gz <= 3; gz++) occupied.add(key(gx, gz));
+}
+
+function buildMarket() {
+  const mg = new THREE.Group();
+  mg.position.set(-12, 0, 10);
+
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2;
+    const r = 5 + rand(-1, 1);
+    const sx = Math.cos(angle) * r;
+    const sz = Math.sin(angle) * r;
+    const stall = new THREE.Group();
+    stall.position.set(sx, 0, sz);
+    stall.rotation.y = -angle + Math.PI;
+
+    box(2.5, 0.15, 1.8, mat(COL.timber), 0, 1.2, 0, stall);
+    box(0.12, 2.4, 0.12, mat(COL.timber), -1.1, 0, -0.8, stall, false);
+    box(0.12, 2.4, 0.12, mat(COL.timber), 1.1, 0, -0.8, stall, false);
+    box(3, 0.1, 0.12, mat(COL.timber), 0, 2.3, -0.8, stall, false);
+
+    const awningMat = mat(pick([COL.banner, COL.roofRed, COL.roofGold, 0x2a5a3a]));
+    box(2.8, 0.06, 2, awningMat, 0, 2.5, 0.2, stall, false);
+
+    // Goods
+    box(0.5, 0.4, 0.5, mat(pick([0x886622, 0xaaaaaa, 0x664422])), rand(-0.5, 0.5), 1.35, rand(-0.3, 0.3), stall, false);
+
+    mg.add(stall);
+  }
+
+  // Central well
+  box(2, 0.8, 2, mat(COL.stoneDark), 0, 0, 0, mg);
+  box(1.2, 0.05, 1.2, mat(COL.water, { metal: 0.4, rough: 0.1 }), 0, 0.75, 0, mg, false);
+  box(0.2, 3, 0.2, mat(COL.timber), 0, 0, 0, mg, false);
+  roof(1.5, 1.5, 1.2, mat(COL.roofBrown), 0, 3, 0, mg);
+
+  cityGroup.add(mg);
+}
+
+function buildKeep() {
+  const kg = new THREE.Group();
+  kg.position.set(18, 0, -18);
+
+  box(10, 16, 10, mat(COL.stoneDark), 0, 0, 0, kg);
+  box(12, 2, 12, mat(COL.wallTop), 0, 16, 0, kg);
+
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const tx = 18 + Math.cos(a) * 7;
+    const tz = -18 + Math.sin(a) * 7;
+    buildTower(tx, tz, 10, 2.5, false);
+  }
+
+  roof(11, 11, 4, mat(COL.roofSlate), 0, 16, 0, kg);
+  addBanner(0, 20, 5.5, kg, COL.banner);
+  addTorch(5, 8, 0, kg);
+  addTorch(-5, 8, 0, kg);
+
+  cityGroup.add(kg);
+  for (let gx = 7; gx <= 9; gx++) for (let gz = 1; gz <= 3; gz++) occupied.add(key(gx, gz));
+}
+
+// ─── Decorations ──────────────────────────────────────────────
+function addTorch(x, y, z, parent) {
+  const tg = new THREE.Group();
+  tg.position.set(x, y, z);
+
+  box(0.15, 0.8, 0.15, mat(COL.timber), 0, -0.2, 0, tg, false);
+  const flame = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 6, 6),
+    mat(COL.torch, { emissive: COL.torch, emissiveInt: 2, rough: 0.3 })
+  );
+  flame.position.y = 0.3;
+  tg.add(flame);
+
+  const light = new THREE.PointLight(COL.torch, 1.2, 12, 2);
+  light.position.y = 0.3;
+  light.castShadow = false;
+  tg.add(light);
+  lights.push({ light, flame, phase: rand(0, Math.PI * 2) });
+
+  parent.add(tg);
+}
+
+function addBanner(x, y, z, parent, color) {
+  const bg = new THREE.Group();
+  bg.position.set(x, y, z);
+
+  box(0.08, 2.5, 0.08, mat(COL.timber), 0, 0, 0, bg, false);
+
+  const bannerGeo = new THREE.PlaneGeometry(1.2, 1.8, 8, 12);
+  const bannerMesh = new THREE.Mesh(bannerGeo, mat(color, { rough: 0.7, emissive: color, emissiveInt: 0.05 }));
+  bannerMesh.position.set(0.6, -0.3, 0);
+  bg.add(bannerMesh);
+
+  animated.push({ type: 'banner', mesh: bannerMesh, geo: bannerGeo, phase: rand(0, Math.PI * 2) });
+  parent.add(bg);
+}
+
+function addSmoke(x, y, z) {
+  const count = 24;
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = rand(-0.3, 0.3);
+    positions[i * 3 + 1] = i * 0.35;
+    positions[i * 3 + 2] = rand(-0.3, 0.3);
+    sizes[i] = rand(0.15, 0.45);
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const smMat = new THREE.PointsMaterial({
+    color: 0xaaaaaa, size: 0.5, transparent: true, opacity: 0.35,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+  });
+  const points = new THREE.Points(geo, smMat);
+  points.position.set(x, y, z);
+  cityGroup.add(points);
+  smokeSystems.push({ points, geo, origin: { x, y, z }, phase: rand(0, 10) });
+}
+
+function addTree(x, z) {
+  const tg = new THREE.Group();
+  tg.position.set(x, 0, z);
+  const scale = rand(0.7, 1.3);
+  tg.scale.setScalar(scale);
+
+  box(0.5, 2.5, 0.5, mat(COL.trunk), 0, 0, 0, tg);
+  const foliage = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(rand(1.5, 2.2), 1),
+    mat(COL.tree, { flat: true })
+  );
+  foliage.position.y = 3.2;
+  foliage.castShadow = true;
+  tg.add(foliage);
+
+  animated.push({ type: 'tree', mesh: foliage, phase: rand(0, Math.PI * 2) });
+  cityGroup.add(tg);
+}
+
+function addStreetLamp(x, z) {
+  const lg = new THREE.Group();
+  lg.position.set(x, 0, z);
+  box(0.12, 3.5, 0.12, mat(COL.stoneDark), 0, 0, 0, lg, false);
+  box(0.5, 0.5, 0.5, mat(COL.stone), 0, 3.5, 0, lg, false);
+  addTorch(0, 3.8, 0, lg);
+  cityGroup.add(lg);
+}
+
+// ─── Generate city ────────────────────────────────────────────
+buildWalls();
+buildCathedral();
+buildMarket();
+buildKeep();
+
+for (let gx = 0; gx < GRID; gx++) {
+  for (let gz = 0; gz < GRID; gz++) {
+    if (!isInsideWalls(gx, gz)) continue;
+    if (isNearRiver(gx, gz)) continue;
+    if (occupied.has(key(gx, gz))) continue;
+
+    // Leave street gaps
+    if (gx === Math.floor(GRID / 2) || gz === Math.floor(GRID / 2)) {
+      if (rand() > 0.3) continue;
+    }
+
+    const r = rand();
+    const type = r > 0.85 ? 'tall' : r > 0.6 ? 'shop' : 'house';
+    buildHouse(gx, gz, type);
+  }
+}
+
+// Trees outside walls & along river
+for (let i = 0; i < 45; i++) {
+  const angle = rand(0, Math.PI * 2);
+  const dist = rand(38, 55);
+  addTree(Math.cos(angle) * dist, Math.sin(angle) * dist);
+}
+for (let i = 0; i < 20; i++) {
+  addTree(rand(-50, -20), rand(-40, 40));
+}
+
+// Street lamps along main road
+for (let i = -3; i <= 3; i++) {
+  if (i === 0) continue;
+  addStreetLamp(i * CELL - (GRID * CELL) / 2 + 3, (GRID * CELL) / 2 - CELL);
+  addStreetLamp(i * CELL - (GRID * CELL) / 2 + 3, -(GRID * CELL) / 2 + CELL);
+}
+
+// Cobblestone paths (instanced flat stones)
+const cobbleCount = 200;
+const cobbleGeo = new THREE.BoxGeometry(0.9, 0.06, 0.9);
+const cobbleMat = mat(COL.stoneDark, { rough: 0.95 });
+const cobbles = new THREE.InstancedMesh(cobbleGeo, cobbleMat, cobbleCount);
+const dummy = new THREE.Object3D();
+let ci = 0;
+for (let gx = 0; gx < GRID; gx++) {
+  for (let gz = 0; gz < GRID; gz++) {
+    if (ci >= cobbleCount) break;
+    if (gx !== Math.floor(GRID / 2) && gz !== Math.floor(GRID / 2)) continue;
+    const wx = gx * CELL - (GRID * CELL) / 2;
+    const wz = gz * CELL - (GRID * CELL) / 2;
+    dummy.position.set(wx + rand(-0.3, 0.3), 0.04, wz + rand(-0.3, 0.3));
+    dummy.rotation.y = rand(0, Math.PI);
+    dummy.updateMatrix();
+    cobbles.setMatrixAt(ci++, dummy.matrix);
+  }
+}
+cobbles.instanceMatrix.needsUpdate = true;
+cobbles.receiveShadow = true;
+cityGroup.add(cobbles);
+
+// Birds
+const birdCount = 18;
+const birdGeo = new THREE.BufferGeometry();
+const birdPos = new Float32Array(birdCount * 3);
+for (let i = 0; i < birdCount; i++) {
+  birdPos[i * 3] = rand(-30, 30);
+  birdPos[i * 3 + 1] = rand(18, 35);
+  birdPos[i * 3 + 2] = rand(-30, 30);
+}
+birdGeo.setAttribute('position', new THREE.BufferAttribute(birdPos, 3));
+const birdMat = new THREE.PointsMaterial({ color: 0x221818, size: 0.6, sizeAttenuation: true });
+const birds = new THREE.Points(birdGeo, birdMat);
+scene.add(birds);
+animated.push({ type: 'birds', mesh: birds, geo: birdGeo });
+
+// Ambient dust motes
+const dustCount = 120;
+const dustGeo = new THREE.BufferGeometry();
+const dustPos = new Float32Array(dustCount * 3);
+for (let i = 0; i < dustCount; i++) {
+  dustPos[i * 3] = rand(-25, 25);
+  dustPos[i * 3 + 1] = rand(2, 20);
+  dustPos[i * 3 + 2] = rand(-25, 25);
+}
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+  color: 0xffddaa, size: 0.12, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+scene.add(dust);
+animated.push({ type: 'dust', geo: dustGeo });
+
+// ─── Sky dome gradient ────────────────────────────────────────
+const skyGeo = new THREE.SphereGeometry(180, 32, 16);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  depthWrite: false,
+  uniforms: {
+    topColor: { value: new THREE.Color(COL.skyTop) },
+    bottomColor: { value: new THREE.Color(COL.skyHorizon) },
+    offset: { value: 8 },
+    exponent: { value: 0.55 },
+  },
+  vertexShader: `
+    varying vec3 vWorldPosition;
+    void main() {
+      vec4 wp = modelMatrix * vec4(position, 1.0);
+      vWorldPosition = wp.xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 topColor;
+    uniform vec3 bottomColor;
+    uniform float offset;
+    uniform float exponent;
+    varying vec3 vWorldPosition;
+    void main() {
+      float h = normalize(vWorldPosition + offset).y;
+      gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+    }
+  `,
+});
+scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+// Stars
+const starCount = 300;
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(starCount * 3);
+for (let i = 0; i < starCount; i++) {
+  const theta = rand(0, Math.PI * 2);
+  const phi = rand(0, Math.PI * 0.45);
+  const r = 170;
+  starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+  starPos[i * 3 + 1] = r * Math.cos(phi);
+  starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.5, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+scene.add(stars);
+
+// ─── Post-processing ──────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.45, 0.5, 0.82
+);
+composer.addPass(bloom);
+
+// ─── Animation loop ───────────────────────────────────────────
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  const dt = clock.getDelta();
+
+  controls.update();
+
+  // Water shimmer
+  for (const a of animated) {
+    if (a.type === 'water') {
+      a.mat.emissiveIntensity = 0.06 + Math.sin(t * 1.2) * 0.03;
+    }
+    if (a.type === 'window') {
+      const intensity = 0.6 + Math.sin(t * 2 + a.phase) * 0.25 + Math.sin(t * 5.3 + a.phase) * 0.1;
+      a.mesh.material.emissiveIntensity = intensity;
+    }
+    if (a.type === 'banner') {
+      const pos = a.geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const wave = Math.sin(t * 2.5 + y * 2 + a.phase) * 0.08 * (1 + x);
+        pos.setZ(i, wave);
+      }
+      pos.needsUpdate = true;
+      a.geo.computeVertexNormals();
+    }
+    if (a.type === 'tree') {
+      a.mesh.rotation.z = Math.sin(t * 0.8 + a.phase) * 0.03;
+    }
+    if (a.type === 'birds') {
+      const pos = a.geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setX(i, pos.getX(i) + Math.sin(t * 0.5 + i) * 0.02);
+        pos.setZ(i, pos.getZ(i) + Math.cos(t * 0.4 + i * 1.3) * 0.02);
+        pos.setY(i, pos.getY(i) + Math.sin(t * 3 + i * 2) * 0.005);
+      }
+      pos.needsUpdate = true;
+    }
+    if (a.type === 'dust') {
+      const pos = a.geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) + dt * 0.3;
+        if (y > 22) y = 2;
+        pos.setY(i, y);
+        pos.setX(i, pos.getX(i) + Math.sin(t + i) * dt * 0.05);
+      }
+      pos.needsUpdate = true;
+    }
+  }
+
+  // Torch flicker
+  for (const tl of lights) {
+    const flicker = 0.85 + Math.sin(t * 12 + tl.phase) * 0.12 + Math.sin(t * 23 + tl.phase) * 0.08;
+    tl.light.intensity = 1.2 * flicker;
+    tl.flame.material.emissiveIntensity = 2 * flicker;
+    tl.flame.scale.setScalar(0.85 + flicker * 0.15);
+  }
+
+  // Smoke drift
+  for (const sm of smokeSystems) {
+    const pos = sm.geo.attributes.position;
+    const n = pos.count;
+    for (let i = 0; i < n; i++) {
+      let y = pos.getY(i) + dt * 0.6;
+      let x = pos.getX(i) + Math.sin(t * 0.8 + sm.phase + i) * dt * 0.15;
+      let z = pos.getZ(i) + Math.cos(t * 0.6 + sm.phase + i) * dt * 0.12;
+      if (y > n * 0.35) { y = 0; x = (Math.sin(i * 7.3) * 0.5) * 0.3; z = (Math.cos(i * 5.1) * 0.5) * 0.3; }
+      pos.setY(i, y);
+      pos.setX(i, x);
+      pos.setZ(i, z);
+    }
+    pos.needsUpdate = true;
+  }
+
+  // Subtle sun color shift
+  const dayPhase = (Math.sin(t * 0.05) + 1) / 2;
+  sun.color.setHSL(0.08 + dayPhase * 0.02, 0.85, 0.55);
+  sun.intensity = 1.6 + dayPhase * 0.4;
+
+  // Star twinkle
+  stars.material.opacity = 0.5 + Math.sin(t * 0.7) * 0.15;
+
+  composer.render();
+}
+
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

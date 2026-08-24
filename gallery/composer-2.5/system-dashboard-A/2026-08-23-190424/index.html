@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Monitor — Live Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0a0e17;
+      --surface: #111827;
+      --surface-2: #1a2235;
+      --border: #243044;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #3b82f6;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --cyan: #06b6d4;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 1rem; }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header h1 { font-size: 1.25rem; font-weight: 600; }
+    .header h1 span { color: var(--muted); font-weight: 400; font-size: 0.875rem; margin-left: 0.5rem; }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      border-radius: 999px;
+      font-size: 0.8rem;
+      color: var(--green);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    .clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.875rem; }
+
+    main { padding: 1.25rem 1.5rem; max-width: 1600px; margin: 0 auto; }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--card-accent, var(--accent));
+    }
+
+    .stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.35rem; }
+    .stat-value { font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+
+    .progress-bar {
+      height: 6px;
+      background: var(--surface-2);
+      border-radius: 3px;
+      margin-top: 0.75rem;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease, background 0.4s;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1rem;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+
+    .panel-title { font-size: 0.875rem; font-weight: 600; }
+    .panel-badge {
+      font-size: 0.7rem;
+      padding: 0.15rem 0.5rem;
+      background: var(--surface-2);
+      border-radius: 4px;
+      color: var(--muted);
+    }
+
+    .col-6 { grid-column: span 6; }
+    .col-4 { grid-column: span 4; }
+    .col-8 { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+
+    .chart-wrap { position: relative; height: 220px; }
+
+    .gauge-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+
+    .gauge {
+      text-align: center;
+    }
+
+    .gauge-ring {
+      position: relative;
+      width: 90px;
+      height: 90px;
+      margin: 0 auto 0.5rem;
+    }
+
+    .gauge-ring svg { transform: rotate(-90deg); }
+    .gauge-ring circle { fill: none; stroke-width: 8; }
+    .gauge-ring .bg { stroke: var(--surface-2); }
+    .gauge-ring .fg { stroke-linecap: round; transition: stroke-dashoffset 0.6s ease, stroke 0.4s; }
+    .gauge-val {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .gauge-label { font-size: 0.75rem; color: var(--muted); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    td {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid rgba(36, 48, 68, 0.5);
+      font-variant-numeric: tabular-nums;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(59, 130, 246, 0.05); }
+
+    .proc-name { font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proc-cpu { color: var(--cyan); }
+    .proc-mem { color: var(--purple); }
+
+    .tag {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+    .tag-running { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .tag-sleeping { background: rgba(100, 116, 139, 0.2); color: var(--muted); }
+
+    .network-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .net-stat {
+      background: var(--surface-2);
+      border-radius: 8px;
+      padding: 0.75rem;
+      text-align: center;
+    }
+    .net-stat .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+    .net-stat .val { font-size: 1.25rem; font-weight: 700; margin-top: 0.15rem; }
+    .net-down { color: var(--green); }
+    .net-up { color: var(--accent); }
+
+    .disk-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .disk-item { }
+    .disk-header { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.35rem; }
+    .disk-name { font-weight: 500; }
+    .disk-pct { color: var(--muted); }
+
+    .footer {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    @media (max-width: 1024px) {
+      .col-6, .col-4, .col-8 { grid-column: span 12; }
+      .gauge-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      .header { flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+      .gauge-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">⬡</div>
+      <h1>System Monitor <span>node-prod-01</span></h1>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      All systems operational
+    </div>
+    <div class="clock" id="clock">--:--:--</div>
+  </header>
+
+  <main>
+    <section class="stats-row">
+      <div class="stat-card" style="--card-accent: var(--cyan)">
+        <div class="stat-label">CPU Usage</div>
+        <div class="stat-value" id="cpu-val">--%</div>
+        <div class="stat-sub" id="cpu-sub">8 cores @ 3.6 GHz</div>
+        <div class="progress-bar"><div class="progress-fill" id="cpu-bar" style="width:0%;background:var(--cyan)"></div></div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--purple)">
+        <div class="stat-label">Memory</div>
+        <div class="stat-value" id="mem-val">-- GB</div>
+        <div class="stat-sub" id="mem-sub">of 32 GB total</div>
+        <div class="progress-bar"><div class="progress-fill" id="mem-bar" style="width:0%;background:var(--purple)"></div></div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--yellow)">
+        <div class="stat-label">Disk I/O</div>
+        <div class="stat-value" id="diskio-val">-- MB/s</div>
+        <div class="stat-sub" id="diskio-sub">read + write combined</div>
+        <div class="progress-bar"><div class="progress-fill" id="diskio-bar" style="width:0%;background:var(--yellow)"></div></div>
+      </div>
+      <div class="stat-card" style="--card-accent: var(--green)">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="uptime-val">--</div>
+        <div class="stat-sub" id="uptime-sub">since last reboot</div>
+        <div class="progress-bar"><div class="progress-fill" id="uptime-bar" style="width:100%;background:var(--green)"></div></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel col-8">
+        <div class="panel-header">
+          <span class="panel-title">CPU & Memory — 60s History</span>
+          <span class="panel-badge">Live</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-main"></canvas></div>
+      </div>
+
+      <div class="panel col-4">
+        <div class="panel-header">
+          <span class="panel-title">Core Utilization</span>
+          <span class="panel-badge">Per core</span>
+        </div>
+        <div class="gauge-grid" id="core-gauges"></div>
+      </div>
+
+      <div class="panel col-4">
+        <div class="panel-header">
+          <span class="panel-title">Network Traffic</span>
+          <span class="panel-badge">eth0</span>
+        </div>
+        <div class="network-stats">
+          <div class="net-stat">
+            <div class="label">Download</div>
+            <div class="val net-down" id="net-down">-- MB/s</div>
+          </div>
+          <div class="net-stat">
+            <div class="label">Upload</div>
+            <div class="val net-up" id="net-up">-- MB/s</div>
+          </div>
+        </div>
+        <div class="chart-wrap" style="height:160px"><canvas id="chart-net"></canvas></div>
+      </div>
+
+      <div class="panel col-4">
+        <div class="panel-header">
+          <span class="panel-title">Storage Volumes</span>
+          <span class="panel-badge">4 mounts</span>
+        </div>
+        <div class="disk-list" id="disk-list"></div>
+      </div>
+
+      <div class="panel col-4">
+        <div class="panel-header">
+          <span class="panel-title">Load Average</span>
+          <span class="panel-badge">1 / 5 / 15 min</span>
+        </div>
+        <div class="chart-wrap" style="height:180px"><canvas id="chart-load"></canvas></div>
+      </div>
+
+      <div class="panel col-12">
+        <div class="panel-header">
+          <span class="panel-title">Top Processes</span>
+          <span class="panel-badge" id="proc-count">-- processes</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>PID</th>
+              <th>Name</th>
+              <th>User</th>
+              <th>CPU %</th>
+              <th>Mem %</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="proc-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Simulated data · Updates every 1s · System Monitor Dashboard v1.0
+  </footer>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const HISTORY_LEN = 60;
+      const CORES = 8;
+      const MEM_TOTAL = 32;
+      const TICK_MS = 1000;
+
+      const state = {
+        cpu: 35,
+        mem: 18.5,
+        diskIo: 45,
+        netDown: 12,
+        netUp: 3.5,
+        load: [1.2, 1.0, 0.85],
+        cores: Array(CORES).fill(30),
+        uptimeSec: 86400 * 3 + 3600 * 14 + 720,
+        cpuHistory: [],
+        memHistory: [],
+        netDownHistory: [],
+        netUpHistory: [],
+        loadHistory: [[], [], []],
+        disks: [
+          { name: '/dev/nvme0n1p1 (/)', used: 142, total: 512 },
+          { name: '/dev/nvme0n1p2 (/home)', used: 890, total: 2048 },
+          { name: '/dev/sda1 (/data)', used: 3200, total: 8000 },
+          { name: '/dev/sdb1 (/backup)', used: 180, total: 1000 }
+        ],
+        processes: [
+          { pid: 1247, name: 'postgres', user: 'postgres', cpu: 12.4, mem: 8.2, status: 'running' },
+          { pid: 3891, name: 'node', user: 'app', cpu: 9.8, mem: 5.1, status: 'running' },
+          { pid: 2103, name: 'nginx', user: 'www-data', cpu: 4.2, mem: 1.8, status: 'running' },
+          { pid: 4456, name: 'redis-server', user: 'redis', cpu: 3.1, mem: 2.4, status: 'running' },
+          { pid: 782, name: 'systemd', user: 'root', cpu: 0.8, mem: 0.3, status: 'running' },
+          { pid: 5102, name: 'dockerd', user: 'root', cpu: 2.6, mem: 3.7, status: 'running' },
+          { pid: 6234, name: 'python3', user: 'app', cpu: 6.5, mem: 4.2, status: 'running' },
+          { pid: 901, name: 'sshd', user: 'root', cpu: 0.2, mem: 0.1, status: 'sleeping' }
+        ]
+      };
+
+      for (let i = 0; i < HISTORY_LEN; i++) {
+        state.cpuHistory.push(30 + Math.random() * 20);
+        state.memHistory.push(17 + Math.random() * 4);
+        state.netDownHistory.push(8 + Math.random() * 10);
+        state.netUpHistory.push(2 + Math.random() * 4);
+        state.loadHistory[0].push(1 + Math.random() * 0.5);
+        state.loadHistory[1].push(0.9 + Math.random() * 0.4);
+        state.loadHistory[2].push(0.8 + Math.random() * 0.3);
+      }
+
+      function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+      function lerp(a, b, t) { return a + (b - a) * t; }
+      function randWalk(cur, min, max, step) {
+        return clamp(cur + (Math.random() - 0.5) * step * 2, min, max);
+      }
+
+      function colorForPct(pct) {
+        if (pct >= 85) return getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+        if (pct >= 65) return getComputedStyle(document.documentElement).getPropertyValue('--yellow').trim();
+        return getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+      }
+
+      function formatUptime(sec) {
+        const d = Math.floor(sec / 86400);
+        const h = Math.floor((sec % 86400) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        if (d > 0) return `${d}d ${h}h ${m}m`;
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m ${sec % 60}s`;
+      }
+
+      function formatBytes(gb) {
+        return gb >= 1000 ? (gb / 1024).toFixed(1) + ' TB' : gb.toFixed(1) + ' GB';
+      }
+
+      const labels = Array.from({ length: HISTORY_LEN }, (_, i) => {
+        const s = HISTORY_LEN - i;
+        return s === 1 ? 'now' : `-${s}s`;
+      });
+
+      const chartDefaults = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 300 },
+        plugins: { legend: { labels: { color: '#64748b', boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: 'rgba(36,48,68,0.5)' } },
+          y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(36,48,68,0.5)' } }
+        }
+      };
+
+      const chartMain = new Chart(document.getElementById('chart-main'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'CPU %',
+              data: [...state.cpuHistory],
+              borderColor: '#06b6d4',
+              backgroundColor: 'rgba(6,182,212,0.08)',
+              fill: true,
+              tension: 0.35,
+              pointRadius: 0,
+              borderWidth: 2
+            },
+            {
+              label: 'Memory %',
+              data: state.memHistory.map(v => (v / MEM_TOTAL) * 100),
+              borderColor: '#a855f7',
+              backgroundColor: 'rgba(168,85,247,0.08)',
+              fill: true,
+              tension: 0.35,
+              pointRadius: 0,
+              borderWidth: 2
+            }
+          ]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            ...chartDefaults.scales,
+            y: { ...chartDefaults.scales.y, min: 0, max: 100, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } }
+          }
+        }
+      });
+
+      const chartNet = new Chart(document.getElementById('chart-net'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Down', data: [...state.netDownHistory], borderColor: '#22c55e', tension: 0.35, pointRadius: 0, borderWidth: 2 },
+            { label: 'Up', data: [...state.netUpHistory], borderColor: '#3b82f6', tension: 0.35, pointRadius: 0, borderWidth: 2 }
+          ]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            ...chartDefaults.scales,
+            y: { ...chartDefaults.scales.y, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v.toFixed(0) + ' MB/s' } }
+          }
+        }
+      });
+
+      const chartLoad = new Chart(document.getElementById('chart-load'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: '1 min', data: [...state.loadHistory[0]], borderColor: '#ef4444', tension: 0.35, pointRadius: 0, borderWidth: 2 },
+            { label: '5 min', data: [...state.loadHistory[1]], borderColor: '#eab308', tension: 0.35, pointRadius: 0, borderWidth: 2 },
+            { label: '15 min', data: [...state.loadHistory[2]], borderColor: '#22c55e', tension: 0.35, pointRadius: 0, borderWidth: 2 }
+          ]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            ...chartDefaults.scales,
+            y: { ...chartDefaults.scales.y, min: 0, max: 4 }
+          }
+        }
+      });
+
+      function buildCoreGauges() {
+        const container = document.getElementById('core-gauges');
+        container.innerHTML = '';
+        for (let i = 0; i < CORES; i++) {
+          const pct = state.cores[i];
+          const r = 36;
+          const circ = 2 * Math.PI * r;
+          const offset = circ - (pct / 100) * circ;
+          const color = colorForPct(pct);
+          container.innerHTML += `
+            <div class="gauge" id="gauge-${i}">
+              <div class="gauge-ring">
+                <svg width="90" height="90" viewBox="0 0 90 90">
+                  <circle class="bg" cx="45" cy="45" r="${r}"/>
+                  <circle class="fg" cx="45" cy="45" r="${r}" stroke="${color}"
+                    stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
+                </svg>
+                <div class="gauge-val">${pct.toFixed(0)}%</div>
+              </div>
+              <div class="gauge-label">Core ${i}</div>
+            </div>`;
+        }
+      }
+
+      function updateCoreGauges() {
+        for (let i = 0; i < CORES; i++) {
+          const pct = state.cores[i];
+          const gauge = document.getElementById('gauge-' + i);
+          if (!gauge) continue;
+          const r = 36;
+          const circ = 2 * Math.PI * r;
+          const offset = circ - (pct / 100) * circ;
+          const fg = gauge.querySelector('.fg');
+          fg.setAttribute('stroke-dashoffset', offset);
+          fg.setAttribute('stroke', colorForPct(pct));
+          gauge.querySelector('.gauge-val').textContent = pct.toFixed(0) + '%';
+        }
+      }
+
+      function renderDisks() {
+        const el = document.getElementById('disk-list');
+        el.innerHTML = state.disks.map(d => {
+          const pct = (d.used / d.total) * 100;
+          const color = colorForPct(pct);
+          return `
+            <div class="disk-item">
+              <div class="disk-header">
+                <span class="disk-name">${d.name}</span>
+                <span class="disk-pct">${formatBytes(d.used)} / ${formatBytes(d.total)} (${pct.toFixed(0)}%)</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+            </div>`;
+        }).join('');
+      }
+
+      function renderProcesses() {
+        const sorted = [...state.processes].sort((a, b) => b.cpu - a.cpu);
+        document.getElementById('proc-count').textContent = sorted.length + ' processes';
+        document.getElementById('proc-table').innerHTML = sorted.map(p => `
+          <tr>
+            <td>${p.pid}</td>
+            <td class="proc-name">${p.name}</td>
+            <td>${p.user}</td>
+            <td class="proc-cpu">${p.cpu.toFixed(1)}%</td>
+            <td class="proc-mem">${p.mem.toFixed(1)}%</td>
+            <td><span class="tag tag-${p.status}">${p.status}</span></td>
+          </tr>`).join('');
+      }
+
+      function pushHistory(arr, val) {
+        arr.push(val);
+        if (arr.length > HISTORY_LEN) arr.shift();
+      }
+
+      function tick() {
+        state.cpu = randWalk(state.cpu, 8, 92, 8);
+        state.mem = randWalk(state.mem, 12, 28, 0.4);
+        state.diskIo = randWalk(state.diskIo, 5, 180, 15);
+        state.netDown = randWalk(state.netDown, 2, 85, 6);
+        state.netUp = randWalk(state.netUp, 0.5, 25, 2);
+        state.uptimeSec++;
+
+        state.load = state.load.map((v, i) => randWalk(v, 0.3, 3.5, 0.15 * (3 - i * 0.5)));
+        state.cores = state.cores.map((c, i) =>
+          clamp(lerp(c, state.cpu + (Math.random() - 0.5) * 25, 0.3), 2, 98)
+        );
+
+        state.processes.forEach(p => {
+          p.cpu = clamp(randWalk(p.cpu, 0.1, 25, 3), 0.1, 25);
+          p.mem = clamp(randWalk(p.mem, 0.1, 12, 0.5), 0.1, 12);
+        });
+
+        state.disks.forEach(d => {
+          d.used = clamp(d.used + (Math.random() - 0.48) * 0.05, d.used * 0.99, d.total * 0.95);
+        });
+
+        pushHistory(state.cpuHistory, state.cpu);
+        pushHistory(state.memHistory, state.mem);
+        pushHistory(state.netDownHistory, state.netDown);
+        pushHistory(state.netUpHistory, state.netUp);
+        state.loadHistory.forEach((arr, i) => pushHistory(arr, state.load[i]));
+
+        const memPct = (state.mem / MEM_TOTAL) * 100;
+
+        document.getElementById('cpu-val').textContent = state.cpu.toFixed(1) + '%';
+        document.getElementById('cpu-bar').style.width = state.cpu + '%';
+        document.getElementById('cpu-bar').style.background = colorForPct(state.cpu);
+
+        document.getElementById('mem-val').textContent = state.mem.toFixed(1) + ' GB';
+        document.getElementById('mem-sub').textContent = `of ${MEM_TOTAL} GB (${memPct.toFixed(0)}% used)`;
+        document.getElementById('mem-bar').style.width = memPct + '%';
+        document.getElementById('mem-bar').style.background = colorForPct(memPct);
+
+        document.getElementById('diskio-val').textContent = state.diskIo.toFixed(0) + ' MB/s';
+        document.getElementById('diskio-bar').style.width = Math.min(state.diskIo / 1.8, 100) + '%';
+
+        document.getElementById('uptime-val').textContent = formatUptime(state.uptimeSec);
+
+        document.getElementById('net-down').textContent = state.netDown.toFixed(1) + ' MB/s';
+        document.getElementById('net-up').textContent = state.netUp.toFixed(1) + ' MB/s';
+
+        chartMain.data.datasets[0].data = [...state.cpuHistory];
+        chartMain.data.datasets[1].data = state.memHistory.map(v => (v / MEM_TOTAL) * 100);
+        chartMain.update('none');
+
+        chartNet.data.datasets[0].data = [...state.netDownHistory];
+        chartNet.data.datasets[1].data = [...state.netUpHistory];
+        chartNet.update('none');
+
+        chartLoad.data.datasets[0].data = [...state.loadHistory[0]];
+        chartLoad.data.datasets[1].data = [...state.loadHistory[1]];
+        chartLoad.data.datasets[2].data = [...state.loadHistory[2]];
+        chartLoad.update('none');
+
+        updateCoreGauges();
+        renderDisks();
+        renderProcesses();
+      }
+
+      function updateClock() {
+        const now = new Date();
+        document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', { hour12: false });
+      }
+
+      buildCoreGauges();
+      renderDisks();
+      renderProcesses();
+      tick();
+      updateClock();
+
+      setInterval(tick, TICK_MS);
+      setInterval(updateClock, 1000);
+    })();
+  </script>
+</body>
+</html>

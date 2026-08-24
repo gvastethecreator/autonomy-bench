@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Velocity — First-Person Coaster</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #050810; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; inset: 0; pointer-events: none;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    #title {
+      position: absolute; top: 28px; left: 50%; transform: translateX(-50%);
+      text-align: center; color: rgba(255,255,255,0.92);
+      letter-spacing: 0.35em; font-size: 11px; font-weight: 600;
+      text-transform: uppercase; opacity: 0; animation: fadeTitle 4s ease forwards;
+    }
+    #title span {
+      display: block; font-size: 28px; letter-spacing: 0.12em;
+      margin-top: 6px; font-weight: 300;
+      background: linear-gradient(90deg, #7dd3fc, #c4b5fd, #f9a8d4);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    #speed {
+      position: absolute; bottom: 32px; right: 36px;
+      color: rgba(255,255,255,0.75); font-size: 13px; font-variant-numeric: tabular-nums;
+    }
+    #speed b {
+      font-size: 42px; font-weight: 200; color: #fff;
+      display: block; line-height: 1; margin-bottom: 2px;
+    }
+    #vignette {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+    }
+    @keyframes fadeTitle {
+      0% { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+      15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      75% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div id="title">RIDE<span>VELOCITY</span></div>
+    <div id="speed"><b id="mph">0</b>km/h</div>
+    <div id="vignette"></div>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { Sky } from 'three/addons/objects/Sky.js';
+
+    // ── Scene setup ──────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x8ecae6, 0.0018);
+
+    const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 800);
+    const clock = new THREE.Clock();
+
+    // ── Lighting & sky ───────────────────────────────────────────
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+    sun.position.set(120, 180, 80);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 500;
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -120;
+    sun.shadow.camera.right = sun.shadow.camera.top = 120;
+    scene.add(sun);
+    scene.add(new THREE.AmbientLight(0x6b8cae, 0.35));
+    scene.add(new THREE.HemisphereLight(0x87ceeb, 0x3d5a3a, 0.55));
+
+    const sky = new Sky();
+    sky.scale.setScalar(450000);
+    scene.add(sky);
+    const skyUniforms = sky.material.uniforms;
+    skyUniforms['turbidity'].value = 8;
+    skyUniforms['rayleigh'].value = 1.5;
+    skyUniforms['mieCoefficient'].value = 0.004;
+    skyUniforms['mieDirectionalG'].value = 0.85;
+    const sunPos = new THREE.Vector3();
+    const phi = THREE.MathUtils.degToRad(88);
+    const theta = THREE.MathUtils.degToRad(210);
+    sunPos.setFromSphericalCoords(1, phi, theta);
+    skyUniforms['sunPosition'].value.copy(sunPos);
+    sun.position.copy(sunPos).multiplyScalar(400);
+
+    // ── Track spline ─────────────────────────────────────────────
+    const controlPoints = [
+      new THREE.Vector3(0, 8, 0),
+      new THREE.Vector3(40, 12, 30),
+      new THREE.Vector3(80, 28, 10),
+      new THREE.Vector3(110, 45, -40),
+      new THREE.Vector3(90, 55, -90),
+      new THREE.Vector3(30, 38, -120),
+      new THREE.Vector3(-40, 22, -100),
+      new THREE.Vector3(-90, 35, -50),
+      new THREE.Vector3(-110, 52, 20),
+      new THREE.Vector3(-70, 42, 80),
+      new THREE.Vector3(-10, 18, 110),
+      new THREE.Vector3(50, 10, 80),
+      new THREE.Vector3(70, 6, 30),
+      new THREE.Vector3(30, 4, -10),
+      new THREE.Vector3(0, 8, 0),
+    ];
+
+    const curve = new THREE.CatmullRomCurve3(controlPoints, true, 'centripetal', 0.35);
+    const TRACK_SEGMENTS = 600;
+    const curvePoints = curve.getSpacedPoints(TRACK_SEGMENTS);
+    const curveTangents = [];
+    const curveNormals = [];
+    const curveBinormals = [];
+    const up = new THREE.Vector3(0, 1, 0);
+
+    for (let i = 0; i <= TRACK_SEGMENTS; i++) {
+      const t = i / TRACK_SEGMENTS;
+      const tangent = curve.getTangentAt(t).normalize();
+      const normal = new THREE.Vector3().crossVectors(up, tangent).normalize();
+      if (normal.lengthSq() < 0.001) normal.set(1, 0, 0);
+      const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+      curveTangents.push(tangent.clone());
+      curveNormals.push(normal.clone());
+      curveBinormals.push(binormal.clone());
+    }
+
+    // Banking: tilt normal toward binormal on curves
+    function applyBanking() {
+      for (let i = 0; i <= TRACK_SEGMENTS; i++) {
+        const tPrev = Math.max(0, i - 2) / TRACK_SEGMENTS;
+        const tNext = Math.min(1, i + 2) / TRACK_SEGMENTS;
+        const turn = curve.getTangentAt(tPrev).angleTo(curve.getTangentAt(tNext));
+        const bank = Math.min(turn * 2.8, 0.85);
+        const tangent = curveTangents[i];
+        const binormal = curveBinormals[i];
+        const normal = curveNormals[i];
+        normal.copy(up).applyAxisAngle(tangent, bank * Math.sign(
+          tangent.x * curve.getTangentAt(Math.min(1, i / TRACK_SEGMENTS + 0.01)).z -
+          tangent.z * curve.getTangentAt(Math.min(1, i / TRACK_SEGMENTS + 0.01)).x
+        ));
+        if (normal.lengthSq() < 0.001) normal.copy(binormal);
+        normal.normalize();
+        binormal.crossVectors(tangent, normal).normalize();
+      }
+    }
+    applyBanking();
+
+    // ── Track geometry (dual rails + cross ties) ─────────────────
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xc0c8d4, metalness: 0.85, roughness: 0.25 });
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.9 });
+    const trackGroup = new THREE.Group();
+
+    const RAIL_GAUGE = 1.4;
+    const RAIL_RADIUS = 0.07;
+    const railGeo = new THREE.CylinderGeometry(RAIL_RADIUS, RAIL_RADIUS, 1, 8);
+
+    function buildRail(side) {
+      const positions = [];
+      const indices = [];
+      const segments = TRACK_SEGMENTS;
+      for (let i = 0; i <= segments; i++) {
+        const p = curvePoints[i];
+        const n = curveNormals[i];
+        const b = curveBinormals[i];
+        const offset = n.clone().multiplyScalar(side * RAIL_GAUGE * 0.5);
+        const pos = p.clone().add(offset);
+        positions.push(pos.x, pos.y + 0.15, pos.z);
+        if (i < segments) {
+          const a = i, c = i + 1;
+          indices.push(a, c, a); // placeholder — use tube instead
+        }
+      }
+      const path = new THREE.CatmullRomCurve3(
+        positions.filter((_, idx) => idx % 3 === 0 || true).reduce((arr, _, i, src) => {
+          if (i % 3 === 0) arr.push(new THREE.Vector3(src[i], src[i+1], src[i+2]));
+          return arr;
+        }, [])
+      );
+      // Tube along offset curve
+      const offsetPoints = [];
+      for (let i = 0; i <= segments; i++) {
+        const p = curvePoints[i];
+        const n = curveNormals[i];
+        offsetPoints.push(p.clone().add(n.clone().multiplyScalar(side * RAIL_GAUGE * 0.5)).add(new THREE.Vector3(0, 0.15, 0)));
+      }
+      const railCurve = new THREE.CatmullRomCurve3(offsetPoints, true, 'centripetal', 0.35);
+      const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(railCurve, segments, RAIL_RADIUS, 8, true),
+        railMat
+      );
+      tube.castShadow = true;
+      trackGroup.add(tube);
+    }
+
+    buildRail(1);
+    buildRail(-1);
+
+    // Cross ties
+    const tieGeo = new THREE.BoxGeometry(RAIL_GAUGE + 0.5, 0.12, 0.35);
+    for (let i = 0; i <= TRACK_SEGMENTS; i += 3) {
+      const p = curvePoints[i];
+      const n = curveNormals[i];
+      const b = curveBinormals[i];
+      const tie = new THREE.Mesh(tieGeo, tieMat);
+      tie.position.copy(p).add(new THREE.Vector3(0, 0.05, 0));
+      const m = new THREE.Matrix4();
+      m.makeBasis(b, up, n);
+      tie.setRotationFromMatrix(m);
+      tie.castShadow = true;
+      tie.receiveShadow = true;
+      trackGroup.add(tie);
+    }
+
+    scene.add(trackGroup);
+
+    // ── Supports ─────────────────────────────────────────────────
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.6, roughness: 0.45 });
+    for (let i = 0; i <= TRACK_SEGMENTS; i += 12) {
+      const p = curvePoints[i];
+      if (p.y < 3) continue;
+      const h = p.y;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, h, 6), supportMat);
+      pole.position.set(p.x, h / 2, p.z);
+      pole.castShadow = true;
+      pole.receiveShadow = true;
+      scene.add(pole);
+      // Cross brace
+      if (h > 15) {
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 2.2), supportMat);
+        brace.position.set(p.x, h * 0.65, p.z);
+        brace.rotation.y = Math.atan2(curveTangents[i].x, curveTangents[i].z);
+        scene.add(brace);
+      }
+    }
+
+    // ── Ground & scenery ───────────────────────────────────────────
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(600, 600, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x3d6b4f, roughness: 0.95 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const treeMat = new THREE.MeshStandardMaterial({ color: 0x2d5a3d, roughness: 0.9 });
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.95 });
+    for (let i = 0; i < 180; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 200;
+      const tx = Math.cos(angle) * dist;
+      const tz = Math.sin(angle) * dist;
+      if (Math.hypot(tx, tz) < 18) continue;
+      const th = 2 + Math.random() * 5;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.25, th * 0.4, 5), trunkMat);
+      trunk.position.set(tx, th * 0.2, tz);
+      trunk.castShadow = true;
+      scene.add(trunk);
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(1.2 + Math.random(), th * 0.7, 6), treeMat);
+      crown.position.set(tx, th * 0.55, tz);
+      crown.castShadow = true;
+      scene.add(crown);
+    }
+
+    // Distant hills
+    const hillMat = new THREE.MeshStandardMaterial({ color: 0x4a7c59, roughness: 1 });
+    for (let i = 0; i < 8; i++) {
+      const hill = new THREE.Mesh(
+        new THREE.SphereGeometry(40 + Math.random() * 30, 16, 12),
+        hillMat
+      );
+      const a = (i / 8) * Math.PI * 2;
+      hill.position.set(Math.cos(a) * 220, -8, Math.sin(a) * 220);
+      hill.scale.y = 0.35;
+      scene.add(hill);
+    }
+
+    // ── Ride physics ───────────────────────────────────────────────
+    let progress = 0;
+    let velocity = 0;
+    const BASE_SPEED = 0.00022;
+    const GRAVITY_GAIN = 0.00055;
+    const DRAG = 0.9992;
+    const MIN_V = 0.00012;
+    const MAX_V = 0.00055;
+
+    const camPos = new THREE.Vector3();
+    const lookTarget = new THREE.Vector3();
+    const tempTan = new THREE.Vector3();
+    const tempN = new THREE.Vector3();
+    const tempB = new THREE.Vector3();
+
+    const mphEl = document.getElementById('mph');
+    let shake = 0;
+
+    function getFrameAt(t) {
+      const idx = t * TRACK_SEGMENTS;
+      const i0 = Math.floor(idx) % (TRACK_SEGMENTS + 1);
+      const i1 = (i0 + 1) % (TRACK_SEGMENTS + 1);
+      const f = idx - Math.floor(idx);
+      const p = new THREE.Vector3().lerpVectors(curvePoints[i0], curvePoints[i1], f);
+      tempTan.lerpVectors(curveTangents[i0], curveTangents[i1], f).normalize();
+      tempN.lerpVectors(curveNormals[i0], curveNormals[i1], f).normalize();
+      tempB.lerpVectors(curveBinormals[i0], curveBinormals[i1], f).normalize();
+      return { p, tangent: tempTan.clone(), normal: tempN.clone(), binormal: tempB.clone() };
+    }
+
+    function updateRide(dt) {
+      const t = progress % 1;
+      const tAhead = (progress + 0.008) % 1;
+      const frame = getFrameAt(t);
+      const frameAhead = getFrameAt(tAhead);
+
+      // Height-based acceleration
+      const tBehind = (progress - 0.012 + 1) % 1;
+      const hNow = getFrameAt(t).p.y;
+      const hBehind = getFrameAt(tBehind).p.y;
+      const slope = (hNow - hBehind) / 0.012;
+      velocity += (-slope * GRAVITY_GAIN + BASE_SPEED * 0.15) * dt * 60;
+      velocity *= DRAG;
+      velocity = THREE.MathUtils.clamp(velocity, MIN_V, MAX_V);
+      progress += velocity * dt * 60;
+      if (progress >= 1) progress -= 1;
+
+      // Camera on track with head offset
+      const headHeight = 1.05;
+      camPos.copy(frame.p)
+        .add(frame.normal.clone().multiplyScalar(0))
+        .add(new THREE.Vector3(0, headHeight, 0));
+
+      // Subtle lateral sway & shake at high speed
+      shake = THREE.MathUtils.lerp(shake, velocity / MAX_V, 0.08);
+      const sway = Math.sin(clock.elapsedTime * 14) * 0.04 * shake;
+      camPos.add(frame.binormal.clone().multiplyScalar(sway));
+
+      lookTarget.copy(frameAhead.p).add(new THREE.Vector3(0, headHeight * 0.85, 0));
+
+      // Orient camera with track bank
+      const viewDir = lookTarget.clone().sub(camPos).normalize();
+      const right = new THREE.Vector3().crossVectors(viewDir, frame.normal).normalize();
+      const correctedUp = new THREE.Vector3().crossVectors(right, viewDir).normalize();
+      const m = new THREE.Matrix4().makeBasis(right, correctedUp, viewDir.negate());
+      camera.position.copy(camPos);
+      camera.quaternion.setFromRotationMatrix(m);
+
+      // Dynamic FOV
+      const targetFov = 72 + shake * 18;
+      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.06);
+      camera.updateProjectionMatrix();
+
+      const kmh = Math.round(velocity / MAX_V * 110 + 15);
+      mphEl.textContent = kmh;
+    }
+
+    // ── Render loop ──────────────────────────────────────────────
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      updateRide(dt);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

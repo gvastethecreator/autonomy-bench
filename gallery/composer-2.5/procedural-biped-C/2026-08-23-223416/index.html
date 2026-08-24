@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lumina Strider</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e17; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: fixed; inset: 0; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: clamp(16px, 3vw, 36px);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: rgba(220, 235, 255, 0.92);
+  }
+  .title-block h1 {
+    font-size: clamp(1.4rem, 3vw, 2.2rem);
+    font-weight: 300; letter-spacing: 0.28em; text-transform: uppercase;
+    text-shadow: 0 0 40px rgba(100, 200, 255, 0.4);
+  }
+  .title-block p {
+    margin-top: 8px; font-size: 0.82rem; letter-spacing: 0.12em;
+    color: rgba(160, 190, 220, 0.65);
+  }
+  .hud {
+    align-self: flex-end; text-align: right;
+    font-size: 0.72rem; letter-spacing: 0.08em;
+    color: rgba(140, 170, 200, 0.5);
+    line-height: 1.6;
+  }
+  .vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(5, 8, 14, 0.65) 100%);
+  }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <div class="title-block">
+    <h1>Lumina Strider</h1>
+    <p>Procedural biped &middot; twilight march</p>
+  </div>
+  <div class="hud">
+    <span id="phase-label">WALK CYCLE</span><br>
+    <span id="speed-label">PACE 1.0&times;</span>
+  </div>
+</div>
+<div class="vignette"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ── Scene setup ──────────────────────────────────────────────
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e17);
+scene.fog = new THREE.FogExp2(0x0a0e17, 0.018);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(5, 3.2, 7);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.target.set(0, 1.6, 0);
+controls.minDistance = 3;
+controls.maxDistance = 18;
+controls.maxPolarAngle = Math.PI * 0.48;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+
+// ── Lighting ─────────────────────────────────────────────────
+const hemi = new THREE.HemisphereLight(0x4466aa, 0x112233, 0.55);
+scene.add(hemi);
+
+const keyLight = new THREE.DirectionalLight(0xffeedd, 1.4);
+keyLight.position.set(6, 12, 4);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 40;
+keyLight.shadow.camera.left = -12;
+keyLight.shadow.camera.right = 12;
+keyLight.shadow.camera.top = 12;
+keyLight.shadow.camera.bottom = -12;
+keyLight.shadow.bias = -0.0004;
+scene.add(keyLight);
+
+const rimLight = new THREE.DirectionalLight(0x66ccff, 0.7);
+rimLight.position.set(-8, 5, -6);
+scene.add(rimLight);
+
+const fillLight = new THREE.PointLight(0x3388ff, 0.4, 20);
+fillLight.position.set(-3, 2, 3);
+scene.add(fillLight);
+
+// ── Ground & environment ─────────────────────────────────────
+const groundGeo = new THREE.PlaneGeometry(80, 80, 64, 64);
+const groundPos = groundGeo.attributes.position;
+for (let i = 0; i < groundPos.count; i++) {
+  const x = groundPos.getX(i), y = groundPos.getY(i);
+  const h = Math.sin(x * 0.15) * 0.08 + Math.cos(y * 0.12) * 0.06
+    + (Math.random() - 0.5) * 0.03;
+  groundPos.setZ(i, h);
+}
+groundGeo.computeVertexNormals();
+
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x1a2535,
+  roughness: 0.92,
+  metalness: 0.05,
+  flatShading: false,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Moss patches
+const mossGroup = new THREE.Group();
+for (let i = 0; i < 120; i++) {
+  const r = 2 + Math.random() * 18;
+  const a = Math.random() * Math.PI * 2;
+  const mx = Math.cos(a) * r, mz = Math.sin(a) * r;
+  const moss = new THREE.Mesh(
+    new THREE.CircleGeometry(0.3 + Math.random() * 0.8, 8),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color().setHSL(0.32 + Math.random() * 0.06, 0.5, 0.25 + Math.random() * 0.1),
+      roughness: 1, side: THREE.DoubleSide,
+    })
+  );
+  moss.rotation.x = -Math.PI / 2;
+  moss.position.set(mx, 0.02, mz);
+  moss.rotation.z = Math.random() * Math.PI;
+  mossGroup.add(moss);
+}
+scene.add(mossGroup);
+
+// Crystal pillars
+function makeCrystal(x, z, scale) {
+  const g = new THREE.ConeGeometry(0.15 * scale, 1.2 * scale, 5);
+  const m = new THREE.MeshStandardMaterial({
+    color: 0x4488cc, emissive: 0x113355, emissiveIntensity: 0.6,
+    roughness: 0.2, metalness: 0.3, transparent: true, opacity: 0.85,
+  });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.position.set(x, 0.6 * scale, z);
+  mesh.rotation.set(Math.random() * 0.2, Math.random() * Math.PI, Math.random() * 0.15);
+  mesh.castShadow = true;
+  return mesh;
+}
+const crystals = new THREE.Group();
+[[-6, -4, 1.2], [7, -3, 0.9], [-4, 6, 1.5], [5, 5, 1.1], [-8, 2, 0.7], [9, 1, 1.3]].forEach(([x, z, s]) => {
+  crystals.add(makeCrystal(x, z, s));
+  if (s > 1) crystals.add(makeCrystal(x + 0.4, z + 0.3, s * 0.6));
+});
+scene.add(crystals);
+
+// Firefly particles
+const fireflyCount = 180;
+const fireflyGeo = new THREE.BufferGeometry();
+const fireflyPos = new Float32Array(fireflyCount * 3);
+const fireflyPhases = new Float32Array(fireflyCount);
+for (let i = 0; i < fireflyCount; i++) {
+  fireflyPos[i * 3] = (Math.random() - 0.5) * 30;
+  fireflyPos[i * 3 + 1] = 0.5 + Math.random() * 4;
+  fireflyPos[i * 3 + 2] = (Math.random() - 0.5) * 30;
+  fireflyPhases[i] = Math.random() * Math.PI * 2;
+}
+fireflyGeo.setAttribute('position', new THREE.BufferAttribute(fireflyPos, 3));
+const fireflyMat = new THREE.PointsMaterial({
+  color: 0xaaffcc, size: 0.06, transparent: true, opacity: 0.7,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const fireflies = new THREE.Points(fireflyGeo, fireflyMat);
+scene.add(fireflies);
+
+// ── Materials ────────────────────────────────────────────────
+const bodyMat = new THREE.MeshStandardMaterial({
+  color: 0x2a3a4a, roughness: 0.55, metalness: 0.35,
+});
+const jointMat = new THREE.MeshStandardMaterial({
+  color: 0x1a2a3a, roughness: 0.4, metalness: 0.5,
+});
+const glowMat = new THREE.MeshStandardMaterial({
+  color: 0x44ddff, emissive: 0x22aacc, emissiveIntensity: 2.0,
+  roughness: 0.3, metalness: 0.1,
+});
+const membraneMat = new THREE.MeshStandardMaterial({
+  color: 0x336677, emissive: 0x112233, emissiveIntensity: 0.3,
+  roughness: 0.7, metalness: 0.1, transparent: true, opacity: 0.75,
+  side: THREE.DoubleSide,
+});
+const eyeMat = new THREE.MeshStandardMaterial({
+  color: 0xffeedd, emissive: 0xffaa66, emissiveIntensity: 1.5,
+  roughness: 0.2, metalness: 0.0,
+});
+
+// ── Biped creature ───────────────────────────────────────────
+const creature = new THREE.Group();
+scene.add(creature);
+
+const torso = new THREE.Group();
+creature.add(torso);
+
+// Pelvis
+const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.28, 0.38), bodyMat);
+pelvis.castShadow = true;
+torso.add(pelvis);
+
+// Abdomen segments
+for (let i = 0; i < 3; i++) {
+  const seg = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32 - i * 0.04, 12, 10),
+    bodyMat
+  );
+  seg.scale.set(1, 0.7, 1.1);
+  seg.position.y = 0.28 + i * 0.22;
+  seg.castShadow = true;
+  torso.add(seg);
+  const glowRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.28 - i * 0.03, 0.025, 8, 16),
+    glowMat
+  );
+  glowRing.rotation.x = Math.PI / 2;
+  glowRing.position.y = 0.28 + i * 0.22;
+  torso.add(glowRing);
+}
+
+// Chest / thorax
+const chest = new THREE.Mesh(new THREE.SphereGeometry(0.42, 14, 12), bodyMat);
+chest.scale.set(1.1, 0.85, 0.9);
+chest.position.y = 1.05;
+chest.castShadow = true;
+torso.add(chest);
+
+const chestGlow = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.03, 8, 20), glowMat);
+chestGlow.rotation.x = Math.PI / 2;
+chestGlow.position.y = 1.05;
+torso.add(chestGlow);
+
+// Head
+const head = new THREE.Group();
+head.position.y = 1.55;
+torso.add(head);
+
+const skull = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 12), bodyMat);
+skull.scale.set(1.1, 0.95, 1.3);
+skull.castShadow = true;
+head.add(skull);
+
+const crest = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.55, 5), membraneMat);
+crest.position.set(0, 0.35, -0.05);
+crest.rotation.x = -0.3;
+head.add(crest);
+
+const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), eyeMat);
+eyeL.position.set(-0.12, 0.05, 0.22);
+head.add(eyeL);
+const eyeR = eyeL.clone();
+eyeR.position.x = 0.12;
+head.add(eyeR);
+
+const antennaL = new THREE.Group();
+antennaL.position.set(-0.15, 0.28, 0.1);
+head.add(antennaL);
+const antSeg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.35, 6), jointMat);
+antSeg1.position.y = 0.17;
+antennaL.add(antSeg1);
+const antTipL = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), glowMat);
+antTipL.position.y = 0.38;
+antennaL.add(antTipL);
+
+const antennaR = antennaL.clone();
+antennaR.position.x = 0.15;
+head.add(antennaR);
+
+// Back membrane sails
+function makeSail(w, h, xOff) {
+  const g = new THREE.PlaneGeometry(w, h, 4, 6);
+  const m = membraneMat.clone();
+  const sail = new THREE.Mesh(g, m);
+  sail.position.set(xOff, 0.7, -0.25);
+  sail.rotation.y = xOff > 0 ? -0.3 : 0.3;
+  sail.rotation.x = -0.4;
+  return sail;
+}
+const sailL = makeSail(0.7, 1.0, -0.35);
+const sailR = makeSail(0.7, 1.0, 0.35);
+torso.add(sailL, sailR);
+
+// Arms
+function buildArm(side) {
+  const arm = new THREE.Group();
+  arm.position.set(side * 0.48, 0.95, 0);
+  const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), jointMat);
+  arm.add(shoulder);
+  const upperArm = new THREE.Group();
+  upperArm.position.y = -0.05;
+  arm.add(upperArm);
+  const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.45, 8), bodyMat);
+  upper.position.y = -0.22;
+  upper.castShadow = true;
+  upperArm.add(upper);
+  const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), jointMat);
+  elbow.position.y = -0.45;
+  upperArm.add(elbow);
+  const foreArm = new THREE.Group();
+  foreArm.position.y = -0.45;
+  upperArm.add(foreArm);
+  const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.035, 0.4, 8), bodyMat);
+  fore.position.y = -0.2;
+  fore.castShadow = true;
+  foreArm.add(fore);
+  const claw = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 5), glowMat);
+  claw.position.y = -0.44;
+  claw.rotation.x = Math.PI;
+  foreArm.add(claw);
+  return { root: arm, upperArm, foreArm };
+}
+const armL = buildArm(-1);
+const armR = buildArm(1);
+torso.add(armL.root, armR.root);
+
+// Legs
+function buildLeg(side) {
+  const leg = new THREE.Group();
+  leg.position.set(side * 0.22, -0.14, 0);
+  const hip = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), jointMat);
+  leg.add(hip);
+  const thigh = new THREE.Group();
+  thigh.position.y = -0.06;
+  leg.add(thigh);
+  const femur = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.55, 10), bodyMat);
+  femur.position.y = -0.28;
+  femur.castShadow = true;
+  thigh.add(femur);
+  const kneeGlow = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.015, 6, 12), glowMat);
+  kneeGlow.rotation.x = Math.PI / 2;
+  kneeGlow.position.y = -0.55;
+  thigh.add(kneeGlow);
+  const shin = new THREE.Group();
+  shin.position.y = -0.55;
+  thigh.add(shin);
+  const tibia = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.05, 0.52, 10), bodyMat);
+  tibia.position.y = -0.26;
+  tibia.castShadow = true;
+  shin.add(tibia);
+  const foot = new THREE.Group();
+  foot.position.y = -0.52;
+  shin.add(foot);
+  const footPad = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.06, 0.28), jointMat);
+  footPad.position.set(0, -0.03, 0.06);
+  footPad.castShadow = true;
+  foot.add(footPad);
+  const toe1 = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.1, 4), glowMat);
+  toe1.position.set(-0.04, -0.04, 0.18);
+  toe1.rotation.x = 0.5;
+  foot.add(toe1);
+  const toe2 = toe1.clone(); toe2.position.set(0.04, -0.04, 0.18);
+  foot.add(toe2);
+  return { root: leg, thigh, shin, foot, side };
+}
+const legL = buildLeg(-1);
+const legR = buildLeg(1);
+creature.add(legL.root, legR.root);
+
+// Tail
+const tail = new THREE.Group();
+tail.position.set(0, 0.1, -0.2);
+creature.add(tail);
+const tailSegs = [];
+for (let i = 0; i < 5; i++) {
+  const seg = new THREE.Group();
+  seg.position.z = -i * 0.18;
+  seg.position.y = -i * 0.04;
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12 - i * 0.015, 8, 6),
+    i % 2 === 0 ? bodyMat : jointMat
+  );
+  mesh.scale.set(0.8, 0.6, 1.2);
+  mesh.castShadow = true;
+  seg.add(mesh);
+  if (i < 4) {
+    const parent = tailSegs[i - 1] || tail;
+    parent.add(seg);
+  } else {
+    tail.add(seg);
+  }
+  tailSegs.push(seg);
+}
+const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), glowMat);
+tailTip.position.z = -0.15;
+tailSegs[4].add(tailTip);
+
+// ── Procedural walk cycle ────────────────────────────────────
+const WALK = {
+  speed: 1.0,
+  strideLength: 0.9,
+  stepHeight: 0.22,
+  hipSwing: 0.35,
+  kneeLift: 1.1,
+  bodyBob: 0.06,
+  bodySway: 0.04,
+  bodyRoll: 0.06,
+  armSwing: 0.55,
+  tailWag: 0.25,
+};
+
+let walkPhase = 0;
+let creatureX = 0;
+const pathRadius = 0;
+
+function easeSmooth(t) {
+  return t * t * (3 - 2 * t);
+}
+
+function legPhaseOffset(side) {
+  return side === -1 ? 0 : Math.PI;
+}
+
+function animateLeg(leg, phase, side, dt) {
+  const offset = legPhaseOffset(side);
+  const p = (phase + offset) % (Math.PI * 2);
+  const normalized = p / (Math.PI * 2);
+
+  const isSwing = normalized < 0.5;
+  const subPhase = isSwing ? normalized * 2 : (normalized - 0.5) * 2;
+  const eased = easeSmooth(subPhase);
+
+  let hipX, kneeX, footY, footZ;
+
+  if (isSwing) {
+    hipX = THREE.MathUtils.lerp(WALK.hipSwing * 0.3, -WALK.hipSwing * 0.8, eased);
+    kneeX = THREE.MathUtils.lerp(0.2, WALK.kneeLift, Math.sin(subPhase * Math.PI));
+    footY = Math.sin(subPhase * Math.PI) * WALK.stepHeight;
+    footZ = THREE.MathUtils.lerp(WALK.strideLength * 0.4, -WALK.strideLength * 0.5, eased);
+  } else {
+    hipX = THREE.MathUtils.lerp(-WALK.hipSwing * 0.8, WALK.hipSwing * 0.3, eased);
+    kneeX = THREE.MathUtils.lerp(WALK.kneeLift * 0.3, 0.1, eased);
+    footY = 0;
+    footZ = THREE.MathUtils.lerp(-WALK.strideLength * 0.5, WALK.strideLength * 0.4, eased);
+  }
+
+  leg.thigh.rotation.x = hipX;
+  leg.shin.rotation.x = -kneeX;
+  leg.foot.rotation.x = -(hipX + kneeX) * 0.3;
+  leg.foot.position.y = -0.52 + footY;
+  leg.foot.position.z = footZ;
+}
+
+function animateArm(arm, phase, side) {
+  const offset = legPhaseOffset(side);
+  const swing = Math.sin(phase + offset) * WALK.armSwing;
+  arm.upperArm.rotation.x = swing;
+  arm.foreArm.rotation.x = Math.max(0, -swing * 0.6);
+}
+
+function animateTail(phase) {
+  tailSegs.forEach((seg, i) => {
+    const lag = i * 0.35;
+    seg.rotation.y = Math.sin(phase * 1.2 - lag) * WALK.tailWag * (1 - i * 0.12);
+    seg.rotation.x = Math.sin(phase * 0.8 - lag) * 0.08;
+  });
+}
+
+function animateTorso(phase) {
+  const bob = Math.abs(Math.sin(phase * 2)) * WALK.bodyBob;
+  torso.position.y = bob;
+  torso.rotation.z = Math.sin(phase) * WALK.bodyRoll;
+  torso.rotation.x = Math.sin(phase * 2) * 0.03;
+  torso.rotation.y = Math.sin(phase * 0.5) * WALK.bodySway;
+
+  sailL.rotation.z = Math.sin(phase * 1.5) * 0.12 - 0.1;
+  sailR.rotation.z = -Math.sin(phase * 1.5) * 0.12 + 0.1;
+
+  head.rotation.y = Math.sin(phase * 0.5) * 0.08;
+  head.rotation.x = Math.sin(phase * 1.2) * 0.04;
+
+  antennaL.rotation.z = Math.sin(phase * 2.5) * 0.25;
+  antennaL.rotation.x = Math.sin(phase * 1.8) * 0.15;
+  antennaR.rotation.z = -Math.sin(phase * 2.5 + 0.5) * 0.25;
+  antennaR.rotation.x = Math.sin(phase * 1.8 + 0.3) * 0.15;
+}
+
+// ── Post-processing ──────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.55, 0.4, 0.85
+);
+composer.addPass(bloom);
+
+// ── Animation loop ───────────────────────────────────────────
+const clock = new THREE.Clock();
+const phaseLabel = document.getElementById('phase-label');
+const speedLabel = document.getElementById('speed-label');
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const elapsed = clock.elapsedTime;
+
+  walkPhase += dt * WALK.speed * 4.5;
+  creatureX += dt * WALK.speed * 0.6;
+
+  // Circular path
+  const pathT = elapsed * 0.15 * WALK.speed;
+  creature.position.x = Math.sin(pathT) * 3;
+  creature.position.z = Math.cos(pathT) * 3;
+  creature.rotation.y = Math.atan2(
+    Math.cos(pathT) * 3 - creature.position.z,
+    Math.sin(pathT + 0.05) * 3 - creature.position.x
+  ) + Math.PI / 2;
+
+  animateLeg(legL, walkPhase, -1, dt);
+  animateLeg(legR, walkPhase, 1, dt);
+  animateArm(armL, walkPhase, -1);
+  animateArm(armR, walkPhase, 1);
+  animateTail(walkPhase);
+  animateTorso(walkPhase);
+
+  // Ground height follow
+  const gx = creature.position.x, gz = creature.position.z;
+  const groundY = Math.sin(gx * 0.15) * 0.08 + Math.cos(gz * 0.12) * 0.06;
+  creature.position.y = groundY;
+
+  // Fireflies
+  const fp = fireflyGeo.attributes.position.array;
+  for (let i = 0; i < fireflyCount; i++) {
+    const ph = fireflyPhases[i];
+    fp[i * 3 + 1] += Math.sin(elapsed * 0.8 + ph) * 0.002;
+    fp[i * 3] += Math.cos(elapsed * 0.3 + ph) * 0.001;
+    fireflyMat.opacity = 0.4 + Math.sin(elapsed * 2 + ph) * 0.3;
+  }
+  fireflyGeo.attributes.position.needsUpdate = true;
+
+  // Crystal pulse
+  crystals.children.forEach((c, i) => {
+    c.material.emissiveIntensity = 0.4 + Math.sin(elapsed * 1.5 + i) * 0.3;
+  });
+
+  // Glow pulse on creature
+  glowMat.emissiveIntensity = 1.6 + Math.sin(elapsed * 3) * 0.4;
+
+  // Breathing pace variation
+  WALK.speed = 1.0 + Math.sin(elapsed * 0.2) * 0.08;
+
+  controls.target.lerp(
+    new THREE.Vector3(creature.position.x, 1.6 + groundY, creature.position.z),
+    0.03
+  );
+
+  controls.update();
+  composer.render();
+
+  const cyclePct = ((walkPhase % (Math.PI * 2)) / (Math.PI * 2) * 100).toFixed(0);
+  phaseLabel.textContent = `CYCLE ${cyclePct}%`;
+  speedLabel.textContent = `PACE ${WALK.speed.toFixed(2)}×`;
+}
+
+animate();
+
+// ── Resize ───────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

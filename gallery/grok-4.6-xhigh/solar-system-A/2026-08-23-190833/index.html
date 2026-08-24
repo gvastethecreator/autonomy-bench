@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="A desk-scale solar system. Orbital periods are true; distances are compressed.">
+  <title>Orrery — a miniature solar system</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --void: #07080c;
+      --panel: #16140f;
+      --panel-2: #1e1b14;
+      --ink: #efe6d4;
+      --ink-muted: #b7ad98;
+      --ink-faint: #8a8170;
+      --brass: #d4b37a;
+      --brass-deep: #9a7844;
+      --line: rgba(239, 230, 212, 0.14);
+      --line-strong: rgba(239, 230, 212, 0.28);
+      --focus: #f0d9a4;
+      --danger: #e8b4a0;
+      --display: "Iowan Old Style", Palatino, "Palatino Linotype", "Times New Roman", serif;
+      --text: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+      --pad: max(16px, env(safe-area-inset-left));
+      --pad-r: max(16px, env(safe-area-inset-right));
+      --pad-t: max(14px, env(safe-area-inset-top));
+      --pad-b: max(14px, env(safe-area-inset-bottom));
+      --radius-panel: 20px;
+      --radius-btn: 8px;
+      --ease: cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--void);
+      color: var(--ink);
+      font-family: var(--text);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+    body { overflow: hidden; }
+
+    .skip {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 30;
+      padding: 8px 14px;
+      background: var(--panel);
+      color: var(--ink);
+      border: 2px solid var(--brass);
+      border-radius: var(--radius-btn);
+      text-decoration: none;
+      transform: translateY(-120%);
+    }
+    .skip:focus { transform: none; }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      outline: none;
+    }
+
+    .hud {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      z-index: 4;
+    }
+    .hud > * { pointer-events: auto; }
+
+    .plaque {
+      position: absolute;
+      top: var(--pad-t);
+      left: var(--pad);
+      max-width: min(36ch, calc(100% - 180px));
+    }
+    .plaque .eyebrow {
+      margin: 0 0 4px;
+      color: var(--brass);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+    .lede {
+      margin: 6px 0 0;
+      color: var(--ink-muted);
+      font-size: 13px;
+      max-width: 34ch;
+    }
+
+    .clock {
+      position: absolute;
+      top: var(--pad-t);
+      right: var(--pad-r);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .clock time, .clock .rate {
+      display: block;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--ink-muted);
+    }
+    .clock .years {
+      font-family: var(--display);
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .inspector {
+      position: absolute;
+      left: var(--pad);
+      top: 132px;
+      width: min(280px, calc(100vw - 32px));
+      padding: 12px 14px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-panel);
+    }
+    .inspector[hidden] { display: none; }
+    .inspector h2 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+    .kicker {
+      margin: 0 0 2px;
+      color: var(--brass);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .fact {
+      margin: 8px 0 0;
+      color: var(--ink-muted);
+      font-size: 13px;
+    }
+    dl {
+      display: grid;
+      grid-template-columns: 7.5ch 1fr;
+      gap: 4px 10px;
+      margin: 10px 0 0;
+      font-size: 12px;
+    }
+    dt { color: var(--ink-faint); }
+    dd {
+      margin: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .dock {
+      position: absolute;
+      left: var(--pad);
+      right: var(--pad-r);
+      bottom: var(--pad-b);
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-panel);
+    }
+
+    .rail {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+      padding: 2px;
+    }
+    .rail button {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 52px;
+      min-height: 44px;
+      padding: 8px 8px 6px;
+      color: var(--ink-muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      font: 600 11px/1 var(--text);
+      cursor: pointer;
+    }
+    .rail button:hover { color: var(--ink); background: var(--panel-2); }
+    .rail button[aria-current="true"] {
+      color: var(--ink);
+      border-color: var(--line-strong);
+      background: var(--panel-2);
+    }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 10px;
+    }
+    button.ctl, .toggle {
+      min-height: 40px;
+      padding: 8px 12px;
+      color: var(--ink);
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-btn);
+      font: 600 13px/1 var(--text);
+      cursor: pointer;
+    }
+    button.ctl:hover, .toggle:hover { border-color: var(--line-strong); }
+    button.ctl:active, .toggle:active, .rail button:active { transform: scale(0.96); }
+    button.ctl[aria-pressed="true"], .toggle[aria-pressed="true"] {
+      border-color: var(--brass-deep);
+      color: var(--brass);
+    }
+    .grow { flex: 1 1 180px; min-width: 140px; }
+    label.slider {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--ink-faint);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--brass);
+      height: 28px;
+    }
+
+    .hint {
+      position: absolute;
+      right: var(--pad-r);
+      top: 88px;
+      max-width: 22ch;
+      color: var(--ink-faint);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .labels {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 3;
+    }
+    .label {
+      position: absolute;
+      left: 0;
+      top: 0;
+      padding: 2px 0 0 10px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-shadow: 0 1px 8px #07080c;
+      white-space: nowrap;
+      will-change: transform;
+    }
+    .label small {
+      display: block;
+      color: var(--ink-muted);
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .fatal, .boot {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--void);
+      text-align: center;
+    }
+    .boot { background: transparent; pointer-events: none; color: var(--ink-muted); }
+    .fatal h2 { font-family: var(--display); margin: 0 0 8px; }
+    .fatal[hidden], .boot[hidden] { display: none; }
+
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    @media (max-width: 820px) {
+      .plaque { max-width: calc(100% - 24px); }
+      .clock { top: auto; bottom: auto; right: var(--pad-r); top: var(--pad-t); }
+      .inspector {
+        top: auto;
+        bottom: calc(var(--pad-b) + 148px);
+        width: min(100% - 32px, 360px);
+      }
+      .hint { display: none; }
+      h1 { font-size: 28px; }
+    }
+
+    @media (max-width: 560px) {
+      .lede { display: none; }
+      .inspector { bottom: calc(var(--pad-b) + 168px); }
+      .clock .years { font-size: 18px; }
+    }
+
+    @media (hover: none) {
+      .rail button:hover, button.ctl:hover { background: var(--panel-2); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      button.ctl:active, .toggle:active, .rail button:active { transform: none; }
+    }
+
+    @media (forced-colors: active) {
+      .inspector, .dock, button.ctl, .toggle {
+        border: 1px solid ButtonText;
+        background: Canvas;
+        color: CanvasText;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to orrery</a>
+  <canvas id="stage" tabindex="0" aria-label="Interactive miniature solar system"></canvas>
+  <div class="labels" id="labels" aria-hidden="true"></div>
+
+  <div class="hud">
+    <header class="plaque">
+      <p class="eyebrow">Desk-scale model</p>
+      <h1>Orrery</h1>
+      <p class="lede">Orbital periods are true. Distances and most diameters are compressed so the system fits on a table.</p>
+    </header>
+
+    <div class="clock" aria-live="off">
+      <span class="years" id="yearReadout">0.00 yr</span>
+      <time id="dateReadout" datetime="2026-08-23">23 Aug 2026</time>
+      <span class="rate" id="rateReadout">1 s = 20 d</span>
+    </div>
+
+    <p class="hint" id="hint">Drag to orbit · scroll to zoom · click a world</p>
+
+    <aside class="inspector" id="inspector" hidden>
+      <p class="kicker" id="classReadout">Star</p>
+      <h2 id="nameReadout">Sun</h2>
+      <dl>
+        <dt>Period</dt><dd id="periodReadout">—</dd>
+        <dt>Spin</dt><dd id="spinReadout">—</dd>
+        <dt>Moons</dt><dd id="moonReadout">—</dd>
+      </dl>
+      <p class="fact" id="factReadout"></p>
+    </aside>
+
+    <div class="dock">
+      <nav class="rail" id="rail" aria-label="Bodies"></nav>
+      <div class="controls">
+        <button class="ctl" id="pauseBtn" type="button" aria-pressed="false">Pause</button>
+        <label class="slider grow">
+          Time scale
+          <input id="speed" type="range" min="0" max="80" step="0.1" value="8" aria-valuetext="8 times">
+        </label>
+        <button class="ctl toggle" id="labelBtn" type="button" aria-pressed="true">Names</button>
+        <button class="ctl toggle" id="orbitBtn" type="button" aria-pressed="true">Orbits</button>
+        <button class="ctl toggle" id="sizeBtn" type="button" aria-pressed="false">True diameters</button>
+        <button class="ctl" id="homeBtn" type="button">System view</button>
+        <button class="ctl" id="helpBtn" type="button" aria-expanded="false">Keys</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="boot" id="boot">Lighting the sun…</div>
+  <div class="fatal" id="fatal" hidden>
+    <div>
+      <h2>The orrery needs WebGL</h2>
+      <p id="fatalText">This browser could not start a 3D canvas. Try a current version of Chrome, Firefox, Edge, or Safari.</p>
+    </div>
+  </div>
+  <div class="sr" id="live" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);"></div>
+
+  <script nomodule>
+    document.getElementById("fatal").hidden = false;
+    document.getElementById("fatalText").textContent = "This orrery uses JavaScript modules, which this browser does not run.";
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+    import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+    import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+    import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+
+    const YEAR_SECONDS = 18;
+    const EPOCH = Date.UTC(2026, 7, 23);
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const BODIES = [
+      {
+        id: "sun", name: "Sun", klass: "G2V star",
+        period: 0, spin: 25.4, au: 0, size: 4.2, trueSize: 4.2, tilt: 7.25,
+        color: "#ffd27a", moons: "—",
+        spinLabel: "25.4 d (eq.)", periodLabel: "—",
+        fact: "A G2V star. Every lit surface in this model is lit from here."
+      },
+      {
+        id: "mercury", name: "Mercury", klass: "Terrestrial",
+        period: 0.2408, spin: 58.6, au: 10.4, size: 0.42, trueSize: 0.0146, tilt: 0.03,
+        color: "#b7a394", moons: "None",
+        spinLabel: "58.6 d", periodLabel: "88.0 d",
+        fact: "A cratered iron world. Fastest orbit, almost no atmosphere."
+      },
+      {
+        id: "venus", name: "Venus", klass: "Terrestrial",
+        period: 0.6152, spin: -243, au: 14.2, size: 0.86, trueSize: 0.0363, tilt: 177.4,
+        color: "#e8d3a2", moons: "None",
+        spinLabel: "243 d, retrograde", periodLabel: "224.7 d",
+        fact: "A runaway greenhouse. It spins backward, slower than it orbits."
+      },
+      {
+        id: "earth", name: "Earth", klass: "Terrestrial",
+        period: 1, spin: 1, au: 18.6, size: 0.92, trueSize: 0.0383, tilt: 23.4,
+        color: "#6ea4d4", moons: "Luna",
+        spinLabel: "23.93 h", periodLabel: "365.25 d",
+        fact: "Liquid water at 1 AU. One large moon and a thin blue atmosphere."
+      },
+      {
+        id: "mars", name: "Mars", klass: "Terrestrial",
+        period: 1.8808, spin: 1.03, au: 24.4, size: 0.58, trueSize: 0.0204, tilt: 25.2,
+        color: "#c46a4a", moons: "Phobos, Deimos",
+        spinLabel: "24.6 h", periodLabel: "687.0 d",
+        fact: "A cold desert with polar ice. Two captured rubble moons."
+      },
+      {
+        id: "jupiter", name: "Jupiter", klass: "Gas giant",
+        period: 11.862, spin: 0.41, au: 40.5, size: 2.15, trueSize: 0.428, tilt: 3.1,
+        color: "#d9b48a", moons: "Io, Europa, Ganymede, Callisto",
+        spinLabel: "9.9 h", periodLabel: "11.86 yr",
+        fact: "More mass than the rest of the planets combined. The Great Red Spot is an anticyclone."
+      },
+      {
+        id: "saturn", name: "Saturn", klass: "Gas giant",
+        period: 29.457, spin: 0.45, au: 54.8, size: 1.82, trueSize: 0.361, tilt: 26.7,
+        color: "#e6d3a8", moons: "Titan + rings",
+        spinLabel: "10.7 h", periodLabel: "29.46 yr",
+        fact: "A hydrogen giant whose rings are ice and dust, with a dark Cassini Division."
+      },
+      {
+        id: "uranus", name: "Uranus", klass: "Ice giant",
+        period: 84.021, spin: -0.72, au: 70.2, size: 1.18, trueSize: 0.157, tilt: 97.8,
+        color: "#9fd4d8", moons: "Faint rings",
+        spinLabel: "17.2 h, retrograde", periodLabel: "84.0 yr",
+        fact: "An ice giant rolled on its side. The equator and rings stand nearly vertical."
+      },
+      {
+        id: "neptune", name: "Neptune", klass: "Ice giant",
+        period: 164.8, spin: 0.67, au: 84.6, size: 1.12, trueSize: 0.153, tilt: 28.3,
+        color: "#4a74d4", moons: "Triton",
+        spinLabel: "16.1 h", periodLabel: "164.8 yr",
+        fact: "The windiest measured planet. Methane in the atmosphere reads as deep blue."
+      },
+      {
+        id: "pluto", name: "Pluto", klass: "Dwarf planet",
+        period: 247.9, spin: -6.39, au: 98.4, size: 0.28, trueSize: 0.0071, tilt: 122.5,
+        color: "#d4c2b0", moons: "Charon",
+        spinLabel: "6.39 d, retrograde", periodLabel: "247.9 yr",
+        fact: "A dwarf planet locked with Neptune. Charon is large enough that they orbit a barycenter."
+      }
+    ];
+
+    const MOONS = {
+      earth: [{ name: "Luna", r: 0.24, d: 2.15, period: 27.3 / 365.25, color: "#c9c6c0" }],
+      mars: [
+        { name: "Phobos", r: 0.06, d: 1.15, period: 0.319 / 365.25, color: "#9a8a7a" },
+        { name: "Deimos", r: 0.045, d: 1.55, period: 1.26 / 365.25, color: "#8a7b6c" }
+      ],
+      jupiter: [
+        { name: "Io", r: 0.16, d: 3.05, period: 1.77 / 365.25, color: "#e0c36a" },
+        { name: "Europa", r: 0.14, d: 3.7, period: 3.55 / 365.25, color: "#dfe6ea" },
+        { name: "Ganymede", r: 0.2, d: 4.5, period: 7.15 / 365.25, color: "#b7a48c" },
+        { name: "Callisto", r: 0.18, d: 5.4, period: 16.7 / 365.25, color: "#8b8178" }
+      ],
+      saturn: [{ name: "Titan", r: 0.2, d: 3.6, period: 15.95 / 365.25, color: "#d2a46a" }],
+      neptune: [{ name: "Triton", r: 0.14, d: 2.4, period: -5.88 / 365.25, color: "#c5d0d4" }],
+      pluto: [{ name: "Charon", r: 0.14, d: 0.95, period: 6.39 / 365.25, color: "#b9b0a6" }]
+    };
+
+    function mulberry(seed) {
+      let a = seed >>> 0;
+      return () => {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    function makeNoise(seed) {
+      const rnd = mulberry(seed);
+      const p = new Uint8Array(512);
+      const base = new Uint8Array(256);
+      for (let i = 0; i < 256; i++) base[i] = i;
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [base[i], base[j]] = [base[j], base[i]];
+      }
+      for (let i = 0; i < 512; i++) p[i] = base[i & 255];
+      const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const grad = (h, x, y) => {
+        const u = (h & 1) ? -x : x;
+        const v = (h & 2) ? -y : y;
+        return u + v;
+      };
+      function n2(x, y) {
+        const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+        const xf = x - Math.floor(x), yf = y - Math.floor(y);
+        const u = fade(xf), v = fade(yf);
+        const aa = p[X + p[Y]], ba = p[X + 1 + p[Y]];
+        const ab = p[X + p[Y + 1]], bb = p[X + 1 + p[Y + 1]];
+        return lerp(lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u),
+                    lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u), v);
+      }
+      function fbm(x, y, oct = 5) {
+        let v = 0, a = 0.5, f = 1, s = 0;
+        for (let i = 0; i < oct; i++) { v += n2(x * f, y * f) * a; s += a; a *= 0.5; f *= 2; }
+        return v / s;
+      }
+      return { n2, fbm };
+    }
+
+    function canvasTex(w, h, draw) {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      draw(ctx, w, h);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      return tex;
+    }
+
+    function lerpC(a, b, t) {
+      return [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t
+      ];
+    }
+
+    function planetMaps(id) {
+      const n = makeNoise({
+        mercury: 11, venus: 23, earth: 47, mars: 61,
+        jupiter: 83, saturn: 97, uranus: 109, neptune: 131, pluto: 149
+      }[id] || 3);
+      const w = id === "earth" || id === "jupiter" ? 1024 : 768;
+      const h = w / 2;
+
+      const map = canvasTex(w, h, (ctx) => {
+        const img = ctx.createImageData(w, h);
+        const d = img.data;
+        for (let y = 0; y < h; y++) {
+          const lat = (y / (h - 1)) * 2 - 1;
+          for (let x = 0; x < w; x++) {
+            const u = x / w;
+            const lon = u * 6.28318;
+            let col = [0, 0, 0];
+            if (id === "mercury") {
+              const cr = n.fbm(u * 18, lat * 9, 6);
+              const crater = Math.max(0, 0.22 - Math.abs(n.n2(u * 30, lat * 15)));
+              const v = 0.38 + cr * 0.28 - crater * 0.35;
+              col = [v * 210, v * 186, v * 168];
+            } else if (id === "venus") {
+              const swirl = n.fbm(u * 6 + lat * 1.4, lat * 4, 5);
+              const v = 0.72 + swirl * 0.18;
+              col = [v * 245, v * 214, v * 150];
+            } else if (id === "earth") {
+              const land = n.fbm(u * 7 + 2, lat * 4.2, 6);
+              const warp = n.fbm(u * 3, lat * 2, 3);
+              const isLand = land + warp * 0.25 > 0.06 + Math.abs(lat) * 0.04;
+              const ice = Math.abs(lat) > 0.78 - n.n2(u * 8, lat * 4) * 0.08;
+              if (ice) col = [236, 244, 250];
+              else if (isLand) {
+                const veg = n.fbm(u * 12, lat * 8, 4);
+                col = veg > 0.05 ? [62, 118, 62] : [142, 118, 78];
+                if (Math.abs(lat) > 0.55) col = lerpC(col, [180, 170, 150], 0.45);
+              } else {
+                const deep = 0.55 + n.n2(u * 10, lat * 6) * 0.1;
+                col = [18 * deep, 62 * deep + 40, 128 + deep * 40];
+              }
+            } else if (id === "mars") {
+              const high = n.fbm(u * 8, lat * 5, 5);
+              const ice = Math.abs(lat) > 0.82;
+              col = ice ? [232, 236, 240] : lerpC([168, 72, 42], [92, 48, 32], high * 0.5 + 0.5);
+              if (lat > 0.15 && lat < 0.4 && u > 0.3 && u < 0.42) col = lerpC(col, [90, 50, 36], 0.4);
+            } else if (id === "jupiter") {
+              const bands = Math.sin(lat * 14 + n.fbm(u * 4, lat * 3, 3) * 1.8);
+              const pal = bands > 0.2
+                ? [228, 196, 150]
+                : bands < -0.25
+                  ? [164, 112, 72]
+                  : [214, 170, 122];
+              col = pal;
+              const spotX = Math.abs(u - 0.28), spotY = Math.abs(lat - 0.22);
+              if (spotX * 1.6 + spotY * 3.2 < 0.12) col = [196, 86, 58];
+            } else if (id === "saturn") {
+              const bands = Math.sin(lat * 11 + n.fbm(u * 3, lat * 2, 3));
+              col = bands > 0 ? [232, 214, 168] : [206, 180, 130];
+            } else if (id === "uranus") {
+              const band = 0.5 + n.fbm(u * 2, lat * 6, 3) * 0.08;
+              col = [140 * band, 198, 206];
+            } else if (id === "neptune") {
+              const storm = n.fbm(u * 6, lat * 4, 4);
+              col = [42, 82, 196];
+              if (storm > 0.22 && lat > -0.1 && lat < 0.35) col = [28, 52, 140];
+              col = lerpC(col, [170, 200, 255], Math.max(0, 0.12 - Math.abs(lat)));
+            } else {
+              const t = n.fbm(u * 6, lat * 4, 5);
+              col = lerpC([176, 150, 126], [232, 214, 196], t * 0.5 + 0.5);
+              if ((u - 0.55) * (u - 0.55) + (lat - 0.12) * (lat - 0.12) * 0.5 < 0.04) {
+                col = [240, 214, 196];
+              }
+            }
+            const i = (y * w + x) * 4;
+            d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+      });
+
+      const bump = canvasTex(w, h, (ctx) => {
+        const img = ctx.createImageData(w, h);
+        const d = img.data;
+        for (let y = 0; y < h; y++) {
+          const lat = (y / (h - 1)) * 2 - 1;
+          for (let x = 0; x < w; x++) {
+            const u = x / w;
+            const v = 128 + n.fbm(u * 16, lat * 10, 5) * 110;
+            const i = (y * w + x) * 4;
+            d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+      });
+      bump.colorSpace = THREE.NoColorSpace;
+
+      const rough = canvasTex(w / 2, h / 2, (ctx) => {
+        ctx.fillStyle = id === "earth" ? "#3a3a3a" : "#9a9a9a";
+        ctx.fillRect(0, 0, w / 2, h / 2);
+        if (id === "earth") {
+          const img = ctx.getImageData(0, 0, w / 2, h / 2);
+          const src = map.image.getContext("2d").getImageData(0, 0, w, h).data;
+          for (let y = 0; y < h / 2; y++) for (let x = 0; x < w / 2; x++) {
+            const si = ((y * 2) * w + x * 2) * 4;
+            const land = src[si + 1] > src[si + 2];
+            const i = (y * (w / 2) + x) * 4;
+            const v = land ? 200 : 40;
+            img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+          }
+          ctx.putImageData(img, 0, 0);
+        }
+      });
+      rough.colorSpace = THREE.NoColorSpace;
+      return { map, bump, rough };
+    }
+
+    function ringTexture(cassini) {
+      return canvasTex(1024, 64, (ctx, w, h) => {
+        const img = ctx.createImageData(w, h);
+        const n = makeNoise(17);
+        for (let x = 0; x < w; x++) {
+          const u = x / (w - 1);
+          let a = 210;
+          let c = 210 + n.n2(u * 40, 0.2) * 20;
+          if (cassini && u > 0.52 && u < 0.61) a = 12;
+          if (u < 0.04 || u > 0.97) a *= u < 0.04 ? u / 0.04 : (1 - u) / 0.03;
+          if (Math.abs(n.n2(u * 80, 1.2)) > 0.62) a *= 0.35;
+          for (let y = 0; y < h; y++) {
+            const i = (y * w + x) * 4;
+            img.data[i] = c; img.data[i + 1] = c - 16; img.data[i + 2] = c - 40; img.data[i + 3] = a;
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+      });
+    }
+
+    function glowSprite() {
+      const tex = canvasTex(256, 256, (ctx, w) => {
+        const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 128);
+        g.addColorStop(0, "rgba(255,244,210,1)");
+        g.addColorStop(0.18, "rgba(255,196,90,0.55)");
+        g.addColorStop(0.45, "rgba(255,140,40,0.12)");
+        g.addColorStop(1, "rgba(255,120,20,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, w);
+      });
+      const mat = new THREE.SpriteMaterial({
+        map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true
+      });
+      const s = new THREE.Sprite(mat);
+      s.scale.set(18, 18, 1);
+      return s;
+    }
+
+    const fatal = document.getElementById("fatal");
+    const fatalText = document.getElementById("fatalText");
+    function fail(msg) {
+      fatal.hidden = false;
+      fatalText.textContent = msg;
+    }
+
+    const canvas = document.getElementById("stage");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    if (!renderer.capabilities.isWebGL2 && !renderer.getContext()) {
+      fail("WebGL is not available on this device.");
+      throw new Error("No WebGL");
+    }
+    const coarse = matchMedia("(pointer: coarse)").matches;
+    const dprCap = coarse ? 1.25 : 1.75;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
+    renderer.setSize(innerWidth, innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.setClearColor(0x05060a, 1);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.08, 600);
+    camera.position.set(0, 26, 58);
+
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 3.2;
+    controls.maxDistance = 240;
+    controls.maxPolarAngle = Math.PI * 0.495 + 1.2;
+    controls.target.set(0, 0, 0);
+    controls.listenToKeyEvents(window);
+
+    scene.add(new THREE.HemisphereLight(0x8aa0c8, 0x1a120c, 0.045));
+    const sunLight = new THREE.PointLight(0xfff1c4, 140, 0, 1.35);
+    sunLight.position.set(0, 0, 0);
+    scene.add(sunLight);
+    scene.add(new THREE.AmbientLight(0x1a1814, 0.03));
+
+    const sky = canvasTex(2048, 1024, (ctx, w, h) => {
+      ctx.fillStyle = "#05060a";
+      ctx.fillRect(0, 0, w, h);
+      const n = makeNoise(3);
+      const img = ctx.getImageData(0, 0, w, h);
+      const d = img.data;
+      const rnd = mulberry(99);
+      for (let i = 0; i < 14000; i++) {
+        const x = Math.floor(rnd() * w);
+        const y = Math.floor(rnd() * h);
+        const lat = (y / h) * 2 - 1;
+        const band = Math.exp(-((lat + 0.08) * (lat + 0.08)) / 0.08);
+        if (rnd() > 0.22 + band * 0.7) continue;
+        const i4 = (y * w + x) * 4;
+        const b = 140 + rnd() * 115;
+        d[i4] = b; d[i4 + 1] = b; d[i4 + 2] = b + rnd() * 20; d[i4 + 3] = 255;
+      }
+      for (let y = 0; y < h; y++) {
+        const lat = (y / h) * 2 - 1;
+        const band = Math.exp(-(lat * lat) / 0.05);
+        for (let x = 0; x < w; x++) {
+          const u = x / w;
+          const dust = (n.fbm(u * 8, lat * 3, 4) * 0.5 + 0.5) * band * 18;
+          const i = (y * w + x) * 4;
+          d[i] += dust * 1.1; d[i + 1] += dust * 0.85; d[i + 2] += dust * 0.7;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    });
+    const skyMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(280, 48, 32),
+      new THREE.MeshBasicMaterial({ map: sky, side: THREE.BackSide, depthWrite: false })
+    );
+    skyMesh.rotation.z = 1.05;
+    scene.add(skyMesh);
+
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 1800;
+    const starPos = new Float32Array(starCount * 3);
+    const starCol = new Float32Array(starCount * 3);
+    const rndStar = mulberry(5);
+    for (let i = 0; i < starCount; i++) {
+      const r = 120 + rndStar() * 90;
+      const theta = rndStar() * Math.PI * 2;
+      const phi = Math.acos(2 * rndStar() - 1);
+      starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      starPos[i * 3 + 1] = r * Math.cos(phi);
+      starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      const c = 0.7 + rndStar() * 0.3;
+      const tint = rndStar();
+      starCol[i * 3] = c;
+      starCol[i * 3 + 1] = c * (tint > 0.8 ? 0.85 : 1);
+      starCol[i * 3 + 2] = c * (tint < 0.15 ? 0.85 : 1.05);
+    }
+    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+    starGeo.setAttribute("color", new THREE.BufferAttribute(starCol, 3));
+    scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+      size: 0.55, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false
+    })));
+
+    const sunMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 }
+      },
+      vertexShader: `
+        varying vec3 vN; varying vec3 vP;
+        void main() {
+          vN = normalize(normalMatrix * normal);
+          vP = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        varying vec3 vN; varying vec3 vP; uniform float uTime;
+        float hash(vec3 p){ p = fract(p * 0.3183 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+        float noise(vec3 x){
+          vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f);
+          return mix(mix(mix(hash(i), hash(i+vec3(1,0,0)), f.x),
+                         mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+                     mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+                         mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+        }
+        float fbm(vec3 p){ float v=0.0; float a=0.5; for(int i=0;i<5;i++){ v+=a*noise(p); p*=2.03; a*=0.5; } return v; }
+        void main(){
+          vec3 n = normalize(vN);
+          float limb = pow(max(dot(n, vec3(0.0,0.0,1.0)) * 0.35 + 0.65, 0.0), 1.4);
+          float gran = fbm(normalize(vP) * 6.0 + vec3(uTime * 0.03, 0.0, uTime * 0.02));
+          vec3 hot = vec3(1.0, 0.92, 0.62);
+          vec3 mid = vec3(1.0, 0.62, 0.16);
+          vec3 deep = vec3(0.75, 0.18, 0.02);
+          vec3 col = mix(deep, mid, gran);
+          col = mix(col, hot, pow(gran, 2.2) * 0.65);
+          col *= limb;
+          gl_FragColor = vec4(col * 3.4, 1.0);
+        }`
+    });
+    const sun = new THREE.Mesh(new THREE.SphereGeometry(4.2, 64, 48), sunMat);
+    sun.userData.bodyId = "sun";
+    scene.add(sun);
+    scene.add(glowSprite());
+
+    const coronaMat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0xffb24a) }, uPower: { value: 3.4 } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide,
+      vertexShader: `
+        varying vec3 vN; varying vec3 vV;
+        void main(){
+          vN = normalize(normalMatrix * normal);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vV = normalize(-mv.xyz);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        varying vec3 vN; varying vec3 vV;
+        uniform vec3 uColor; uniform float uPower;
+        void main(){
+          float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPower);
+          gl_FragColor = vec4(uColor, 1.0) * f * 0.85;
+        }`
+    });
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(5.1, 48, 32), coronaMat));
+    const corona2 = coronaMat.clone();
+    corona2.uniforms = { uColor: { value: new THREE.Color(0xff7a22) }, uPower: { value: 2.2 } };
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(6.4, 32, 24), corona2));
+
+    function atmosphere(radius, color, power) {
+      const m = new THREE.ShaderMaterial({
+        uniforms: { uColor: { value: new THREE.Color(color) }, uPower: { value: power } },
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide,
+        vertexShader: coronaMat.vertexShader,
+        fragmentShader: coronaMat.fragmentShader
+      });
+      return new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 24), m);
+    }
+
+    function orbitLine(radius, color) {
+      const pts = [];
+      for (let i = 0; i <= 180; i++) {
+        const a = (i / 180) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius));
+      }
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      return new THREE.LineLoop(g, new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0.28
+      }));
+    }
+
+    const pickables = [sun];
+    const nodes = { sun: { mesh: sun, group: sun, def: BODIES[0], moons: [] } };
+    const orbitLines = [];
+    const labelEls = [];
+    const labelsRoot = document.getElementById("labels");
+
+    function addLabel(id, title, sub) {
+      const el = document.createElement("div");
+      el.className = "label";
+      el.innerHTML = `${title}${sub ? `<small>${sub}</small>` : ""}`;
+      el.dataset.id = id;
+      labelsRoot.appendChild(el);
+      labelEls.push(el);
+      return el;
+    }
+    addLabel("sun", "Sun", "G2V");
+
+    BODIES.filter(b => b.id !== "sun").forEach((def, idx) => {
+      const incline = new THREE.Group();
+      const inc = [7.0, 3.4, 0, 1.85, 1.3, 2.49, 0.77, 1.77, 17.16][idx] * Math.PI / 180;
+      incline.rotation.x = inc;
+      scene.add(incline);
+
+      const orbit = new THREE.Group();
+      orbit.rotation.y = idx * 0.7;
+      incline.add(orbit);
+
+      const line = orbitLine(def.au, def.color);
+      incline.add(line);
+      orbitLines.push(line);
+
+      const holder = new THREE.Group();
+      holder.position.x = def.au;
+      orbit.add(holder);
+
+      const tilt = new THREE.Group();
+      tilt.rotation.z = def.tilt * Math.PI / 180;
+      holder.add(tilt);
+
+      const spin = new THREE.Group();
+      tilt.add(spin);
+
+      const maps = planetMaps(def.id);
+      const mat = new THREE.MeshStandardMaterial({
+        map: maps.map,
+        bumpMap: maps.bump,
+        bumpScale: def.id === "mercury" || def.id === "mars" ? 0.045 : 0.02,
+        roughnessMap: maps.rough,
+        roughness: 0.72,
+        metalness: 0.02
+      });
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(def.size, 48, 36), mat);
+      mesh.userData.bodyId = def.id;
+      spin.add(mesh);
+      pickables.push(mesh);
+
+      if (def.id === "earth") {
+        spin.add(atmosphere(def.size * 1.07, 0x6db7ff, 3.1));
+        const cloudTex = canvasTex(1024, 512, (ctx, w, h) => {
+          const n = makeNoise(201);
+          const img = ctx.createImageData(w, h);
+          for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+            const v = n.fbm(x / w * 8, y / h * 5, 5);
+            const a = Math.max(0, v - 0.08) * 210;
+            const i = (y * w + x) * 4;
+            img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+            img.data[i + 3] = a;
+          }
+          ctx.putImageData(img, 0, 0);
+        });
+        const clouds = new THREE.Mesh(
+          new THREE.SphereGeometry(def.size * 1.025, 48, 32),
+          new THREE.MeshStandardMaterial({
+            map: cloudTex, transparent: true, depthWrite: false, roughness: 1, metalness: 0
+          })
+        );
+        clouds.userData.cloud = true;
+        spin.add(clouds);
+      }
+      if (def.id === "venus") spin.add(atmosphere(def.size * 1.06, 0xe8d9a0, 3.6));
+      if (def.id === "mars") spin.add(atmosphere(def.size * 1.05, 0xc07a5a, 4.2));
+      if (def.id === "neptune" || def.id === "uranus") {
+        spin.add(atmosphere(def.size * 1.08, def.id === "neptune" ? 0x4a80ff : 0x9fe0e6, 3.4));
+      }
+
+      if (def.id === "saturn") {
+        const rings = new THREE.Mesh(
+          new THREE.RingGeometry(def.size * 1.35, def.size * 2.35, 96, 4),
+          new THREE.MeshStandardMaterial({
+            map: ringTexture(true),
+            side: THREE.DoubleSide,
+            transparent: true,
+            depthWrite: false,
+            roughness: 0.62,
+            metalness: 0.08
+          })
+        );
+        rings.rotation.x = Math.PI / 2;
+        spin.add(rings);
+      }
+      if (def.id === "uranus") {
+        const rings = new THREE.Mesh(
+          new THREE.RingGeometry(def.size * 1.55, def.size * 1.85, 64, 1),
+          new THREE.MeshBasicMaterial({
+            color: 0xc5d8dc, side: THREE.DoubleSide, transparent: true, opacity: 0.35
+          })
+        );
+        rings.rotation.x = Math.PI / 2;
+        spin.add(rings);
+      }
+
+      const moonNodes = [];
+      (MOONS[def.id] || []).forEach((mdef, mi) => {
+        const mOrbit = new THREE.Group();
+        mOrbit.rotation.y = mi * 1.2;
+        holder.add(mOrbit);
+        const mHold = new THREE.Group();
+        mHold.position.x = mdef.d;
+        mOrbit.add(mHold);
+        const moon = new THREE.Mesh(
+          new THREE.SphereGeometry(mdef.r, 16, 12),
+          new THREE.MeshStandardMaterial({ color: mdef.color, roughness: 0.9, metalness: 0 })
+        );
+        moon.userData.bodyId = def.id;
+        mHold.add(moon);
+        pickables.push(moon);
+        moonNodes.push({ orbit: mOrbit, def: mdef });
+      });
+
+      addLabel(def.id, def.name, def.klass);
+      nodes[def.id] = { mesh, group: holder, orbit, spin, def, moons: moonNodes, incline, scaler: spin };
+    });
+
+    const auMark = addLabel("au", "1 AU", "Earth’s orbit");
+    auMark.style.opacity = "0.7";
+
+    const belt = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(0.07, 0),
+      new THREE.MeshStandardMaterial({ color: 0x8a7b6a, roughness: 0.92, metalness: 0.04 }),
+      420
+    );
+    const dummy = new THREE.Object3D();
+    const rndA = mulberry(44);
+    for (let i = 0; i < 420; i++) {
+      const a = rndA() * Math.PI * 2;
+      const r = 30.2 + rndA() * 6.4;
+      dummy.position.set(Math.cos(a) * r, (rndA() - 0.5) * 0.7, Math.sin(a) * r);
+      dummy.rotation.set(rndA() * 6, rndA() * 6, rndA() * 6);
+      const s = 0.4 + rndA() * 1.4;
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      belt.setMatrixAt(i, dummy.matrix);
+    }
+    scene.add(belt);
+
+    const cometRoot = new THREE.Group();
+    scene.add(cometRoot);
+    const cometSpin = new THREE.Group();
+    cometRoot.add(cometSpin);
+    const comet = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.18, 1),
+      new THREE.MeshStandardMaterial({ color: 0xdde6ea, roughness: 0.55, emissive: 0x223344, emissiveIntensity: 0.4 })
+    );
+    comet.userData.bodyId = "comet";
+    cometSpin.add(comet);
+    pickables.push(comet);
+    const tail = new THREE.Mesh(
+      new THREE.ConeGeometry(0.22, 4.8, 10, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x9ec8ff, transparent: true, opacity: 0.28,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+      })
+    );
+    tail.rotation.x = Math.PI;
+    tail.position.z = 2.4;
+    cometSpin.add(tail);
+    addLabel("comet", "Comet", "e = 0.85");
+    nodes.comet = {
+      mesh: comet, group: cometRoot, def: {
+        id: "comet", name: "Comet", klass: "Icy body",
+        periodLabel: "76 yr (toy ellipse)", spinLabel: "Irregular",
+        moons: "Dust tail", fact: "A high-eccentricity ellipse. The tail always points away from the Sun.",
+        color: "#9ec8ff", au: 0, size: 0.18, trueSize: 0.18
+      }
+    };
+
+    const selectRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.018, 8, 48),
+      new THREE.MeshBasicMaterial({ color: 0xe7d3a1, transparent: true, opacity: 0.9 })
+    );
+    selectRing.visible = false;
+    scene.add(selectRing);
+
+    let composer = null;
+    try {
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.28, 0.86);
+      composer.addPass(bloom);
+      composer.addPass(new OutputPass());
+    } catch {
+      composer = null;
+    }
+
+    const rail = document.getElementById("rail");
+    BODIES.forEach((b) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.id = b.id;
+      btn.innerHTML = `<span class="swatch" style="background:${b.color}"></span>${b.name}`;
+      btn.addEventListener("click", () => focusBody(b.id, true));
+      rail.appendChild(btn);
+    });
+
+    const ui = {
+      pauseBtn: document.getElementById("pauseBtn"),
+      speed: document.getElementById("speed"),
+      labelBtn: document.getElementById("labelBtn"),
+      orbitBtn: document.getElementById("orbitBtn"),
+      sizeBtn: document.getElementById("sizeBtn"),
+      homeBtn: document.getElementById("homeBtn"),
+      helpBtn: document.getElementById("helpBtn"),
+      inspector: document.getElementById("inspector"),
+      live: document.getElementById("live")
+    };
+
+    let paused = reduceMotion;
+    let timeScale = reduceMotion ? 0 : 8;
+    let showLabels = true;
+    let showOrbits = true;
+    let trueSize = false;
+    let selected = "sun";
+    let follow = false;
+    let simYears = 0;
+    let intro = reduceMotion ? 1 : 0;
+    const introFrom = new THREE.Vector3(0, 72, 118);
+    const introTo = new THREE.Vector3(0, 26, 58);
+    const followOffset = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    const tmp2 = new THREE.Vector3();
+    const ray = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let pointerDown = null;
+    let helpOn = false;
+
+    if (paused) {
+      ui.pauseBtn.setAttribute("aria-pressed", "true");
+      ui.pauseBtn.textContent = "Resume";
+    }
+    ui.speed.value = String(timeScale);
+
+    function currentRadius(def) {
+      if (def.id === "sun" || def.id === "comet") return def.size;
+      return trueSize ? def.trueSize : def.size;
+    }
+
+    function applySizes() {
+      BODIES.forEach((def) => {
+        const node = nodes[def.id];
+        if (!node || def.id === "sun") return;
+        const r = currentRadius(def);
+        const s = r / def.size;
+        if (node.scaler) node.scaler.scale.setScalar(s);
+        node.moons.forEach((m) => {
+          m.orbit.scale.setScalar(trueSize ? Math.max(0.18, s) : 1);
+        });
+      });
+    }
+
+    function focusBody(id, fromUser) {
+      selected = id;
+      follow = id !== "sun";
+      const node = nodes[id];
+      if (!node) return;
+      node.group.getWorldPosition(tmp);
+      if (id === "sun") tmp.set(0, 0, 0);
+      const r = currentRadius(node.def);
+      const dist = Math.max(6, r * 7.5 + (id === "sun" ? 16 : 3.2));
+      camera.getWorldDirection(tmp2);
+      followOffset.copy(tmp2).multiplyScalar(-dist);
+      if (id === "sun") {
+        follow = false;
+        controls.target.set(0, 0, 0);
+      }
+      rail.querySelectorAll("button").forEach((b) => {
+        b.setAttribute("aria-current", b.dataset.id === id ? "true" : "false");
+      });
+      ui.inspector.hidden = false;
+      document.getElementById("classReadout").textContent = node.def.klass;
+      document.getElementById("nameReadout").textContent = node.def.name;
+      document.getElementById("periodReadout").textContent = node.def.periodLabel;
+      document.getElementById("spinReadout").textContent = node.def.spinLabel;
+      document.getElementById("moonReadout").textContent = node.def.moons;
+      document.getElementById("factReadout").textContent = node.def.fact;
+      if (fromUser) ui.live.textContent = `${node.def.name}. ${node.def.fact}`;
+      canvas.focus({ preventScroll: true });
+    }
+
+    function systemView() {
+      selected = "sun";
+      follow = false;
+      controls.target.set(0, 0, 0);
+      camera.position.set(0, 26, 58);
+      rail.querySelectorAll("button").forEach((b) => {
+        b.setAttribute("aria-current", b.dataset.id === "sun" ? "true" : "false");
+      });
+      focusBody("sun", true);
+      follow = false;
+      camera.position.set(0, 26, 58);
+    }
+
+    ui.pauseBtn.addEventListener("click", () => {
+      paused = !paused;
+      ui.pauseBtn.setAttribute("aria-pressed", String(paused));
+      ui.pauseBtn.textContent = paused ? "Resume" : "Pause";
+    });
+    ui.speed.addEventListener("input", () => {
+      timeScale = Number(ui.speed.value);
+      ui.speed.setAttribute("aria-valuetext", `${timeScale.toFixed(1)} times`);
+    });
+    ui.labelBtn.addEventListener("click", () => {
+      showLabels = !showLabels;
+      ui.labelBtn.setAttribute("aria-pressed", String(showLabels));
+      labelsRoot.style.display = showLabels ? "" : "none";
+    });
+    ui.orbitBtn.addEventListener("click", () => {
+      showOrbits = !showOrbits;
+      ui.orbitBtn.setAttribute("aria-pressed", String(showOrbits));
+      orbitLines.forEach((l) => { l.visible = showOrbits; });
+    });
+    ui.sizeBtn.addEventListener("click", () => {
+      trueSize = !trueSize;
+      ui.sizeBtn.setAttribute("aria-pressed", String(trueSize));
+      applySizes();
+      ui.live.textContent = trueSize
+        ? "Planet diameters are now relative to the Sun. Orbits stay compressed."
+        : "Readable diameters restored.";
+    });
+    ui.homeBtn.addEventListener("click", systemView);
+    ui.helpBtn.addEventListener("click", () => {
+      helpOn = !helpOn;
+      ui.helpBtn.setAttribute("aria-expanded", String(helpOn));
+      document.getElementById("hint").textContent = helpOn
+        ? "Space pause · 0–9 focus · [ ] speed · L names · O orbits · Esc system"
+        : "Drag to orbit · scroll to zoom · click a world";
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.target && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+      const map = { Digit0: "sun", Digit1: "mercury", Digit2: "venus", Digit3: "earth", Digit4: "mars", Digit5: "jupiter", Digit6: "saturn", Digit7: "uranus", Digit8: "neptune", Digit9: "pluto" };
+      if (map[e.code]) { e.preventDefault(); focusBody(map[e.code], true); }
+      if (e.code === "Space") { e.preventDefault(); ui.pauseBtn.click(); }
+      if (e.key === "[") { timeScale = Math.max(0, timeScale - 1); ui.speed.value = String(timeScale); }
+      if (e.key === "]") { timeScale = Math.min(80, timeScale + 1); ui.speed.value = String(timeScale); }
+      if (e.key === "l" || e.key === "L") ui.labelBtn.click();
+      if (e.key === "o" || e.key === "O") ui.orbitBtn.click();
+      if (e.key === "Escape") systemView();
+      if (e.key === "?" || e.key === "h" || e.key === "H") ui.helpBtn.click();
+    });
+
+    canvas.addEventListener("pointerdown", (e) => {
+      pointerDown = { x: e.clientX, y: e.clientY };
+    });
+    canvas.addEventListener("pointerup", (e) => {
+      if (!pointerDown) return;
+      const dx = e.clientX - pointerDown.x, dy = e.clientY - pointerDown.y;
+      pointerDown = null;
+      if (dx * dx + dy * dy > 16) return;
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      ray.setFromCamera(pointer, camera);
+      const hits = ray.intersectObjects(pickables, false);
+      if (hits.length) focusBody(hits[0].object.userData.bodyId, true);
+    });
+
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    function formatDate(years) {
+      const ms = EPOCH + years * 365.25 * 24 * 3600 * 1000;
+      const d = new Date(ms);
+      const iso = d.toISOString().slice(0, 10);
+      document.getElementById("dateReadout").dateTime = iso;
+      document.getElementById("dateReadout").textContent =
+        `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+    }
+
+    function placeLabel(id, world, depthBoost = 0) {
+      const el = labelEls.find((n) => n.dataset.id === id);
+      if (!el) return;
+      tmp.copy(world).project(camera);
+      const x = (tmp.x * 0.5 + 0.5) * innerWidth;
+      const y = (-tmp.y * 0.5 + 0.5) * innerHeight;
+      const behind = tmp.z > 1 || tmp.z < -1;
+      const off = x < -40 || y < -20 || x > innerWidth + 40 || y > innerHeight + 20;
+      el.style.opacity = (!showLabels || behind || off) ? "0" : (id === selected ? "1" : "0.82");
+      el.style.transform = `translate(${x}px, ${y - 8 - depthBoost}px)`;
+      el.style.zIndex = String(100 - Math.floor(tmp.z * 50));
+    }
+
+    function resize() {
+      const w = innerWidth, h = innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
+      renderer.setSize(w, h, false);
+      if (composer) {
+        composer.setSize(w, h);
+        composer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
+      }
+    }
+    window.addEventListener("resize", resize);
+
+    let hidden = document.hidden;
+    document.addEventListener("visibilitychange", () => { hidden = document.hidden; });
+
+    focusBody("sun", false);
+    follow = false;
+    document.getElementById("boot").hidden = true;
+
+    const clock = new THREE.Clock();
+    function frame() {
+      requestAnimationFrame(frame);
+      if (hidden) return;
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const going = paused ? 0 : timeScale;
+
+      if (intro < 1) {
+        intro = Math.min(1, intro + dt / 2.4);
+        const t = 1 - Math.pow(1 - intro, 3);
+        controls.enabled = false;
+        camera.position.lerpVectors(introFrom, introTo, t);
+        controls.target.set(0, 0, 0);
+        if (intro >= 1) controls.enabled = true;
+      }
+
+      simYears += dt * going / YEAR_SECONDS;
+      sunMat.uniforms.uTime.value = simYears * 40;
+      sun.rotation.y += dt * going * 0.15;
+      belt.rotation.y += dt * going * (Math.PI * 2) / (4.6 * YEAR_SECONDS);
+
+      BODIES.forEach((def) => {
+        const node = nodes[def.id];
+        if (def.id === "sun") return;
+        if (def.period) node.orbit.rotation.y = (simYears / def.period) * Math.PI * 2;
+        const spinRate = def.spin === 0 ? 0 : (365.25 / Math.abs(def.spin));
+        const dir = def.spin < 0 ? -1 : 1;
+        node.spin.rotation.y += dt * going * dir * spinRate * 0.35;
+        node.spin.traverse((ch) => {
+          if (ch.userData.cloud) ch.rotation.y += dt * going * 0.12;
+        });
+        node.moons.forEach((m) => {
+          m.orbit.rotation.y = (simYears / m.def.period) * Math.PI * 2;
+        });
+      });
+
+      const a = 72, e = 0.85;
+      const n = (Math.PI * 2) / 76;
+      const M = simYears * n;
+      const E = M + e * Math.sin(M);
+      const cx = a * (Math.cos(E) - e);
+      const cz = a * Math.sqrt(1 - e * e) * Math.sin(E);
+      cometRoot.position.set(cx * 0.55, Math.sin(E) * 6, cz * 0.55);
+      cometRoot.lookAt(0, 0, 0);
+      cometSpin.lookAt(0, 0, 0);
+
+      const node = nodes[selected];
+      if (node) {
+        node.group.getWorldPosition(tmp);
+        if (selected === "sun") tmp.set(0, 0, 0);
+        if (selected === "comet") cometRoot.getWorldPosition(tmp);
+        const k = 1 - Math.exp(-dt * 3.2);
+        controls.target.lerp(tmp, k);
+        if (follow) {
+          tmp2.copy(tmp).add(followOffset);
+          camera.position.lerp(tmp2, k * 0.85);
+        }
+        const r = currentRadius(node.def);
+        selectRing.visible = selected !== "sun";
+        selectRing.position.copy(tmp);
+        selectRing.scale.setScalar(Math.max(0.6, r * 1.45));
+        selectRing.lookAt(camera.position);
+      }
+
+      controls.update();
+
+      BODIES.forEach((def) => {
+        const nref = nodes[def.id];
+        nref.group.getWorldPosition(tmp);
+        if (def.id === "sun") tmp.set(0, currentRadius(def) + 0.2, 0);
+        else tmp.y += currentRadius(def) + 0.15;
+        placeLabel(def.id, tmp);
+      });
+      cometRoot.getWorldPosition(tmp);
+      tmp.y += 0.5;
+      placeLabel("comet", tmp);
+      nodes.earth.group.getWorldPosition(tmp);
+      tmp.y += 0.05;
+      placeLabel("au", tmp, 18);
+
+      document.getElementById("yearReadout").textContent = `${simYears.toFixed(2)} yr`;
+      formatDate(simYears);
+      const daysPerSec = (365.25 / YEAR_SECONDS) * going;
+      document.getElementById("rateReadout").textContent = paused || going === 0
+        ? "Paused"
+        : `1 s = ${daysPerSec >= 10 ? daysPerSec.toFixed(0) : daysPerSec.toFixed(1)} d`;
+
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+    }
+    frame();
+  </script>
+</body>
+</html>
+

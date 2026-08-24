@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Procedural City at Night</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #020208; }
+    canvas { display: block; }
+    #overlay {
+      position: fixed; top: 16px; left: 16px; color: #8ab4ff;
+      font: 12px/1.5 'Segoe UI', system-ui, sans-serif;
+      pointer-events: none; text-shadow: 0 0 8px rgba(80,140,255,0.6);
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">Procedural City · Night · Drag to orbit · Scroll to zoom</div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ── Seeded RNG ──────────────────────────────────────────────
+    function mulberry32(a) {
+      return function() {
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        let t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    const rng = mulberry32(0xC17A2026);
+
+    // ── Scene setup ─────────────────────────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x020208);
+    scene.fog = new THREE.FogExp2(0x060818, 0.0045);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 800);
+    camera.position.set(60, 45, 80);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.minDistance = 15;
+    controls.maxDistance = 200;
+    controls.target.set(0, 8, 0);
+
+    // ── Lights ──────────────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0x1a2040, 0.35));
+    const moon = new THREE.DirectionalLight(0x8899cc, 0.25);
+    moon.position.set(-80, 120, -60);
+    scene.add(moon);
+
+    const cityGlow = new THREE.HemisphereLight(0x223355, 0x080810, 0.4);
+    scene.add(cityGlow);
+
+    // ── Materials palette ───────────────────────────────────────
+    const buildingColors = [0x1a2233, 0x222838, 0x1c2838, 0x252530, 0x1e2430, 0x2a3040];
+    const windowOnColors = [0xffe8a0, 0xffcc66, 0xaaccff, 0xff9966, 0xccddff, 0xffaa55];
+    const windowOffColor = 0x0a0e18;
+
+    // ── City grid params ────────────────────────────────────────
+    const GRID = 14;
+    const BLOCK = 10;
+    const ROAD = 4;
+    const CELL = BLOCK + ROAD;
+    const half = (GRID * CELL) / 2;
+
+    const buildings = [];
+    const windowMeshes = [];
+    const streetLights = [];
+    const cars = [];
+    const neonSigns = [];
+
+    // ── Ground & roads ──────────────────────────────────────────
+    const groundGeo = new THREE.PlaneGeometry(GRID * CELL + 40, GRID * CELL + 40);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x0a0c12, roughness: 0.95 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x111318, roughness: 0.85, metalness: 0.1 });
+    for (let i = 0; i <= GRID; i++) {
+      const pos = -half + i * CELL - ROAD / 2;
+      const hRoad = new THREE.Mesh(new THREE.PlaneGeometry(GRID * CELL, ROAD), roadMat);
+      hRoad.rotation.x = -Math.PI / 2;
+      hRoad.position.set(0, 0.02, pos);
+      scene.add(hRoad);
+
+      const vRoad = new THREE.Mesh(new THREE.PlaneGeometry(ROAD, GRID * CELL), roadMat);
+      vRoad.rotation.x = -Math.PI / 2;
+      vRoad.position.set(pos, 0.02, 0);
+      scene.add(vRoad);
+    }
+
+    // Road markings
+    const markMat = new THREE.MeshBasicMaterial({ color: 0x334455, transparent: true, opacity: 0.4 });
+    for (let i = 0; i < GRID; i++) {
+      for (let j = 0; j < 3; j++) {
+        const mx = -half + i * CELL + BLOCK / 2 + j * 1.2;
+        const mark = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 2), markMat);
+        mark.rotation.x = -Math.PI / 2;
+        mark.position.set(mx, 0.03, 0);
+        scene.add(mark);
+      }
+    }
+
+    // ── Procedural building generator ───────────────────────────
+    function createBuilding(bx, bz) {
+      const floors = Math.floor(rng() * 18) + 3;
+      const width = BLOCK - 1.5 + rng() * 1;
+      const depth = BLOCK - 1.5 + rng() * 1;
+      const height = floors * 2.2 + rng() * 3;
+      const color = buildingColors[Math.floor(rng() * buildingColors.length)];
+
+      const group = new THREE.Group();
+      group.position.set(bx, 0, bz);
+
+      const bodyGeo = new THREE.BoxGeometry(width, height, depth);
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color, roughness: 0.75, metalness: 0.15
+      });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.position.y = height / 2;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
+
+      // Roof detail
+      if (rng() > 0.5) {
+        const roofH = 1 + rng() * 2;
+        const roof = new THREE.Mesh(
+          new THREE.BoxGeometry(width * 0.6, roofH, depth * 0.6),
+          new THREE.MeshStandardMaterial({ color: 0x151820, roughness: 0.8 })
+        );
+        roof.position.y = height + roofH / 2;
+        group.add(roof);
+      }
+
+      // Antenna
+      if (rng() > 0.7 && height > 20) {
+        const antH = 3 + rng() * 8;
+        const ant = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.08, 0.12, antH, 6),
+          new THREE.MeshStandardMaterial({ color: 0x333340, metalness: 0.6 })
+        );
+        ant.position.y = height + antH / 2;
+        group.add(ant);
+        const blink = new THREE.PointLight(0xff2200, 0.8, 12);
+        blink.position.y = height + antH;
+        group.add(blink);
+        neonSigns.push({ light: blink, phase: rng() * Math.PI * 2, speed: 2 + rng() * 3 });
+      }
+
+      // Windows
+      const cols = Math.floor(width / 1.4);
+      const rows = Math.floor(height / 2.2);
+      const winW = 0.7, winH = 1.2;
+      const faces = [
+        { axis: 'x', sign: 1, w: depth, rot: 0 },
+        { axis: 'x', sign: -1, w: depth, rot: 0 },
+        { axis: 'z', sign: 1, w: width, rot: 0 },
+        { axis: 'z', sign: -1, w: width, rot: 0 },
+      ];
+
+      for (const face of faces) {
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (rng() > 0.82) continue;
+            const lit = rng() > 0.35;
+            const onColor = windowOnColors[Math.floor(rng() * windowOnColors.length)];
+            const mat = new THREE.MeshBasicMaterial({
+              color: lit ? onColor : windowOffColor,
+              transparent: true,
+              opacity: lit ? 0.7 + rng() * 0.3 : 0.15
+            });
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), mat);
+            const y = 1.5 + r * 2.2;
+            const offset = (c - (cols - 1) / 2) * 1.4;
+            if (face.axis === 'x') {
+              win.position.set(face.sign * (width / 2 + 0.05), y, offset);
+              win.rotation.y = face.sign > 0 ? Math.PI / 2 : -Math.PI / 2;
+            } else {
+              win.position.set(offset, y, face.sign * (depth / 2 + 0.05));
+              win.rotation.y = face.sign > 0 ? 0 : Math.PI;
+            }
+            group.add(win);
+            if (lit) {
+              windowMeshes.push({
+                mesh: win,
+                onColor,
+                phase: rng() * Math.PI * 2,
+                speed: 0.5 + rng() * 2,
+                flicker: rng() > 0.85
+              });
+            }
+          }
+        }
+      }
+
+      scene.add(group);
+      buildings.push({ group, height, bx, bz });
+      return { height, width, depth };
+    }
+
+    // ── Place buildings on grid blocks ──────────────────────────
+    for (let gx = 0; gx < GRID; gx++) {
+      for (let gz = 0; gz < GRID; gz++) {
+        const cx = -half + gx * CELL + BLOCK / 2 + ROAD / 2;
+        const cz = -half + gz * CELL + BLOCK / 2 + ROAD / 2;
+        if (rng() > 0.08) createBuilding(cx, cz);
+      }
+    }
+
+    // ── Street lights ───────────────────────────────────────────
+    function addStreetLight(x, z) {
+      const pole = new THREE.Group();
+      const poleMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.1, 5, 8),
+        new THREE.MeshStandardMaterial({ color: 0x333340, metalness: 0.5 })
+      );
+      poleMesh.position.y = 2.5;
+      pole.add(poleMesh);
+
+      const arm = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.08, 0.08),
+        new THREE.MeshStandardMaterial({ color: 0x333340, metalness: 0.5 })
+      );
+      arm.position.set(0.5, 4.8, 0);
+      pole.add(arm);
+
+      const bulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffeeaa })
+      );
+      bulb.position.set(1.1, 4.75, 0);
+      pole.add(bulb);
+
+      const light = new THREE.PointLight(0xffcc77, 1.2, 18, 2);
+      light.position.set(1.1, 4.5, 0);
+      light.castShadow = true;
+      light.shadow.mapSize.set(256, 256);
+      pole.add(light);
+
+      pole.position.set(x, 0, z);
+      pole.rotation.y = rng() * Math.PI * 2;
+      scene.add(pole);
+      streetLights.push({ light, phase: rng() * Math.PI * 2 });
+    }
+
+    for (let i = 0; i <= GRID; i++) {
+      for (let j = 0; j <= GRID; j++) {
+        const px = -half + i * CELL;
+        const pz = -half + j * CELL;
+        if ((i + j) % 2 === 0) {
+          addStreetLight(px + ROAD / 2, pz + ROAD / 2);
+        }
+      }
+    }
+
+    // ── Neon signs on some buildings ────────────────────────────
+    const neonColors = [0xff0066, 0x00ffcc, 0xff6600, 0x6600ff, 0x00ccff];
+    for (let i = 0; i < 12; i++) {
+      const b = buildings[Math.floor(rng() * buildings.length)];
+      if (!b) continue;
+      const color = neonColors[Math.floor(rng() * neonColors.length)];
+      const signW = 2 + rng() * 4;
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(signW, 0.8),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+      );
+      sign.position.set(b.bx, b.height * 0.6 + rng() * b.height * 0.2, b.bz + 5.2);
+      scene.add(sign);
+
+      const nLight = new THREE.PointLight(color, 1.5, 20, 2);
+      nLight.position.copy(sign.position);
+      nLight.position.z += 1;
+      scene.add(nLight);
+      neonSigns.push({ light: nLight, mesh: sign, phase: rng() * 6, speed: 1 + rng() * 2, color });
+    }
+
+    // ── Cars ────────────────────────────────────────────────────
+    function createCar(color) {
+      const car = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(1.8, 0.6, 3.6),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.6 })
+      );
+      body.position.y = 0.5;
+      body.castShadow = true;
+      car.add(body);
+
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(1.5, 0.5, 2),
+        new THREE.MeshStandardMaterial({ color: 0x111118, roughness: 0.3, metalness: 0.8 })
+      );
+      cabin.position.set(0, 1.0, -0.2);
+      car.add(cabin);
+
+      const headL = new THREE.PointLight(0xffffcc, 0.6, 8, 2);
+      headL.position.set(0, 0.5, 1.9);
+      car.add(headL);
+
+      const tailL = new THREE.PointLight(0xff2200, 0.3, 4, 2);
+      tailL.position.set(0, 0.5, -1.9);
+      car.add(tailL);
+
+      scene.add(car);
+      return car;
+    }
+
+    const carColors = [0xcc2222, 0xeeeeee, 0x2255cc, 0x333333, 0xccaa00, 0x22aa66];
+    const numCars = 40;
+    for (let i = 0; i < numCars; i++) {
+      const horizontal = rng() > 0.5;
+      const lane = Math.floor(rng() * GRID);
+      const pos = -half + lane * CELL + ROAD / 2;
+      const offset = rng() * GRID * CELL;
+      const speed = (0.08 + rng() * 0.15) * (rng() > 0.5 ? 1 : -1);
+      const color = carColors[Math.floor(rng() * carColors.length)];
+      const mesh = createCar(color);
+      if (horizontal) {
+        mesh.position.set(-half + offset, 0, pos + (speed > 0 ? -0.8 : 0.8));
+        mesh.rotation.y = speed > 0 ? 0 : Math.PI;
+      } else {
+        mesh.position.set(pos + (speed > 0 ? -0.8 : 0.8), 0, -half + offset);
+        mesh.rotation.y = speed > 0 ? Math.PI / 2 : -Math.PI / 2;
+      }
+      cars.push({ mesh, horizontal, speed, limit: GRID * CELL });
+    }
+
+    // ── Stars ───────────────────────────────────────────────────
+    const starCount = 800;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const theta = rng() * Math.PI * 2;
+      const phi = rng() * Math.PI * 0.4;
+      const r = 250 + rng() * 100;
+      starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      starPos[i * 3 + 1] = r * Math.cos(phi) + 50;
+      starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.6, transparent: true, opacity: 0.7, sizeAttenuation: true });
+    scene.add(new THREE.Points(starGeo, starMat));
+
+    // ── Floating particles (dust / atmosphere) ──────────────────
+    const dustCount = 300;
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      dustPos[i * 3] = (rng() - 0.5) * GRID * CELL;
+      dustPos[i * 3 + 1] = rng() * 60;
+      dustPos[i * 3 + 2] = (rng() - 0.5) * GRID * CELL;
+    }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    const dustMat = new THREE.PointsMaterial({ color: 0x6688bb, size: 0.15, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    scene.add(dust);
+
+    // ── Slow camera drift ───────────────────────────────────────
+    let camAngle = 0;
+
+    // ── Resize ──────────────────────────────────────────────────
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ── Animation loop ──────────────────────────────────────────
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+      const dt = clock.getDelta();
+
+      // Window flicker
+      for (const w of windowMeshes) {
+        if (w.flicker) {
+          const flick = 0.5 + 0.5 * Math.sin(t * w.speed * 8 + w.phase);
+          w.mesh.material.opacity = 0.3 + flick * 0.6;
+        } else {
+          w.mesh.material.opacity = 0.65 + 0.15 * Math.sin(t * w.speed + w.phase);
+        }
+      }
+
+      // Street light subtle pulse
+      for (const sl of streetLights) {
+        sl.light.intensity = 1.0 + 0.15 * Math.sin(t * 1.5 + sl.phase);
+      }
+
+      // Neon signs
+      for (const n of neonSigns) {
+        const pulse = 0.6 + 0.4 * Math.sin(t * n.speed + n.phase);
+        n.light.intensity = 1.0 * pulse;
+        if (n.mesh) n.mesh.material.opacity = 0.5 + 0.5 * pulse;
+      }
+
+      // Move cars
+      for (const c of cars) {
+        if (c.horizontal) {
+          c.mesh.position.x += c.speed;
+          if (c.mesh.position.x > half) c.mesh.position.x = -half;
+          if (c.mesh.position.x < -half) c.mesh.position.x = half;
+        } else {
+          c.mesh.position.z += c.speed;
+          if (c.mesh.position.z > half) c.mesh.position.z = -half;
+          if (c.mesh.position.z < -half) c.mesh.position.z = half;
+        }
+      }
+
+      // Dust drift
+      const dp = dustGeo.attributes.position.array;
+      for (let i = 0; i < dustCount; i++) {
+        dp[i * 3 + 1] += Math.sin(t + i) * 0.005;
+        if (dp[i * 3 + 1] > 60) dp[i * 3 + 1] = 0;
+      }
+      dustGeo.attributes.position.needsUpdate = true;
+      dust.rotation.y = t * 0.01;
+
+      // Gentle auto-orbit when idle
+      camAngle += dt * 0.02;
+      if (!controls.enabled || (controls.getAzimuthalAngle !== undefined)) {
+        // subtle ambient motion via fog color shift
+        const fogShift = 0.02 * Math.sin(t * 0.1);
+        scene.fog.color.setHSL(0.62 + fogShift, 0.5, 0.04);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>

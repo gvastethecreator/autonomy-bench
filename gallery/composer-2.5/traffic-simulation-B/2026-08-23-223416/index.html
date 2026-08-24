@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MetroFlow — City Traffic Simulation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0a0e14;
+    color: #e8ecf0;
+  }
+  #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #hud {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; flex-direction: column; gap: 10px;
+    pointer-events: none;
+  }
+  .panel {
+    background: rgba(12, 18, 28, 0.82);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(100, 140, 200, 0.18);
+    border-radius: 12px;
+    padding: 14px 18px;
+    min-width: 200px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .panel h1 {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #6aabf0; margin-bottom: 10px;
+  }
+  .stat-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; padding: 3px 0;
+  }
+  .stat-val { font-variant-numeric: tabular-nums; font-weight: 600; color: #fff; }
+  .stat-label { color: #8899aa; }
+  #controls {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 10; pointer-events: all;
+    display: flex; gap: 8px; align-items: center;
+    background: rgba(12, 18, 28, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(100, 140, 200, 0.18);
+    border-radius: 14px;
+    padding: 10px 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  button.ctrl {
+    background: rgba(60, 100, 160, 0.25);
+    border: 1px solid rgba(100, 160, 240, 0.3);
+    color: #c8ddf5;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+  button.ctrl:hover { background: rgba(80, 130, 200, 0.4); color: #fff; }
+  button.ctrl.active { background: rgba(80, 160, 255, 0.45); border-color: #6aabf0; color: #fff; }
+  input[type=range] {
+    width: 100px; accent-color: #6aabf0;
+    cursor: pointer;
+  }
+  .ctrl-group {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: #8899aa;
+  }
+  #legend {
+    position: fixed; top: 16px; right: 16px; z-index: 10;
+    pointer-events: none;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: #8899aa; padding: 3px 0;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  #intro {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(6, 10, 18, 0.92);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    transition: opacity 0.6s, visibility 0.6s;
+  }
+  #intro.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  #intro h2 {
+    font-size: 32px; font-weight: 300; letter-spacing: 0.2em;
+    color: #6aabf0; margin-bottom: 8px;
+  }
+  #intro p { color: #667788; font-size: 14px; margin-bottom: 32px; }
+  #intro button {
+    background: linear-gradient(135deg, #3a7bd5, #6aabf0);
+    border: none; color: #fff; font-size: 14px; font-weight: 600;
+    padding: 14px 40px; border-radius: 10px; cursor: pointer;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    box-shadow: 0 4px 24px rgba(80, 140, 240, 0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  #intro button:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(80, 140, 240, 0.55); }
+</style>
+</head>
+<body>
+<div id="intro">
+  <h2>METROFLOW</h2>
+  <p>City traffic simulation · watch the grid come alive</p>
+  <button id="startBtn">Start Simulation</button>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div class="panel">
+    <h1>Live Metrics</h1>
+    <div class="stat-row"><span class="stat-label">Vehicles</span><span class="stat-val" id="s-cars">0</span></div>
+    <div class="stat-row"><span class="stat-label">Avg Speed</span><span class="stat-val" id="s-speed">0 km/h</span></div>
+    <div class="stat-row"><span class="stat-label">Congestion</span><span class="stat-val" id="s-cong">0%</span></div>
+    <div class="stat-row"><span class="stat-label">Time</span><span class="stat-val" id="s-time">06:00</span></div>
+    <div class="stat-row"><span class="stat-label">Throughput</span><span class="stat-val" id="s-through">0/min</span></div>
+  </div>
+</div>
+
+<div id="legend">
+  <div class="panel">
+    <h1>Traffic Lights</h1>
+    <div class="legend-item"><div class="dot" style="background:#44dd66"></div> Green — flowing</div>
+    <div class="legend-item"><div class="dot" style="background:#ddcc22"></div> Yellow — caution</div>
+    <div class="legend-item"><div class="dot" style="background:#ee3344"></div> Red — stopped</div>
+  </div>
+</div>
+
+<div id="controls">
+  <button class="ctrl" id="btn-pause">⏸ Pause</button>
+  <div class="ctrl-group">
+    <span>Speed</span>
+    <input type="range" id="sim-speed" min="0.5" max="4" step="0.5" value="1">
+    <span id="speed-label">1×</span>
+  </div>
+  <div class="ctrl-group">
+    <span>Density</span>
+    <input type="range" id="density" min="0.2" max="2" step="0.1" value="1">
+  </div>
+  <button class="ctrl" id="btn-rush">🌆 Rush Hour</button>
+  <button class="ctrl" id="btn-night">🌙 Night</button>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const GRID = 5;
+const CELL = 160;
+const ROAD_W = 44;
+const LANE = ROAD_W / 2;
+const TILE = CELL;
+
+let W, H, ox, oy;
+let simTime = 0;
+let gameHour = 6;
+let paused = false;
+let simSpeed = 1;
+let density = 1;
+let rushHour = false;
+let nightMode = false;
+let started = false;
+let throughput = 0;
+let throughputAcc = 0;
+let throughputTimer = 0;
+
+const CAR_COLORS = [
+  '#e8453c','#3a86ff','#ffbe0b','#8338ec','#fb5607',
+  '#06d6a0','#ef476f','#118ab2','#ffd166','#073b4c',
+  '#f4a261','#2a9d8f','#e76f51','#264653','#a8dadc'
+];
+
+const DIRS = [
+  { dx: 0, dy: -1, name: 'N', angle: -Math.PI/2 },
+  { dx: 1, dy: 0,  name: 'E', angle: 0 },
+  { dx: 0, dy: 1,  name: 'S', angle: Math.PI/2 },
+  { dx: -1, dy: 0, name: 'W', angle: Math.PI }
+];
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  const mapW = GRID * TILE;
+  const mapH = GRID * TILE;
+  ox = (W - mapW) / 2;
+  oy = (H - mapH) / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Road network ---
+function roadCenter(gx, gy, dir) {
+  const cx = ox + gx * TILE + TILE / 2;
+  const cy = oy + gy * TILE + TILE / 2;
+  const half = TILE / 2 - ROAD_W / 2;
+  if (dir === 0) return { x: cx, y: cy - half / 2, dir: 0 };
+  if (dir === 1) return { x: cx + half / 2, y: cy, dir: 1 };
+  if (dir === 2) return { x: cx, y: cy + half / 2, dir: 2 };
+  return { x: cx - half / 2, y: cy, dir: 3 };
+}
+
+function intersectionCenter(gx, gy) {
+  return { x: ox + gx * TILE + TILE / 2, y: oy + gy * TILE + TILE / 2 };
+}
+
+// --- Traffic lights ---
+class TrafficLight {
+  constructor(gx, gy) {
+    this.gx = gx; this.gy = gy;
+    this.phase = Math.random() * 20;
+    this.cycle = 14;
+    this.yellowDur = 2;
+    this.greenDur = 8;
+    this.redDur = 4;
+    this.nsGreen = Math.random() > 0.5;
+  }
+  update(dt) {
+    this.phase += dt;
+    if (this.phase >= this.cycle) {
+      this.phase = 0;
+      this.nsGreen = !this.nsGreen;
+    }
+  }
+  getState(dir) {
+    const isNS = dir === 0 || dir === 2;
+    const green = isNS ? this.nsGreen : !this.nsGreen;
+    const t = this.phase;
+    const gEnd = this.greenDur;
+    const yEnd = gEnd + this.yellowDur;
+    if (green) {
+      if (t < gEnd) return 'green';
+      if (t < yEnd) return 'yellow';
+      return 'red';
+    } else {
+      if (t < this.redDur) return 'red';
+      if (t < this.redDur + this.yellowDur) return 'yellow';
+      return 'green';
+    }
+  }
+}
+
+const lights = [];
+for (let gy = 0; gy < GRID; gy++)
+  for (let gx = 0; gx < GRID; gx++)
+    lights.push(new TrafficLight(gx, gy));
+
+function getLight(gx, gy) {
+  return lights[gy * GRID + gx];
+}
+
+// --- Buildings ---
+const buildings = [];
+function genBuildings() {
+  buildings.length = 0;
+  const types = ['office', 'residential', 'shop', 'park'];
+  for (let gy = 0; gy < GRID; gy++) {
+    for (let gx = 0; gx < GRID; gx++) {
+      const corners = [
+        { x: ox + gx * TILE, y: oy + gy * TILE },
+        { x: ox + (gx+1) * TILE - (TILE - ROAD_W)/2, y: oy + gy * TILE },
+        { x: ox + gx * TILE, y: oy + (gy+1) * TILE - (TILE - ROAD_W)/2 },
+        { x: ox + (gx+1) * TILE - (TILE - ROAD_W)/2, y: oy + (gy+1) * TILE - (TILE - ROAD_W)/2 },
+      ];
+      const quads = [
+        { x: ox + gx * TILE, y: oy + gy * TILE, w: (TILE - ROAD_W)/2, h: (TILE - ROAD_W)/2 },
+        { x: ox + gx * TILE + TILE/2 + ROAD_W/2, y: oy + gy * TILE, w: (TILE - ROAD_W)/2, h: (TILE - ROAD_W)/2 },
+        { x: ox + gx * TILE, y: oy + gy * TILE + TILE/2 + ROAD_W/2, w: (TILE - ROAD_W)/2, h: (TILE - ROAD_W)/2 },
+        { x: ox + gx * TILE + TILE/2 + ROAD_W/2, y: oy + gy * TILE + TILE/2 + ROAD_W/2, w: (TILE - ROAD_W)/2, h: (TILE - ROAD_W)/2 },
+      ];
+      quads.forEach((q, i) => {
+        if (Math.random() < 0.15) {
+          buildings.push({ ...q, type: 'park', floors: 0, hue: 120 + Math.random()*40 });
+        } else {
+          const type = types[Math.floor(Math.random() * 3)];
+          buildings.push({
+            ...q, type,
+            floors: 2 + Math.floor(Math.random() * 6),
+            hue: type === 'office' ? 210 + Math.random()*30 :
+                 type === 'residential' ? 20 + Math.random()*40 : 340 + Math.random()*30,
+            lit: Math.random()
+          });
+        }
+      });
+    }
+  }
+}
+genBuildings();
+
+// --- Pathfinding: waypoints along grid ---
+function makeRoute() {
+  const route = [];
+  let gx = Math.floor(Math.random() * GRID);
+  let gy = Math.floor(Math.random() * GRID);
+  let dir = Math.floor(Math.random() * 4);
+  const steps = 8 + Math.floor(Math.random() * 16);
+  route.push({ gx, gy, dir, t: 0 });
+
+  for (let i = 0; i < steps; i++) {
+    const choice = Math.random();
+    if (choice < 0.6) {
+      // go straight
+    } else if (choice < 0.8) {
+      dir = (dir + 1) % 4;
+    } else {
+      dir = (dir + 3) % 4;
+    }
+    const d = DIRS[dir];
+    const ngx = gx + d.dx;
+    const nyg = gy + d.dy;
+    if (ngx >= 0 && ngx < GRID && nyg >= 0 && nyg < GRID) {
+      gx = ngx; gy = nyg;
+    }
+    route.push({ gx, gy, dir, t: 0 });
+  }
+  return route;
+}
+
+function routeToWaypoints(route) {
+  const wps = [];
+  for (let i = 0; i < route.length; i++) {
+    const r = route[i];
+    const ic = intersectionCenter(r.gx, r.gy);
+    const segLen = (TILE - ROAD_W) / 2;
+    const d = DIRS[r.dir];
+    const laneOff = (r.dir % 2 === 0) ? -LANE/2 : LANE/2;
+    const perpOff = (r.dir % 2 === 0) ? laneOff : 0;
+    const perpOffY = (r.dir % 2 === 1) ? laneOff : 0;
+
+    const sx = ic.x + (r.dir === 3 ? -segLen : r.dir === 1 ? segLen : 0) + perpOff;
+    const sy = ic.y + (r.dir === 0 ? -segLen : r.dir === 2 ? segLen : 0) + perpOffY;
+    const ex = ic.x + (r.dir === 1 ? segLen : r.dir === 3 ? -segLen : 0) + perpOff;
+    const ey = ic.y + (r.dir === 2 ? segLen : r.dir === 0 ? -segLen : 0) + perpOffY;
+
+    if (i === 0) wps.push({ x: sx, y: sy, dir: r.dir, gx: r.gx, gy: r.gy, type: 'start' });
+    wps.push({ x: ex, y: ey, dir: r.dir, gx: r.gx, gy: r.gy, type: 'segment' });
+    if (i < route.length - 1) {
+      const next = route[i + 1];
+      wps.push({ x: ex, y: ey, dir: next.dir, gx: r.gx, gy: r.gy, type: 'turn', nextDir: next.dir });
+    }
+  }
+  return wps;
+}
+
+// --- Cars ---
+class Car {
+  constructor() {
+    this.color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
+    this.route = makeRoute();
+    this.waypoints = routeToWaypoints(this.route);
+    this.wpIdx = 0;
+    this.x = this.waypoints[0].x;
+    this.y = this.waypoints[0].y;
+    this.dir = this.waypoints[0].dir;
+    this.speed = 0;
+    this.maxSpeed = 55 + Math.random() * 25;
+    this.length = 14 + Math.random() * 4;
+    this.width = 7;
+    this.waiting = false;
+    this.exited = false;
+    this.headlights = Math.random() > 0.3;
+  }
+
+  distTo(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  update(dt, allCars) {
+    if (this.exited || this.wpIdx >= this.waypoints.length) {
+      this.exited = true;
+      return;
+    }
+
+    const wp = this.waypoints[this.wpIdx];
+    const target = { x: wp.x, y: wp.y };
+    const dist = Math.hypot(target.x - this.x, target.y - this.y);
+
+    // Traffic light check
+    let mustStop = false;
+    if (wp.gx !== undefined) {
+      const light = getLight(wp.gx, wp.gy);
+      const state = light.getState(this.dir);
+      const ic = intersectionCenter(wp.gx, wp.gy);
+      const distToCenter = Math.hypot(ic.x - this.x, ic.y - this.y);
+      if (distToCenter < TILE * 0.35 && dist < 30) {
+        if (state === 'red') mustStop = true;
+        if (state === 'yellow' && distToCenter < TILE * 0.2) mustStop = true;
+      }
+    }
+
+    // Car ahead
+    let carAhead = false;
+    for (const other of allCars) {
+      if (other === this || other.exited) continue;
+      const d = Math.hypot(other.x - this.x, other.y - this.y);
+      if (d < 22 && d > 0) {
+        const angleDiff = Math.abs(Math.atan2(other.y - this.y, other.x - this.x) - DIRS[this.dir].angle);
+        if (angleDiff < 0.5 || angleDiff > Math.PI * 1.5) {
+          if (d < 18) carAhead = true;
+        }
+      }
+    }
+
+    const targetSpeed = (mustStop || carAhead) ? 0 : this.maxSpeed;
+    const accel = targetSpeed > this.speed ? 80 : 120;
+    if (this.speed < targetSpeed) this.speed = Math.min(this.speed + accel * dt, targetSpeed);
+    else this.speed = Math.max(this.speed - accel * dt, targetSpeed);
+
+    this.waiting = mustStop || carAhead;
+
+    if (dist < 3) {
+      if (wp.type === 'turn' && wp.nextDir !== undefined) {
+        this.dir = wp.nextDir;
+      }
+      this.wpIdx++;
+      if (this.wpIdx >= this.waypoints.length) {
+        this.exited = true;
+        throughputAcc++;
+        return;
+      }
+    } else {
+      const move = this.speed * dt * 0.6;
+      const nd = Math.min(move, dist);
+      this.x += (target.x - this.x) / dist * nd;
+      this.y += (target.y - this.y) / dist * nd;
+      if (wp.type === 'turn') {
+        this.dir = wp.dir;
+      }
+    }
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(DIRS[this.dir].angle);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(-this.length/2 + 2, -this.width/2 + 2, this.length, this.width);
+
+    // Body
+    ctx.fillStyle = this.color;
+    roundRect(ctx, -this.length/2, -this.width/2, this.length, this.width, 3);
+    ctx.fill();
+
+    // Windshield
+    ctx.fillStyle = nightMode ? 'rgba(180,210,255,0.7)' : 'rgba(100,140,180,0.6)';
+    ctx.fillRect(this.length/2 - 5, -this.width/2 + 1, 4, this.width - 2);
+
+    // Headlights at night
+    if (nightMode && this.headlights) {
+      ctx.globalCompositeOperation = 'lighter';
+      const grad = ctx.createRadialGradient(this.length/2, 0, 0, this.length/2 + 20, 0, 25);
+      grad.addColorStop(0, 'rgba(255,240,180,0.5)');
+      grad.addColorStop(1, 'rgba(255,240,180,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(this.length/2, -8, 30, 16);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Brake lights
+    if (this.waiting) {
+      ctx.fillStyle = '#ff2222';
+      ctx.fillRect(-this.length/2, -this.width/2 + 1, 2, this.width - 2);
+    }
+
+    ctx.restore();
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+let cars = [];
+let spawnTimer = 0;
+const MAX_CARS = 80;
+
+function spawnCar() {
+  if (cars.length >= MAX_CARS) return;
+  cars.push(new Car());
+}
+
+// --- Drawing ---
+function drawBackground() {
+  const skyTop = nightMode ? '#0a0e1a' : '#5a9fd4';
+  const skyBot = nightMode ? '#141828' : '#a8cce8';
+  const grd = ctx.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, skyTop);
+  grd.addColorStop(1, skyBot);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, H);
+
+  // Ground
+  ctx.fillStyle = nightMode ? '#1a2030' : '#3a5a40';
+  ctx.fillRect(ox - 20, oy - 20, GRID * TILE + 40, GRID * TILE + 40);
+}
+
+function drawRoads() {
+  // Road surface
+  ctx.fillStyle = nightMode ? '#2a3040' : '#4a4a52';
+  for (let gy = 0; gy < GRID; gy++) {
+    for (let gx = 0; gx < GRID; gx++) {
+      const x = ox + gx * TILE;
+      const y = oy + gy * TILE;
+      // Horizontal
+      ctx.fillRect(x, y + TILE/2 - ROAD_W/2, TILE, ROAD_W);
+      // Vertical
+      ctx.fillRect(x + TILE/2 - ROAD_W/2, y, ROAD_W, TILE);
+    }
+  }
+
+  // Lane markings
+  ctx.strokeStyle = nightMode ? 'rgba(255,255,200,0.15)' : 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([12, 14]);
+  for (let gy = 0; gy < GRID; gy++) {
+    for (let gx = 0; gx < GRID; gx++) {
+      const cx = ox + gx * TILE + TILE/2;
+      const cy = oy + gy * TILE + TILE/2;
+      const seg = (TILE - ROAD_W) / 2;
+      // H center dashed
+      ctx.beginPath();
+      ctx.moveTo(cx - seg, cy);
+      ctx.lineTo(cx - ROAD_W/2 - 2, cy);
+      ctx.moveTo(cx + ROAD_W/2 + 2, cy);
+      ctx.lineTo(cx + seg, cy);
+      ctx.stroke();
+      // V center dashed
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - seg);
+      ctx.lineTo(cx, cy - ROAD_W/2 - 2);
+      ctx.moveTo(cx, cy + ROAD_W/2 + 2);
+      ctx.lineTo(cx, cy + seg);
+      ctx.stroke();
+    }
+  }
+  ctx.setLineDash([]);
+
+  // Crosswalks
+  ctx.fillStyle = nightMode ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.2)';
+  for (let gy = 0; gy < GRID; gy++) {
+    for (let gx = 0; gx < GRID; gx++) {
+      const cx = ox + gx * TILE + TILE/2;
+      const cy = oy + gy * TILE + TILE/2;
+      const cw = ROAD_W, cl = 6, cg = 3;
+      for (let i = -3; i <= 3; i++) {
+        ctx.fillRect(cx - cw/2, cy + i * (cl+cg) - 12, cw, cl);
+        ctx.fillRect(cx + i * (cl+cg) - 12, cy - cw/2, cl, cw);
+      }
+    }
+  }
+}
+
+function drawBuildings() {
+  for (const b of buildings) {
+    if (b.type === 'park') {
+      ctx.fillStyle = nightMode ? '#1a3a28' : '#4a8a58';
+      ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
+      // Trees
+      for (let t = 0; t < 3; t++) {
+        const tx = b.x + 8 + t * ((b.w - 16) / 2);
+        const ty = b.y + b.h / 2;
+        ctx.fillStyle = nightMode ? '#0a2818' : '#2a6840';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      const h = b.floors * 8 + 10;
+      const baseY = b.y + b.h - 4;
+      const shade = nightMode ? 0.35 : 0.7;
+      ctx.fillStyle = `hsla(${b.hue}, 30%, ${30 + b.floors * 4}%, ${shade})`;
+      ctx.fillRect(b.x + 3, baseY - h, b.w - 6, h);
+
+      // Windows
+      const cols = Math.floor((b.w - 10) / 10);
+      const rows = b.floors;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const lit = nightMode ? (Math.sin(b.lit * 100 + r * 7 + c * 13) > 0) : (Math.random() > 0.3);
+          if (lit) {
+            ctx.fillStyle = nightMode ? 'rgba(255,220,120,0.7)' : 'rgba(180,210,240,0.5)';
+          } else {
+            ctx.fillStyle = nightMode ? 'rgba(20,30,50,0.5)' : 'rgba(60,80,100,0.3)';
+          }
+          ctx.fillRect(b.x + 6 + c * 10, baseY - h + 6 + r * 10, 6, 7);
+        }
+      }
+    }
+  }
+}
+
+function drawTrafficLights() {
+  for (const light of lights) {
+    const ic = intersectionCenter(light.gx, light.gy);
+    const positions = [
+      { x: ic.x - ROAD_W/2 - 6, y: ic.y - ROAD_W/2 - 10, dir: 2 },
+      { x: ic.x + ROAD_W/2 + 6, y: ic.y + ROAD_W/2 + 10, dir: 0 },
+      { x: ic.x + ROAD_W/2 + 10, y: ic.y - ROAD_W/2 - 6, dir: 3 },
+      { x: ic.x - ROAD_W/2 - 10, y: ic.y + ROAD_W/2 + 6, dir: 1 },
+    ];
+    positions.forEach(pos => {
+      const state = light.getState(pos.dir);
+      ctx.fillStyle = '#222';
+      ctx.fillRect(pos.x - 3, pos.y - 8, 6, 16);
+      const colors = { green: '#44dd66', yellow: '#ddcc22', red: '#ee3344' };
+      ['red','yellow','green'].forEach((s, i) => {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y - 5 + i * 5, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = s === state ? colors[s] : '#333';
+        if (s === state && nightMode) {
+          ctx.shadowColor = colors[s];
+          ctx.shadowBlur = 8;
+        }
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+    });
+  }
+}
+
+function drawCars() {
+  const sorted = [...cars].sort((a, b) => a.y - b.y);
+  for (const car of sorted) car.draw(ctx);
+}
+
+function updateHUD() {
+  const active = cars.filter(c => !c.exited);
+  document.getElementById('s-cars').textContent = active.length;
+  const avgSpd = active.length ? active.reduce((s,c) => s + c.speed, 0) / active.length : 0;
+  document.getElementById('s-speed').textContent = Math.round(avgSpd * 1.2) + ' km/h';
+  const waiting = active.filter(c => c.waiting).length;
+  const cong = active.length ? Math.round(waiting / active.length * 100) : 0;
+  document.getElementById('s-cong').textContent = cong + '%';
+  const h = Math.floor(gameHour) % 24;
+  const m = Math.floor((gameHour % 1) * 60);
+  document.getElementById('s-time').textContent =
+    String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+  document.getElementById('s-through').textContent = throughput + '/min';
+}
+
+// --- Main loop ---
+let lastTime = 0;
+function loop(timestamp) {
+  requestAnimationFrame(loop);
+  const rawDt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+  if (!started) return;
+
+  const dt = paused ? 0 : rawDt * simSpeed;
+
+  if (!paused) {
+    simTime += dt;
+    gameHour = 6 + (simTime / 60) * 0.5;
+    if (gameHour >= 24) gameHour -= 24;
+
+    // Auto night
+    const hr = gameHour % 24;
+    if (!document.getElementById('btn-night').classList.contains('active')) {
+      nightMode = hr < 6 || hr > 20;
+    }
+
+    lights.forEach(l => l.update(dt));
+
+    spawnTimer += dt;
+    const interval = rushHour ? 0.4 / density : 0.9 / density;
+    while (spawnTimer > interval) {
+      spawnTimer -= interval;
+      spawnCar();
+    }
+
+    cars.forEach(c => c.update(dt, cars));
+    cars = cars.filter(c => !c.exited);
+
+    throughputTimer += dt;
+    if (throughputTimer >= 60) {
+      throughput = throughputAcc;
+      throughputAcc = 0;
+      throughputTimer = 0;
+    }
+  }
+
+  drawBackground();
+  drawBuildings();
+  drawRoads();
+  drawTrafficLights();
+  drawCars();
+
+  // Vignette at night
+  if (nightMode) {
+    const vg = ctx.createRadialGradient(W/2, H/2, W*0.2, W/2, H/2, W*0.7);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,10,0.45)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  updateHUD();
+}
+
+requestAnimationFrame(loop);
+
+// --- Controls ---
+document.getElementById('startBtn').addEventListener('click', () => {
+  started = true;
+  document.getElementById('intro').classList.add('hidden');
+  for (let i = 0; i < 12; i++) spawnCar();
+});
+
+document.getElementById('btn-pause').addEventListener('click', function() {
+  paused = !paused;
+  this.textContent = paused ? '▶ Play' : '⏸ Pause';
+  this.classList.toggle('active', paused);
+});
+
+document.getElementById('sim-speed').addEventListener('input', function() {
+  simSpeed = parseFloat(this.value);
+  document.getElementById('speed-label').textContent = simSpeed + '×';
+});
+
+document.getElementById('density').addEventListener('input', function() {
+  density = parseFloat(this.value);
+});
+
+document.getElementById('btn-rush').addEventListener('click', function() {
+  rushHour = !rushHour;
+  this.classList.toggle('active', rushHour);
+});
+
+document.getElementById('btn-night').addEventListener('click', function() {
+  this.classList.toggle('active');
+  if (!this.classList.contains('active')) {
+    nightMode = false;
+  } else {
+    nightMode = true;
+  }
+});
+
+})();
+</script>
+</body>
+</html>

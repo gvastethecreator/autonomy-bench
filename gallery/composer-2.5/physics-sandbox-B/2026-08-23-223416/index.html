@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Physics Sandbox</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0c0e14;
+    --panel: rgba(18, 22, 32, 0.88);
+    --border: rgba(255,255,255,0.08);
+    --text: #e8ecf4;
+    --muted: #8892a8;
+    --accent: #5eead4;
+    --accent2: #818cf8;
+    --danger: #f87171;
+    --warn: #fbbf24;
+  }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  canvas.dragging { cursor: grabbing; }
+  canvas.pin-mode { cursor: cell; }
+
+  #hud {
+    position: fixed; top: 16px; left: 16px; right: 16px;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    pointer-events: none; z-index: 10;
+  }
+  #title-block { pointer-events: none; }
+  #title-block h1 {
+    font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  #title-block p { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+  #toolbar {
+    pointer-events: auto;
+    display: flex; flex-wrap: wrap; gap: 6px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 8px;
+    backdrop-filter: blur(12px);
+    max-width: min(520px, 90vw);
+  }
+  .tool-group { display: flex; gap: 4px; align-items: center; }
+  .tool-group + .tool-group { border-left: 1px solid var(--border); padding-left: 8px; }
+  button, .toggle {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+    white-space: nowrap;
+  }
+  button:hover, .toggle:hover { background: rgba(255,255,255,0.1); }
+  button:active { transform: scale(0.96); }
+  button.active {
+    background: rgba(94, 234, 212, 0.15);
+    border-color: rgba(94, 234, 212, 0.45);
+    color: var(--accent);
+  }
+  button.danger:hover { border-color: rgba(248,113,113,0.5); color: var(--danger); }
+
+  #sidebar {
+    position: fixed; bottom: 16px; left: 16px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 12px 14px;
+    backdrop-filter: blur(12px);
+    pointer-events: auto; z-index: 10;
+    min-width: 200px;
+  }
+  #sidebar label {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.72rem; color: var(--muted); margin-bottom: 6px;
+  }
+  #sidebar label span.val { color: var(--accent); font-variant-numeric: tabular-nums; }
+  input[type=range] {
+    width: 100%; margin-bottom: 10px; accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .stat-row {
+    display: flex; justify-content: space-between;
+    font-size: 0.7rem; color: var(--muted); padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .stat-row span:last-child { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  #hint {
+    position: fixed; bottom: 16px; right: 16px;
+    font-size: 0.68rem; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 12px;
+    backdrop-filter: blur(12px); pointer-events: none; z-index: 10;
+    max-width: 220px; line-height: 1.5;
+  }
+  kbd {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px;
+    font-size: 0.65rem; font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div id="title-block">
+    <h1>Physics Sandbox</h1>
+    <p>Build, break, and play with matter</p>
+  </div>
+  <div id="toolbar">
+    <div class="tool-group">
+      <button class="tool active" data-tool="box" title="Box (1)">▢ Box</button>
+      <button class="tool" data-tool="circle" title="Circle (2)">● Circle</button>
+      <button class="tool" data-tool="triangle" title="Triangle (3)">△ Tri</button>
+      <button class="tool" data-tool="poly" title="Polygon (4)">⬡ Poly</button>
+    </div>
+    <div class="tool-group">
+      <button class="tool" data-tool="pin" title="Pin static (5)">📌 Pin</button>
+      <button class="tool" data-tool="spring" title="Spring (6)">〰 Spring</button>
+      <button class="tool" data-tool="chain" title="Chain (7)">⛓ Chain</button>
+    </div>
+    <div class="tool-group">
+      <button id="pause-btn" title="Pause (Space)">⏸ Pause</button>
+      <button id="clear-btn" class="danger" title="Clear (C)">✕ Clear</button>
+    </div>
+  </div>
+</div>
+
+<div id="sidebar">
+  <label>Gravity <span class="val" id="grav-val">1.0</span></label>
+  <input type="range" id="gravity" min="0" max="3" step="0.05" value="1">
+  <label>Restitution <span class="val" id="rest-val">0.6</span></label>
+  <input type="range" id="restitution" min="0" max="1.2" step="0.05" value="0.6">
+  <label>Size <span class="val" id="size-val">40</span></label>
+  <input type="range" id="size" min="12" max="80" step="2" value="40">
+  <div class="stat-row"><span>Bodies</span><span id="body-count">0</span></div>
+  <div class="stat-row"><span>Constraints</span><span id="con-count">0</span></div>
+  <div class="stat-row"><span>FPS</span><span id="fps">60</span></div>
+</div>
+
+<div id="hint">
+  <kbd>LMB</kbd> spawn &nbsp; <kbd>Drag</kbd> move<br>
+  <kbd>RMB</kbd> delete &nbsp; <kbd>Shift</kbd> big<br>
+  <kbd>Wheel</kbd> rotate spawn
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+(function () {
+  const { Engine, Render, Runner, Bodies, Body, Composite, Composites, Constraint, Mouse, MouseConstraint, Events, Vector } = Matter;
+
+  const canvas = document.getElementById('canvas');
+  const engine = Engine.create({ enableSleeping: true });
+  engine.gravity.y = 1;
+
+  const render = Render.create({
+    canvas,
+    engine,
+    options: {
+      width: innerWidth,
+      height: innerHeight,
+      wireframes: false,
+      background: '#0c0e14',
+      pixelRatio: Math.min(devicePixelRatio, 2),
+    }
+  });
+
+  Render.run(render);
+  const runner = Runner.create();
+  Runner.run(runner, engine);
+
+  const W = () => render.options.width;
+  const H = () => render.options.height;
+  const wallThick = 60;
+
+  const palette = [
+    '#5eead4', '#818cf8', '#f472b6', '#fbbf24', '#34d399',
+    '#fb923c', '#a78bfa', '#38bdf8', '#f87171', '#4ade80'
+  ];
+  let colorIdx = 0;
+  const nextColor = () => palette[(colorIdx++) % palette.length];
+
+  function makeWalls() {
+    const opts = { isStatic: true, render: { fillStyle: '#1a2030', strokeStyle: '#2a3348', lineWidth: 1 } };
+    return [
+      Bodies.rectangle(W()/2, H() + wallThick/2 - 4, W() + 200, wallThick, opts),
+      Bodies.rectangle(-wallThick/2 + 4, H()/2, wallThick, H() + 200, opts),
+      Bodies.rectangle(W() + wallThick/2 - 4, H()/2, wallThick, H() + 200, opts),
+    ];
+  }
+
+  let walls = makeWalls();
+  Composite.add(engine.world, walls);
+
+  const mouse = Mouse.create(render.canvas);
+  const mouseConstraint = MouseConstraint.create(engine, {
+    mouse,
+    constraint: { stiffness: 0.2, render: { visible: false } }
+  });
+  Composite.add(engine.world, mouseConstraint);
+  render.mouse = mouse;
+
+  let currentTool = 'box';
+  let spawnSize = 40;
+  let restitution = 0.6;
+  let spawnAngle = 0;
+  let paused = false;
+  let springStart = null;
+  let chainPoints = [];
+  let pendingChain = [];
+
+  const bodyRender = (color, opts = {}) => ({
+    fillStyle: color,
+    strokeStyle: 'rgba(255,255,255,0.15)',
+    lineWidth: 1.5,
+    ...opts
+  });
+
+  function createBody(tool, x, y, size, angle) {
+    const color = nextColor();
+    const opts = {
+      restitution,
+      friction: 0.4,
+      frictionAir: 0.01,
+      render: bodyRender(color),
+    };
+    let body;
+    switch (tool) {
+      case 'box':
+        body = Bodies.rectangle(x, y, size, size * (0.6 + Math.random() * 0.5), { ...opts, angle });
+        break;
+      case 'circle':
+        body = Bodies.circle(x, y, size / 2, opts);
+        break;
+      case 'triangle':
+        body = Bodies.polygon(x, y, 3, size / 2, { ...opts, angle });
+        break;
+      case 'poly':
+        body = Bodies.polygon(x, y, 5 + Math.floor(Math.random() * 4), size / 2, { ...opts, angle });
+        break;
+      case 'pin':
+        body = Bodies.circle(x, y, size / 3, {
+          isStatic: true,
+          render: bodyRender('#fbbf24', { strokeStyle: 'rgba(251,191,36,0.5)' })
+        });
+        break;
+      default:
+        body = Bodies.rectangle(x, y, size, size, { ...opts, angle });
+    }
+    return body;
+  }
+
+  function spawnAt(x, y, big = false) {
+    const size = big ? spawnSize * 1.8 : spawnSize;
+    const body = createBody(currentTool, x, y, size, spawnAngle);
+    if (body) {
+      Composite.add(engine.world, body);
+      burst(x, y, body.render.fillStyle);
+    }
+  }
+
+  function deleteAt(x, y) {
+    const bodies = Composite.allBodies(engine.world);
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      if (b.isStatic && walls.includes(b)) continue;
+      const dx = b.position.x - x, dy = b.position.y - y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const r = Math.max(b.circleRadius || 20, Math.max(b.bounds.max.x - b.bounds.min.x, b.bounds.max.y - b.bounds.min.y) / 2);
+      if (dist < r + 10) {
+        burst(b.position.x, b.position.y, b.render?.fillStyle || '#fff');
+        Composite.remove(engine.world, b);
+        return;
+      }
+    }
+    const constraints = Composite.allConstraints(engine.world);
+    for (let i = constraints.length - 1; i >= 0; i--) {
+      const c = constraints[i];
+      if (c.label === 'mouse') continue;
+      const mx = (c.pointA ? c.bodyA?.position.x + c.pointA.x : c.bodyA?.position.x) || 0;
+      const my = (c.pointA ? c.bodyA?.position.y + c.pointA.y : c.bodyA?.position.y) || 0;
+      const dx = mx - x, dy = my - y;
+      if (Math.sqrt(dx*dx + dy*dy) < 20) {
+        Composite.remove(engine.world, c);
+        return;
+      }
+    }
+  }
+
+  function addSpring(x1, y1, x2, y2) {
+    const dist = Vector.magnitude(Vector.sub({ x: x2, y: y1 }, { x: x1, y: y1 }));
+    const c = Constraint.create({
+      pointA: { x: x1, y: y1 },
+      pointB: { x: x2, y: y2 },
+      length: Math.max(20, Math.hypot(x2-x1, y2-y1) * 0.8),
+      stiffness: 0.04,
+      damping: 0.05,
+      render: { lineWidth: 2, strokeStyle: '#818cf8', type: 'spring' }
+    });
+    Composite.add(engine.world, c);
+  }
+
+  function addChain(x1, y1, x2, y2) {
+    const dist = Math.hypot(x2-x1, y2-y1);
+    const segments = Math.max(3, Math.floor(dist / 25));
+    const chain = Composites.stack(x1, y1 - 10, segments, 1, 0, 0, (x, y) =>
+      Bodies.circle(x, y, 8, {
+        restitution: 0.3,
+        friction: 0.5,
+        collisionFilter: { group: -1 },
+        render: bodyRender('#8892a8')
+      })
+    );
+    Composites.chain(chain, 0.5, 0, -0.5, 0, { stiffness: 0.9, length: 2, render: { strokeStyle: '#555', lineWidth: 2 } });
+    const last = chain.bodies[chain.bodies.length - 1];
+    Constraint.create({
+      bodyA: last,
+      pointB: { x: x2, y: y2 },
+      length: 10,
+      stiffness: 0.9,
+      render: { visible: false }
+    });
+    Composite.add(engine.world, chain);
+    Constraint.create({
+      bodyA: chain.bodies[0],
+      pointB: { x: x1, y: y1 },
+      length: 5,
+      stiffness: 0.9,
+      render: { visible: false }
+    });
+  }
+
+  /* particles */
+  const particles = [];
+  function burst(x, y, color) {
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 1 + Math.random() * 3;
+      particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 1, color });
+    }
+  }
+
+  Events.on(render, 'afterRender', () => {
+    const ctx = render.context;
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.08; p.life -= 0.03;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    if (springStart) {
+      ctx.strokeStyle = 'rgba(129,140,248,0.6)';
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(springStart.x, springStart.y);
+      ctx.lineTo(mouse.position.x, mouse.position.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (chainPoints.length > 0) {
+      ctx.strokeStyle = 'rgba(94,234,212,0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(chainPoints[0].x, chainPoints[0].y);
+      for (let i = 1; i < chainPoints.length; i++) ctx.lineTo(chainPoints[i].x, chainPoints[i].y);
+      ctx.lineTo(mouse.position.x, mouse.position.y);
+      ctx.stroke();
+    }
+  });
+
+  /* collision sparks */
+  Events.on(engine, 'collisionStart', (e) => {
+    e.pairs.forEach(({ bodyA, bodyB }) => {
+      const speed = Vector.magnitude(Vector.sub(bodyA.velocity, bodyB.velocity));
+      if (speed > 4) {
+        const cx = (bodyA.position.x + bodyB.position.x) / 2;
+        const cy = (bodyA.position.y + bodyB.position.y) / 2;
+        for (let i = 0; i < Math.min(5, speed); i++) burst(cx, cy, '#fff');
+      }
+    });
+  });
+
+  /* input */
+  let isDragging = false;
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 2) {
+      deleteAt(mouse.position.x, mouse.position.y);
+      return;
+    }
+    if (e.button !== 0) return;
+
+    if (currentTool === 'spring') {
+      if (!springStart) {
+        springStart = { x: mouse.position.x, y: mouse.position.y };
+      } else {
+        addSpring(springStart.x, springStart.y, mouse.position.x, mouse.position.y);
+        springStart = null;
+        burst(mouse.position.x, mouse.position.y, '#818cf8');
+      }
+      return;
+    }
+    if (currentTool === 'chain') {
+      chainPoints.push({ x: mouse.position.x, y: mouse.position.y });
+      if (chainPoints.length >= 2) {
+        const a = chainPoints[chainPoints.length - 2];
+        const b = chainPoints[chainPoints.length - 1];
+        addChain(a.x, a.y, b.x, b.y);
+        chainPoints = [b];
+      }
+      return;
+    }
+
+    const hit = Matter.Query.point(Composite.allBodies(engine.world), mouse.position);
+    if (hit.length === 0) {
+      spawnAt(mouse.position.x, mouse.position.y, e.shiftKey);
+    } else {
+      isDragging = true;
+      canvas.classList.add('dragging');
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    isDragging = false;
+    canvas.classList.remove('dragging');
+  });
+
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    spawnAngle += e.deltaY * 0.002;
+  }, { passive: false });
+
+  /* preset demo on load */
+  function seedWorld() {
+    const cx = W() / 2;
+    for (let i = 0; i < 6; i++) {
+      const x = cx - 120 + i * 48;
+      const body = Bodies.rectangle(x, 80, 36, 36, {
+        restitution: 0.6,
+        render: bodyRender(palette[i % palette.length])
+      });
+      Composite.add(engine.world, body);
+    }
+    const ball = Bodies.circle(cx, 40, 22, {
+      restitution: 0.85,
+      render: bodyRender('#f472b6')
+    });
+    Composite.add(engine.world, ball);
+
+    const platform = Bodies.rectangle(cx, H() * 0.55, 200, 14, {
+      isStatic: true, angle: -0.15,
+      render: bodyRender('#2a3348', { strokeStyle: '#3d4a62' })
+    });
+    Composite.add(engine.world, platform);
+
+    addSpring(cx - 80, 120, cx + 80, 200);
+  }
+  seedWorld();
+
+  /* UI */
+  document.querySelectorAll('.tool').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentTool = btn.dataset.tool;
+      springStart = null;
+      chainPoints = [];
+      canvas.classList.toggle('pin-mode', currentTool === 'pin');
+    });
+  });
+
+  const gravSlider = document.getElementById('gravity');
+  const restSlider = document.getElementById('restitution');
+  const sizeSlider = document.getElementById('size');
+
+  gravSlider.addEventListener('input', () => {
+    engine.gravity.y = parseFloat(gravSlider.value);
+    document.getElementById('grav-val').textContent = parseFloat(gravSlider.value).toFixed(2);
+  });
+  restSlider.addEventListener('input', () => {
+    restitution = parseFloat(restSlider.value);
+    document.getElementById('rest-val').textContent = restitution.toFixed(2);
+  });
+  sizeSlider.addEventListener('input', () => {
+    spawnSize = parseInt(sizeSlider.value, 10);
+    document.getElementById('size-val').textContent = spawnSize;
+  });
+
+  document.getElementById('pause-btn').addEventListener('click', togglePause);
+  document.getElementById('clear-btn').addEventListener('click', clearWorld);
+
+  function togglePause() {
+    paused = !paused;
+    engine.timing.timeScale = paused ? 0 : 1;
+    document.getElementById('pause-btn').textContent = paused ? '▶ Play' : '⏸ Pause';
+  }
+
+  function clearWorld() {
+    Composite.allBodies(engine.world).slice().forEach(b => {
+      if (!b.isStatic || !walls.includes(b)) Composite.remove(engine.world, b);
+    });
+    Composite.allConstraints(engine.world).slice().forEach(c => {
+      if (c.label !== 'mouse') Composite.remove(engine.world, c);
+    });
+    springStart = null;
+    chainPoints = [];
+    colorIdx = 0;
+  }
+
+  const toolKeys = { '1':'box','2':'circle','3':'triangle','4':'poly','5':'pin','6':'spring','7':'chain' };
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+    if (e.key === 'c' || e.key === 'C') clearWorld();
+    if (toolKeys[e.key]) {
+      document.querySelector(`.tool[data-tool="${toolKeys[e.key]}"]`)?.click();
+    }
+  });
+
+  /* resize */
+  function resize() {
+    render.options.width = innerWidth;
+    render.options.height = innerHeight;
+    render.canvas.width = render.options.width * render.options.pixelRatio;
+    render.canvas.height = render.options.height * render.options.pixelRatio;
+    render.canvas.style.width = render.options.width + 'px';
+    render.canvas.style.height = render.options.height + 'px';
+    Composite.remove(engine.world, walls);
+    walls = makeWalls();
+    Composite.add(engine.world, walls);
+  }
+  addEventListener('resize', resize);
+
+  /* stats */
+  let frameCount = 0, lastFps = performance.now();
+  Events.on(engine, 'afterUpdate', () => {
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFps >= 500) {
+      document.getElementById('fps').textContent = Math.round(frameCount / ((now - lastFps) / 1000));
+      document.getElementById('body-count').textContent =
+        Composite.allBodies(engine.world).filter(b => !walls.includes(b)).length;
+      document.getElementById('con-count').textContent =
+        Composite.allConstraints(engine.world).filter(c => c.label !== 'mouse').length;
+      frameCount = 0;
+      lastFps = now;
+    }
+  });
+})();
+</script>
+</body>
+</html>

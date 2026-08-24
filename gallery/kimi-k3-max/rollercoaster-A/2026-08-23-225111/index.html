@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Velocity — First-Person Rollercoaster</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.38) 100%);
+  }
+  #hud {
+    position: fixed; left: 18px; top: 16px; pointer-events: none;
+    color: #eaf2ff; font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    text-shadow: 0 1px 3px rgba(0,0,0,.65); user-select: none;
+  }
+  #hud h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
+  #hud .sub { opacity: .8; }
+  #speed { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    color: rgba(234,242,255,.8); font: 12px/1.4 system-ui, sans-serif;
+    letter-spacing: .06em; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    user-select: none;
+  }
+  #fallback {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: #0b0e13; color: #dbe6f5; text-align: center; padding: 24px;
+    font: 14px/1.6 system-ui, sans-serif;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="hud">
+  <h1>Velocity · Loop 01</h1>
+  <div class="sub"><span id="speed">0</span> km/h · continuous circuit</div>
+</div>
+<div id="hint">move mouse to look around</div>
+<div id="fallback"><div>
+  <p><strong>The ride could not start.</strong></p>
+  <p>This page loads Three.js from a CDN — check your network connection and reload.</p>
+  <p id="fallback-msg" style="opacity:.6"></p>
+</div></div>
+
+<script>
+  window.__coasterTimer = setTimeout(function () {
+    if (!window.__coasterStarted) {
+      document.getElementById('fallback').style.display = 'flex';
+    }
+  }, 8000);
+</script>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const G = 9.81;
+
+function fail(err) {
+  console.error(err);
+  document.getElementById('fallback').style.display = 'flex';
+  document.getElementById('fallback-msg').textContent = String((err && err.message) || err);
+}
+
+function main() {
+  // ---------- renderer / scene ----------
+  const container = document.getElementById('app');
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfe3f5);
+  scene.fog = new THREE.Fog(0xcfe3f5, 150, 1050);
+
+  const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 3000);
+
+  // ---------- lights ----------
+  scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x4a6b46, 1.0));
+  const sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
+  sun.position.set(140, 220, 80);
+  scene.add(sun);
+
+  // ---------- sky dome ----------
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(1400, 24, 12),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide, depthWrite: false, fog: false,
+      uniforms: {
+        top: { value: new THREE.Color(0x2f6fc4) },
+        bottom: { value: new THREE.Color(0xcfe3f5) }
+      },
+      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: 'varying vec3 vP; uniform vec3 top; uniform vec3 bottom; void main(){ float h = clamp(normalize(vP).y * 0.5 + 0.5, 0.0, 1.0); gl_FragColor = vec4(mix(bottom, top, pow(h, 0.75)), 1.0); }'
+    })
+  );
+  scene.add(sky);
+
+  // ---------- ground ----------
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(900, 64),
+    new THREE.MeshStandardMaterial({ color: 0x528a51, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+
+  // ---------- track layout ----------
+  const control = [
+    [0, 3, 70], [0, 3, 30], [-2, 6, -5], [0, 34, -45],
+    [8, 5, -85], [35, 7, -105], [75, 16, -95], [105, 26, -60],
+    [115, 8, -10], [100, 5, 40], [70, 22, 75], [25, 12, 95],
+    [-25, 6, 85], [-60, 10, 55], [-80, 20, 10], [-70, 26, -35],
+    [-40, 14, -45], [-15, 6, -20], [-5, 4, 20]
+  ].map(function (a) { return new THREE.Vector3(a[0], a[1], a[2]); });
+
+  const curve = new THREE.CatmullRomCurve3(control, true, 'centripetal');
+  const length = curve.getLength();
+
+  // ---------- sampled frames (world-up based, seam-free for closed loop) ----------
+  const N = 1600;
+  const ds = length / N;
+  const pts = [], tans = [], rights = [], ups = [];
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const p = curve.getPointAt(u, new THREE.Vector3());
+    const t = curve.getTangentAt(u, new THREE.Vector3()).normalize();
+    const r = new THREE.Vector3().crossVectors(WORLD_UP, t);
+    if (r.lengthSq() < 1e-8) r.set(1, 0, 0);
+    r.normalize();
+    const up = new THREE.Vector3().crossVectors(t, r).normalize();
+    pts.push(p); tans.push(t); rights.push(r); ups.push(up);
+  }
+
+  function smoothWrap(arr, passes, win) {
+    const half = (win - 1) / 2;
+    const tmp = new Float32Array(N);
+    for (let p = 0; p < passes; p++) {
+      for (let i = 0; i < N; i++) {
+        let s = 0;
+        for (let j = -half; j <= half; j++) s += arr[(i + j + N) % N];
+        tmp[i] = s / win;
+      }
+      for (let i = 0; i < N; i++) arr[i] = tmp[i];
+      arr[N] = arr[0];
+    }
+  }
+
+  // ---------- speed profile (energy exchange: slow on climbs, fast on drops) ----------
+  let maxH = -Infinity;
+  for (let i = 0; i < N; i++) maxH = Math.max(maxH, pts[i].y);
+  const speeds = new Float32Array(N + 1);
+  const vTop = 7;
+  for (let i = 0; i < N; i++) {
+    speeds[i] = THREE.MathUtils.clamp(Math.sqrt(vTop * vTop + 2 * G * (maxH - pts[i].y)), 4.5, 42);
+  }
+  speeds[N] = speeds[0];
+  smoothWrap(speeds, 2, 61);
+
+  // ---------- banking from curvature (lean into turns) ----------
+  const banks = new Float32Array(N + 1);
+  const kv = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    const prev = (i - 1 + N) % N, next = (i + 1) % N;
+    kv.subVectors(tans[next], tans[prev]).divideScalar(2 * ds);
+    const aLat = speeds[i] * speeds[i] * kv.dot(rights[i]);
+    banks[i] = THREE.MathUtils.clamp(Math.atan2(aLat, G), -1.15, 1.15);
+  }
+  banks[N] = banks[0];
+  smoothWrap(banks, 4, 25);
+
+  // ---------- banked frames ----------
+  const upsB = [], rightsB = [];
+  for (let i = 0; i <= N; i++) {
+    const c = Math.cos(banks[i]), s = Math.sin(banks[i]);
+    upsB.push(ups[i].clone().multiplyScalar(c).addScaledVector(rights[i], s).normalize());
+    rightsB.push(rights[i].clone().multiplyScalar(c).addScaledVector(ups[i], -s).normalize());
+  }
+
+  // ---------- rails + spine ----------
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xe8ecf2, metalness: 0.85, roughness: 0.35 });
+  const spineMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, metalness: 0.4, roughness: 0.5 });
+  const railL = [], railR = [], spinePts = [];
+  for (let i = 0; i < N; i += 2) {
+    railL.push(pts[i].clone().addScaledVector(rightsB[i], -0.55).addScaledVector(upsB[i], 0.02));
+    railR.push(pts[i].clone().addScaledVector(rightsB[i], 0.55).addScaledVector(upsB[i], 0.02));
+    spinePts.push(pts[i].clone().addScaledVector(upsB[i], -0.28));
+  }
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railL, true, 'centripetal'), 1000, 0.06, 8, true), railMat));
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railR, true, 'centripetal'), 1000, 0.06, 8, true), railMat));
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(spinePts, true, 'centripetal'), 1000, 0.14, 8, true), spineMat));
+
+  // ---------- ties ----------
+  const tieStep = Math.max(1, Math.round(1.15 / ds));
+  const tieCount = Math.floor(N / tieStep);
+  const ties = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1.5, 0.07, 0.28),
+    new THREE.MeshStandardMaterial({ color: 0x4a3b2f, roughness: 0.9 }),
+    tieCount
+  );
+  const m4 = new THREE.Matrix4();
+  const tp = new THREE.Vector3();
+  for (let j = 0; j < tieCount; j++) {
+    const i = (j * tieStep) % N;
+    tp.copy(pts[i]).addScaledVector(upsB[i], -0.14);
+    m4.makeBasis(rightsB[i], upsB[i], tans[i]);
+    m4.setPosition(tp);
+    ties.setMatrixAt(j, m4);
+  }
+  scene.add(ties);
+
+  // ---------- supports ----------
+  const supStep = Math.max(1, Math.round(8.5 / ds));
+  const supList = [];
+  for (let i = 0; i < N; i += supStep) {
+    const h = pts[i].y - 0.35;
+    if (h > 2.6) supList.push([pts[i].x, pts[i].z, h]);
+  }
+  const supports = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.14, 0.2, 1, 8),
+    new THREE.MeshStandardMaterial({ color: 0xdde3ea, metalness: 0.3, roughness: 0.6 }),
+    Math.max(1, supList.length)
+  );
+  for (let j = 0; j < supList.length; j++) {
+    m4.makeScale(1, supList[j][2], 1);
+    m4.setPosition(supList[j][0], supList[j][2] / 2, supList[j][1]);
+    supports.setMatrixAt(j, m4);
+  }
+  scene.add(supports);
+
+  // ---------- scenery: trees, rocks, clouds ----------
+  const coarse = [];
+  for (let i = 0; i < N; i += 16) coarse.push(pts[i]);
+  function clearOfTrack(x, z, d) {
+    for (let i = 0; i < coarse.length; i++) {
+      const dx = coarse[i].x - x, dz = coarse[i].z - z;
+      if (dx * dx + dz * dz < d * d) return false;
+    }
+    return true;
+  }
+
+  const TREE_N = 260;
+  const cones = new THREE.InstancedMesh(
+    new THREE.ConeGeometry(1.7, 5.2, 7),
+    new THREE.MeshStandardMaterial({ color: 0x2f6b3a, roughness: 1 }),
+    TREE_N
+  );
+  const trunks = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.22, 0.3, 1.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0x5b4632, roughness: 1 }),
+    TREE_N
+  );
+  const dummy = new THREE.Object3D();
+  let placed = 0, guard = 0;
+  while (placed < TREE_N && guard++ < TREE_N * 20) {
+    const a = Math.random() * Math.PI * 2;
+    const rad = 40 + Math.random() * 340;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    if (!clearOfTrack(x, z, 10)) continue;
+    const s = 0.7 + Math.random() * 0.9;
+    dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
+    dummy.scale.setScalar(s);
+    dummy.position.set(x, 0.6 * s, z);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(placed, dummy.matrix);
+    dummy.position.y = 3.8 * s;
+    dummy.updateMatrix();
+    cones.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  cones.count = placed; trunks.count = placed;
+  scene.add(cones); scene.add(trunks);
+
+  const ROCK_N = 36;
+  const rocks = new THREE.InstancedMesh(
+    new THREE.DodecahedronGeometry(1, 0),
+    new THREE.MeshStandardMaterial({ color: 0x8d939c, roughness: 0.95 }),
+    ROCK_N
+  );
+  placed = 0; guard = 0;
+  while (placed < ROCK_N && guard++ < ROCK_N * 20) {
+    const a = Math.random() * Math.PI * 2;
+    const rad = 30 + Math.random() * 320;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    if (!clearOfTrack(x, z, 12)) continue;
+    const s = 0.5 + Math.random() * 1.7;
+    dummy.rotation.set(Math.random(), Math.random() * Math.PI, Math.random());
+    dummy.scale.set(s, s * 0.7, s);
+    dummy.position.set(x, 0.25 * s, z);
+    dummy.updateMatrix();
+    rocks.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  rocks.count = placed;
+  scene.add(rocks);
+
+  const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
+  const cloudGeo = new THREE.SphereGeometry(1, 10, 8);
+  const clouds = [];
+  for (let c = 0; c < 12; c++) {
+    const grp = new THREE.Group();
+    const puffs = 3 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < puffs; k++) {
+      const m = new THREE.Mesh(cloudGeo, cloudMat);
+      m.position.set((k - puffs / 2) * 7 + Math.random() * 3, Math.random() * 2.5, Math.random() * 5 - 2.5);
+      m.scale.set(6 + Math.random() * 5, 2.6 + Math.random() * 1.6, 4 + Math.random() * 3);
+      grp.add(m);
+    }
+    grp.position.set(Math.random() * 900 - 450, 95 + Math.random() * 60, Math.random() * 900 - 450);
+    grp.userData.v = 1 + Math.random() * 1.8;
+    clouds.push(grp);
+    scene.add(grp);
+  }
+
+  // ---------- input (mouse look, decays back to forward) ----------
+  let lookTX = 0, lookTY = 0, lookX = 0, lookY = 0;
+  window.addEventListener('pointermove', function (e) {
+    lookTX = (e.clientX / window.innerWidth - 0.5) * 2;
+    lookTY = (e.clientY / window.innerHeight - 0.5) * 2;
+  });
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- ride loop (continuous playback) ----------
+  const speedEl = document.getElementById('speed');
+  const pA = new THREE.Vector3(), tA = new THREE.Vector3(), rA = new THREE.Vector3(), uA = new THREE.Vector3();
+  const upB = new THREE.Vector3(), rightB = new THREE.Vector3();
+  const eye = new THREE.Vector3(), pa = new THREE.Vector3(), dir = new THREE.Vector3(), tgt = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+
+  let u = 0;
+  let last = performance.now();
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+
+    const f = u * N;
+    let i0 = Math.floor(f);
+    if (i0 >= N) i0 = N - 1;
+    const i1 = i0 + 1;
+    const fr = f - Math.floor(f);
+
+    const speed = speeds[i0] + (speeds[i1] - speeds[i0]) * fr;
+    u = (u + speed * dt / length) % 1;
+
+    curve.getPointAt(u, pA);
+    curve.getTangentAt(u, tA).normalize();
+    rA.crossVectors(WORLD_UP, tA);
+    if (rA.lengthSq() < 1e-8) rA.set(1, 0, 0);
+    rA.normalize();
+    uA.crossVectors(tA, rA).normalize();
+
+    const bank = banks[i0] + (banks[i1] - banks[i0]) * fr;
+    const cb = Math.cos(bank), sb = Math.sin(bank);
+    upB.copy(uA).multiplyScalar(cb).addScaledVector(rA, sb).normalize();
+    rightB.copy(rA).multiplyScalar(cb).addScaledVector(uA, -sb).normalize();
+
+    eye.copy(pA).addScaledVector(upB, 1.55);
+    const vib = Math.min(1, speed / 38);
+    eye.addScaledVector(upB, Math.sin(now * 0.09) * 0.015 * vib);
+    eye.addScaledVector(rightB, Math.sin(now * 0.113 + 1.7) * 0.012 * vib);
+
+    curve.getPointAt((u + (4 + speed * 0.28) / length) % 1, pa);
+    pa.addScaledVector(upB, 1.35);
+    dir.subVectors(pa, eye).normalize();
+
+    lookX += (lookTX - lookX) * Math.min(1, dt * 5);
+    lookY += (lookTY - lookY) * Math.min(1, dt * 5);
+    q.setFromAxisAngle(upB, -lookX * 0.7);
+    dir.applyQuaternion(q);
+    q.setFromAxisAngle(rightB, -lookY * 0.4);
+    dir.applyQuaternion(q);
+
+    camera.position.copy(eye);
+    camera.up.copy(upB);
+    camera.lookAt(tgt.copy(eye).add(dir));
+
+    for (let c = 0; c < clouds.length; c++) {
+      clouds[c].position.x += clouds[c].userData.v * dt;
+      if (clouds[c].position.x > 560) clouds[c].position.x = -560;
+    }
+
+    speedEl.textContent = Math.round(speed * 3.6);
+    renderer.render(scene, camera);
+    window.__coasterStarted = true;
+  }
+  requestAnimationFrame(tick);
+}
+
+try { main(); } catch (err) { fail(err); }
+</script>
+</body>
+</html>

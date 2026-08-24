@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cursor Experiment A</title>
+<style>
+  :root {
+    --accent: hsl(210 90% 62%);
+    --bg: #07070c;
+    --panel: rgba(12, 14, 20, 0.62);
+    --line: rgba(255, 255, 255, 0.09);
+    --ink: #e8eaf2;
+    --ink-dim: #8b90a6;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    cursor: none;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  body.system-cursor { cursor: auto; }
+  canvas { position: fixed; inset: 0; display: block; }
+  .vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.5) 100%);
+  }
+  .ui { transition: opacity 0.35s ease; }
+  body.ui-hidden .ui { opacity: 0; pointer-events: none; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .ui-top-left {
+    position: fixed; top: 22px; left: 24px; max-width: 300px; pointer-events: none;
+  }
+  .ui-top-left h1 {
+    margin: 0 0 10px;
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.42em; text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .ui-top-left h1 b { color: var(--accent); font-weight: 600; }
+  #modeName {
+    margin: 0 0 6px; font-size: 15px; font-weight: 700; letter-spacing: 0.14em;
+  }
+  #modeDesc { margin: 0; font-size: 11px; line-height: 1.55; color: var(--ink-dim); }
+
+  .ui-top-right {
+    position: fixed; top: 22px; right: 24px;
+    padding: 12px 16px;
+    display: grid; grid-template-columns: auto auto; gap: 4px 16px;
+    pointer-events: none;
+  }
+  .ui-top-right .k { font-size: 10px; letter-spacing: 0.18em; color: var(--ink-dim); align-self: center; }
+  .ui-top-right .v { font-size: 12px; text-align: right; min-width: 64px; }
+  .ui-top-right .v b { color: var(--accent); font-weight: 600; }
+
+  .ui-bottom {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 22px; flex-wrap: wrap; justify-content: center;
+    padding: 14px 20px; max-width: min(96vw, 980px);
+  }
+  .modes { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .modes button {
+    font: inherit; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-dim); background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 7px 14px; cursor: pointer;
+    transition: color .2s, border-color .2s, background .2s;
+  }
+  .modes button:hover { color: var(--ink); border-color: rgba(255,255,255,0.25); }
+  .modes button.active {
+    color: var(--accent); border-color: var(--accent);
+    background: rgba(255,255,255,0.05);
+    box-shadow: 0 0 16px -4px var(--accent);
+  }
+  .modes button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+  .sliders { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  .sliders label {
+    display: grid; grid-template-columns: 64px 120px 30px; align-items: center; gap: 8px;
+    font-size: 10px; letter-spacing: 0.16em; color: var(--ink-dim); text-transform: uppercase;
+  }
+  .sliders input[type="range"] { width: 120px; accent-color: var(--accent); background: transparent; }
+  .sliders .val { color: var(--ink); text-align: right; }
+
+  .toggles { display: flex; gap: 14px; align-items: center; }
+  .toggles label {
+    display: flex; gap: 6px; align-items: center;
+    font-size: 10px; letter-spacing: 0.14em; color: var(--ink-dim); text-transform: uppercase;
+    cursor: pointer;
+  }
+  .toggles input { accent-color: var(--accent); }
+  .hint { font-size: 10px; letter-spacing: 0.12em; color: rgba(139,144,166,0.65); white-space: nowrap; }
+
+  @media (max-width: 720px) {
+    .ui-top-right { display: none; }
+    .ui-bottom { gap: 12px; padding: 12px 14px; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="vignette"></div>
+
+<header class="ui ui-top-left">
+  <h1>Cursor <b>/</b> Experiment <b>A</b></h1>
+  <p id="modeName">01 — TRAIL</p>
+  <p id="modeDesc">Velocity bleeds light. Move fast and the pointer burns.</p>
+</header>
+
+<aside class="ui ui-top-right panel">
+  <span class="k">FPS</span><span class="v" id="statFps">—</span>
+  <span class="k">VELOCITY</span><span class="v"><b id="statVel">0</b> px/s</span>
+  <span class="k">NODES</span><span class="v" id="statNodes">0</span>
+</aside>
+
+<footer class="ui ui-bottom panel">
+  <nav class="modes" id="modeButtons">
+    <button data-mode="0" class="active">Trail</button>
+    <button data-mode="1">Field</button>
+    <button data-mode="2">Ribbon</button>
+    <button data-mode="3">Orbit</button>
+    <button data-mode="4">Swarm</button>
+  </nav>
+  <div class="sliders">
+    <label>Hue <input type="range" id="hue" min="0" max="360" value="210"> <span class="val" id="hueVal">210</span></label>
+    <label>Density <input type="range" id="density" min="0" max="100" value="55"> <span class="val" id="densityVal">55</span></label>
+    <label>Energy <input type="range" id="energy" min="0" max="100" value="60"> <span class="val" id="energyVal">60</span></label>
+  </div>
+  <div class="toggles">
+    <label><input type="checkbox" id="glow" checked> Glow</label>
+    <label><input type="checkbox" id="sysCursor"> System cursor</label>
+    <span class="hint">1–5 MODES · H HIDE UI · C CURSOR · CLICK</span>
+  </div>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  const statFps = $('statFps'), statVel = $('statVel'), statNodes = $('statNodes');
+  const modeName = $('modeName'), modeDesc = $('modeDesc');
+
+  const MODES = [
+    { name: '01 — TRAIL', desc: 'Velocity bleeds light. Move fast and the pointer burns.' },
+    { name: '02 — FIELD', desc: 'A lattice of dots yielding to your presence.' },
+    { name: '03 — RIBBON', desc: 'Your path drawn as light, tapering with speed.' },
+    { name: '04 — ORBIT', desc: 'Satellites bound to your pointer. Speed widens the system.' },
+    { name: '05 — SWARM', desc: 'Scatter the colony. It always finds its way home.' },
+  ];
+
+  const state = {
+    mode: 0,
+    hue: 210,
+    density: 55,
+    energy: 60,
+    glow: true,
+  };
+
+  // Pointer ------------------------------------------------------------------
+  const P = {
+    x: innerWidth / 2, y: innerHeight / 2,
+    lx: innerWidth / 2, ly: innerHeight / 2,
+    vx: 0, vy: 0, speed: 0,
+    down: false, inside: false,
+  };
+  const ring = { x: P.x, y: P.y, s: 1, a: 0 };
+  let uiHover = 0;
+  let pulses = [];
+
+  // Systems ------------------------------------------------------------------
+  let trail = [];      // mode 0
+  let grid = [];       // mode 1
+  let ribbonPts = [];  // mode 2
+  let orbiters = [];   // mode 3
+  let swarm = [];      // mode 4
+
+  let W = 0, H = 0, DPR = 1, t = 0;
+  let last = performance.now();
+  let fps = 60, statClock = 0;
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const hue = () => state.hue + Math.sin(t * 0.35) * 18 + Math.min(P.speed, 3000) * 0.012;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    initMode(true);
+  }
+
+  // Mode systems ---------------------------------------------------------------
+  function initMode() {
+    trail = [];
+    ribbonPts = [];
+    grid = [];
+    orbiters = [];
+    swarm = [];
+    const dn = state.density / 100;
+
+    if (state.mode === 1) {
+      const spacing = 66 - dn * 38;
+      for (let y = spacing / 2; y < H; y += spacing)
+        for (let x = spacing / 2; x < W; x += spacing)
+          grid.push({ x, y, gx: x, gy: y });
+    }
+    if (state.mode === 3) {
+      const n = Math.round(40 + dn * 160);
+      for (let i = 0; i < n; i++) {
+        orbiters.push({
+          baseR: rnd(18, 150),
+          ang: rnd(0, Math.PI * 2),
+          spd: rnd(0.5, 2.4) * (Math.random() < 0.5 ? -1 : 1),
+          size: rnd(0.8, 2.2),
+          hueOff: rnd(-40, 60),
+          mult: 1,
+        });
+      }
+    }
+    if (state.mode === 4) {
+      const n = Math.round(100 + dn * 300);
+      for (let i = 0; i < n; i++) {
+        const hx = rnd(0, W), hy = rnd(0, H);
+        swarm.push({ x: hx, y: hy, vx: 0, vy: 0, hx, hy, f: 0, size: rnd(1, 2.2) });
+      }
+    }
+  }
+
+  // Draw systems ---------------------------------------------------------------
+  function frameBackground() {
+    ctx.globalCompositeOperation = 'source-over';
+    if (state.mode === 0) { ctx.fillStyle = 'rgba(7,7,12,0.3)'; ctx.fillRect(0, 0, W, H); }
+    else if (state.mode === 3) { ctx.fillStyle = 'rgba(7,7,12,0.2)'; ctx.fillRect(0, 0, W, H); }
+    else { ctx.fillStyle = '#07070c'; ctx.fillRect(0, 0, W, H); }
+  }
+
+  function runTrail(dt) {
+    const dn = state.density / 100, en = state.energy / 100;
+    let n = Math.floor((2 + P.speed * 0.06) * (0.35 + dn * 1.15) * (0.5 + en));
+    n = clamp(n, 0, 42);
+    if (P.speed < 5) n = Math.random() < 0.3 ? 1 : 0;
+
+    for (let k = 0; k < n && trail.length < 1600; k++) {
+      const a = rnd(0, Math.PI * 2);
+      const sp = Math.random() * Math.random() * 130 * (0.4 + en);
+      trail.push({
+        x: P.x + rnd(-3, 3), y: P.y + rnd(-3, 3),
+        vx: Math.cos(a) * sp + P.vx * 0.12,
+        vy: Math.sin(a) * sp + P.vy * 0.12,
+        life: rnd(0.5, 1.4) * (0.5 + en * 0.9),
+        max: 1, size: rnd(1, 3.2), hueOff: rnd(-25, 25),
+      });
+      trail[trail.length - 1].max = trail[trail.length - 1].life;
+    }
+    const damp = Math.exp(-1.8 * dt);
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const p = trail[i];
+      p.life -= dt;
+      if (p.life <= 0) { trail.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= damp; p.vy *= damp;
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    const baseH = hue();
+    for (const p of trail) {
+      const a = p.life / p.max;
+      ctx.fillStyle = `hsla(${baseH + p.hueOff}, 92%, 62%, ${(a * 0.85).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.35 + a * 0.65) + 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // head glow
+    const gA = Math.min(P.speed / 900, 1) * 0.5 + 0.08;
+    const r = 42 + Math.min(P.speed, 2500) * 0.012;
+    const g = ctx.createRadialGradient(ring.x, ring.y, 0, ring.x, ring.y, r);
+    g.addColorStop(0, `hsla(${baseH}, 95%, 65%, ${gA.toFixed(3)})`);
+    g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(ring.x, ring.y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function runField(dt) {
+    const en = state.energy / 100;
+    const R = 100 + en * 110;
+    const baseH = hue();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const d of grid) {
+      const dx = d.gx - P.x, dy = d.gy - P.y;
+      const dist = Math.hypot(dx, dy) || 0.001;
+      let f = 0;
+      if (dist < R) {
+        f = 1 - dist / R;
+        const push = f * f * 42;
+        d.x = d.gx + (dx / dist) * push + Math.sin(t * 0.8 + d.gx * 0.02 + d.gy * 0.013) * 2;
+        d.y = d.gy + (dy / dist) * push + Math.cos(t * 0.7 + d.gx * 0.015) * 2;
+      } else {
+        d.x += (d.gx - d.x) * Math.min(1, dt * 8);
+        d.y += (d.gy - d.y) * Math.min(1, dt * 8);
+      }
+      const size = 1.3 + f * 3;
+      if (f > 0.03) {
+        ctx.fillStyle = `hsla(${baseH}, 90%, 64%, ${(0.2 + f * 0.8).toFixed(3)})`;
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.13)';
+      }
+      ctx.beginPath(); ctx.arc(d.x, d.y, size, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function runRibbon(dt) {
+    const maxLen = 110;
+    ribbonPts.push({ x: P.x, y: P.y, v: P.speed });
+    while (ribbonPts.length > maxLen) ribbonPts.shift();
+    if (P.speed < 30 && ribbonPts.length) {
+      ribbonPts.shift();
+      if (ribbonPts.length) ribbonPts.shift();
+    }
+    const n = ribbonPts.length;
+    const en = state.energy / 100;
+    const baseH = hue();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let i = 1; i < n; i++) {
+      const k = i / n;
+      const p = ribbonPts[i];
+      const speedK = Math.min(p.v / 1000, 1);
+      const w = (1 + 22 * k) * (0.35 + en * 0.9) * (0.4 + speedK * 1.2);
+      ctx.strokeStyle = `hsla(${baseH + i * 1.4}, 90%, 62%, ${(k * k * 0.85).toFixed(3)})`;
+      ctx.lineWidth = Math.max(0.5, w);
+      ctx.beginPath();
+      ctx.moveTo(ribbonPts[i - 1].x, ribbonPts[i - 1].y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      // bright core
+      ctx.strokeStyle = `hsla(0, 0%, 100%, ${(k * k * 0.35 * (0.3 + speedK)).toFixed(3)})`;
+      ctx.lineWidth = Math.max(0.4, w * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(ribbonPts[i - 1].x, ribbonPts[i - 1].y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+    // head glow
+    const r = 34;
+    const g = ctx.createRadialGradient(P.x, P.y, 0, P.x, P.y, r);
+    g.addColorStop(0, `hsla(${baseH}, 95%, 68%, ${0.22 + Math.min(P.speed / 900, 1) * 0.4})`);
+    g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(P.x, P.y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function runOrbit(dt) {
+    const target = 1 + Math.min(P.speed / 500, 1) * 1.9;
+    const baseH = hue();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const o of orbiters) {
+      o.mult += (target - o.mult) * Math.min(1, dt * 4);
+      o.ang += o.spd * dt * (1 + Math.min(P.speed / 900, 1) * 0.8);
+      const r = o.baseR * o.mult;
+      const x = ring.x + Math.cos(o.ang) * r;
+      const y = ring.y + Math.sin(o.ang) * r;
+      ctx.fillStyle = `hsla(${baseH + o.hueOff}, 90%, 64%, 0.85)`;
+      ctx.beginPath(); ctx.arc(x, y, 0.8 + o.size, 0, Math.PI * 2); ctx.fill();
+    }
+    // faint core
+    ctx.fillStyle = `hsla(${baseH}, 90%, 70%, 0.12)`;
+    ctx.beginPath(); ctx.arc(ring.x, ring.y, 16, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function runSwarm(dt) {
+    const en = state.energy / 100;
+    const R = 170;
+    const force = 1600 + en * 2600;
+    const damp = Math.exp(-3.2 * dt);
+    for (const p of swarm) {
+      let ax = (p.hx - p.x) * 2.2;
+      let ay = (p.hy - p.y) * 2.2;
+      const dx = p.x - P.x, dy = p.y - P.y;
+      const d2 = dx * dx + dy * dy;
+      p.f = 0;
+      if (d2 < R * R && d2 > 0.01) {
+        const d = Math.sqrt(d2);
+        const f = 1 - d / R;
+        p.f = f;
+        ax += (dx / d) * f * f * force;
+        ay += (dy / d) * f * f * force;
+      }
+      p.vx = (p.vx + ax * dt) * damp;
+      p.vy = (p.vy + ay * dt) * damp;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+    const baseH = hue();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of swarm) {
+      if (p.f > 0.03) {
+        ctx.fillStyle = `hsla(${baseH}, 90%, 66%, ${(0.25 + p.f * 0.75).toFixed(3)})`;
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      }
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Cursor ---------------------------------------------------------------------
+  function burst() {
+    pulses.push({ x: P.x, y: P.y, r: 8, a: 0.9 });
+    if (state.mode === 0) {
+      for (let k = 0; k < 60; k++) {
+        const a = rnd(0, Math.PI * 2), sp = rnd(60, 420);
+        trail.push({
+          x: P.x, y: P.y,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: rnd(0.4, 1.2), max: 1.2, size: rnd(1.2, 3.4), hueOff: rnd(-30, 30),
+        });
+        trail[trail.length - 1].life = trail[trail.length - 1].life;
+      }
+    }
+    if (state.mode === 3) for (const o of orbiters) o.mult = Math.min(o.mult + 1.6, 4);
+    if (state.mode === 4) {
+      for (const p of swarm) {
+        const dx = p.x - P.x, dy = p.y - P.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d < 260) { const k = (1 - d / 260) * 500; p.vx += (dx / d) * k; p.vy += (dy / d) * k; }
+      }
+    }
+  }
+
+  function drawCursor(dt) {
+    const k = Math.min(1, dt * 12);
+    ring.x += (P.x - ring.x) * k;
+    ring.y += (P.y - ring.y) * k;
+    const targetS = (P.down ? 0.72 : 1) + Math.min(P.speed / 1400, 1.3) + (uiHover ? 0.5 : 0);
+    ring.s += (targetS - ring.s) * Math.min(1, dt * 10);
+    const targetA = P.inside ? 1 : 0;
+    ring.a += (targetA - ring.a) * Math.min(1, dt * 8);
+
+    ctx.globalCompositeOperation = 'lighter';
+    if (state.glow) {
+      ctx.shadowColor = `hsla(${hue()}, 90%, 65%, 0.9)`;
+      ctx.shadowBlur = 16;
+    }
+    const r = (uiHover ? 22 : 14) * ring.s;
+    ctx.strokeStyle = `hsla(${hue()}, 90%, 72%, ${(0.85 * ring.a).toFixed(3)})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ring.x, ring.y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = `rgba(255,255,255,${(0.95 * ring.a).toFixed(3)})`;
+    ctx.beginPath(); ctx.arc(P.x, P.y, 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i];
+      p.r += dt * 260;
+      p.a -= dt * 1.7;
+      if (p.a <= 0) { pulses.splice(i, 1); continue; }
+      ctx.strokeStyle = `hsla(${hue()}, 90%, 70%, ${p.a.toFixed(3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // Main loop --------------------------------------------------------------------
+  function tick(now) {
+    const dt = clamp((now - last) / 1000, 0.0001, 0.05);
+    last = now; t += dt;
+    fps += (1 / dt - fps) * 0.08;
+
+    const dx = P.x - P.lx, dy = P.y - P.ly;
+    P.vx = dx / dt; P.vy = dy / dt;
+    P.speed = Math.hypot(dx, dy) / dt;
+    P.lx = P.x; P.ly = P.y;
+
+    frameBackground();
+    if (state.mode === 0) runTrail(dt);
+    else if (state.mode === 1) runField(dt);
+    else if (state.mode === 2) runRibbon(dt);
+    else if (state.mode === 3) runOrbit(dt);
+    else runSwarm(dt);
+    drawCursor(dt);
+
+    statClock += dt;
+    if (statClock > 0.25) {
+      statClock = 0;
+      statFps.textContent = Math.round(fps);
+      statVel.textContent = Math.round(P.speed);
+      let n = 0;
+      if (state.mode === 0) n = trail.length;
+      else if (state.mode === 1) n = grid.length;
+      else if (state.mode === 2) n = ribbonPts.length;
+      else if (state.mode === 3) n = orbiters.length;
+      else n = swarm.length;
+      statNodes.textContent = n;
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // UI wiring -----------------------------------------------------------------------
+  function setMode(i) {
+    state.mode = i;
+    document.querySelectorAll('#modeButtons button').forEach((b) => {
+      const on = Number(b.dataset.mode) === i;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    modeName.textContent = MODES[i].name;
+    modeDesc.textContent = MODES[i].desc;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#07070c';
+    ctx.fillRect(0, 0, W, H);
+    initMode();
+  }
+
+  document.getElementById('modeButtons').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (b) setMode(Number(b.dataset.mode));
+  });
+
+  function bindRange(id, valId, fn) {
+    const el = $(id), out = $(valId);
+    el.addEventListener('input', () => {
+      const v = Number(el.value);
+      out.textContent = v;
+      fn(v);
+    });
+  }
+  bindRange('hue', 'hueVal', (v) => {
+    state.hue = v;
+    document.documentElement.style.setProperty('--accent', `hsl(${v} 90% 62%)`);
+  });
+  bindRange('density', 'densityVal', (v) => {
+    state.density = v;
+    if (state.mode === 1 || state.mode === 3 || state.mode === 4) initMode();
+  });
+  bindRange('energy', 'energyVal', (v) => { state.energy = v; });
+
+  $('glow').addEventListener('change', (e) => { state.glow = e.target.checked; });
+  $('sysCursor').addEventListener('change', (e) => {
+    document.body.classList.toggle('system-cursor', e.target.checked);
+  });
+
+  // Pointer events
+  addEventListener('pointermove', (e) => {
+    P.x = e.clientX; P.y = e.clientY; P.inside = true;
+  }, { passive: true });
+  addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.ui')) return;
+    P.x = e.clientX; P.y = e.clientY;
+    P.lx = P.x; P.ly = P.y;
+    P.inside = true; P.down = true;
+    burst();
+  });
+  addEventListener('pointerup', () => { P.down = false; });
+  document.documentElement.addEventListener('mouseleave', () => { P.inside = false; });
+  document.documentElement.addEventListener('mouseenter', () => { P.inside = true; });
+
+  document.addEventListener('pointerover', (e) => {
+    uiHover = e.target.closest('.ui') ? 1 : 0;
+  });
+
+  addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') {
+      if (e.target.tagName === 'INPUT') return;
+    }
+    const key = e.key.toLowerCase();
+    if (key >= '1' && key <= '5') setMode(Number(key) - 1);
+    else if (key === 'h') document.body.classList.toggle('ui-hidden');
+    else if (key === 'c') {
+      const on = !document.body.classList.contains('system-cursor');
+      document.body.classList.toggle('system-cursor', on);
+      $('sysCursor').checked = on;
+    }
+  });
+
+  addEventListener('resize', resize);
+
+  // Boot
+  resize();
+  setMode(0);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

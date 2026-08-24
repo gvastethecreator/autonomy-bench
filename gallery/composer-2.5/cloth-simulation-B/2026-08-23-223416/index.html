@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloth Simulation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #0a0e17;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #c8d6e5;
+    user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #ui {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: 20px 28px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #title-block h1 {
+    font-size: 1.35rem; font-weight: 300; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #fff;
+    text-shadow: 0 0 30px rgba(100,180,255,0.4);
+  }
+  #title-block p {
+    margin-top: 6px; font-size: 0.78rem; opacity: 0.55; letter-spacing: 0.04em;
+  }
+  #controls {
+    pointer-events: auto;
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+  }
+  .ctrl-row {
+    display: flex; gap: 8px; align-items: center;
+    font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7;
+  }
+  .ctrl-row label { min-width: 52px; text-align: right; }
+  input[type=range] {
+    width: 120px; accent-color: #5b9bd5; cursor: pointer;
+    pointer-events: auto;
+  }
+  .btn {
+    pointer-events: auto;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #c8d6e5; padding: 7px 16px; border-radius: 6px;
+    font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;
+    cursor: pointer; transition: background 0.2s, border-color 0.2s;
+  }
+  .btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); }
+  #hint {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    font-size: 0.72rem; letter-spacing: 0.06em; opacity: 0.35;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="title-block">
+    <h1>Silk &amp; Gravity</h1>
+    <p>Verlet cloth · drag to pull · release to drape</p>
+  </div>
+  <div id="controls">
+    <div class="ctrl-row">
+      <label>Wind</label>
+      <input type="range" id="wind" min="0" max="100" value="35">
+    </div>
+    <div class="ctrl-row">
+      <label>Gravity</label>
+      <input type="range" id="gravity" min="0" max="100" value="55">
+    </div>
+    <div class="ctrl-row">
+      <label>Stiffness</label>
+      <input type="range" id="stiffness" min="1" max="20" value="8">
+    </div>
+    <button class="btn" id="reset">Reset cloth</button>
+  </div>
+</div>
+<p id="hint">Click &amp; drag the fabric · Shift for stronger pull</p>
+<canvas id="c"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const windEl = document.getElementById('wind');
+  const gravEl = document.getElementById('gravity');
+  const stiffEl = document.getElementById('stiffness');
+  const resetBtn = document.getElementById('reset');
+
+  let W, H, dpr;
+  let cols, rows, spacing;
+  let points = [];
+  let constraints = [];
+  let mouse = { x: 0, y: 0, down: false, shift: false };
+  let dragPoint = null;
+  let time = 0;
+
+  const COLS = 32;
+  const ROWS = 24;
+  const PIN_TOP = true;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  class Point {
+    constructor(x, y, pinned = false) {
+      this.x = x; this.y = y;
+      this.oldX = x; this.oldY = y;
+      this.pinned = pinned;
+      this.mass = 1;
+    }
+    update(dt, gx, gy, wind) {
+      if (this.pinned && this !== dragPoint) return;
+      if (this === dragPoint) {
+        this.x = mouse.x; this.y = mouse.y;
+        this.oldX = this.x; this.oldY = this.y;
+        return;
+      }
+      const vx = (this.x - this.oldX) * 0.995;
+      const vy = (this.y - this.oldY) * 0.995;
+      this.oldX = this.x;
+      this.oldY = this.y;
+      const windForce = Math.sin(time * 1.8 + this.y * 0.012) * wind * 0.04
+                      + Math.cos(time * 1.1 + this.x * 0.008) * wind * 0.025;
+      this.x += vx + windForce * dt;
+      this.y += vy + (gx * dt) + (gy * dt);
+    }
+    constrain() {
+      const margin = 2;
+      if (this.x < margin) { this.x = margin; this.oldX = this.x; }
+      if (this.x > W - margin) { this.x = W - margin; this.oldX = this.x; }
+      if (this.y < margin) { this.y = margin; this.oldY = this.y; }
+      if (this.y > H - margin) { this.y = H - margin; this.oldY = this.y; }
+    }
+  }
+
+  class Constraint {
+    constructor(p1, p2, rest) {
+      this.p1 = p1; this.p2 = p2;
+      this.rest = rest;
+    }
+    solve(stiffness) {
+      const dx = this.p2.x - this.p1.x;
+      const dy = this.p2.y - this.p1.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+      const diff = (this.rest - dist) / dist;
+      const offset = diff * 0.5 * stiffness;
+      const ox = dx * offset;
+      const oy = dy * offset;
+      if (!this.p1.pinned || this.p1 === dragPoint) {
+        this.p1.x -= ox; this.p1.y -= oy;
+      }
+      if (!this.p2.pinned || this.p2 === dragPoint) {
+        this.p2.x += ox; this.p2.y += oy;
+      }
+    }
+  }
+
+  function initCloth() {
+    points = [];
+    constraints = [];
+    const clothW = Math.min(W * 0.55, 520);
+    const clothH = clothW * 0.72;
+    spacing = clothW / (COLS - 1);
+    const startX = (W - clothW) / 2;
+    const startY = H * 0.12;
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const px = startX + x * spacing;
+        const py = startY + y * (clothH / (ROWS - 1));
+        const pinned = PIN_TOP && y === 0 && (x === 0 || x === COLS - 1 || x === Math.floor(COLS / 2));
+        points.push(new Point(px, py, pinned));
+      }
+    }
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const i = y * COLS + x;
+        if (x < COLS - 1) {
+          constraints.push(new Constraint(points[i], points[i + 1], spacing));
+        }
+        if (y < ROWS - 1) {
+          constraints.push(new Constraint(points[i], points[i + COLS], clothH / (ROWS - 1)));
+        }
+        if (x < COLS - 1 && y < ROWS - 1) {
+          const diag = Math.sqrt(spacing * spacing + Math.pow(clothH / (ROWS - 1), 2));
+          constraints.push(new Constraint(points[i], points[i + COLS + 1], diag));
+          constraints.push(new Constraint(points[i + 1], points[i + COLS], diag));
+        }
+      }
+    }
+  }
+
+  function findNearestPoint(mx, my) {
+    let best = null, bestD = 40;
+    for (const p of points) {
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  function drawBackground() {
+    const g = ctx.createRadialGradient(W * 0.5, H * 0.35, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
+    g.addColorStop(0, '#121a2e');
+    g.addColorStop(0.5, '#0a0e17');
+    g.addColorStop(1, '#060810');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+    ctx.lineWidth = 1;
+    const grid = 60;
+    for (let x = 0; x < W; x += grid) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += grid) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    const barY = H * 0.12 - 8;
+    ctx.fillStyle = 'rgba(80,120,180,0.15)';
+    ctx.fillRect((W - Math.min(W * 0.55, 520)) / 2 - 20, barY, Math.min(W * 0.55, 520) + 40, 6);
+    ctx.fillStyle = 'rgba(120,170,230,0.35)';
+    ctx.fillRect((W - Math.min(W * 0.55, 520)) / 2 - 20, barY, Math.min(W * 0.55, 520) + 40, 3);
+  }
+
+  function shadeForPoint(i, x, y) {
+    const row = Math.floor(i / COLS);
+    const col = i % COLS;
+    const weave = ((row + col) % 2 === 0) ? 1.0 : 0.92;
+    const depth = row / ROWS;
+    const r = Math.floor(180 + depth * 30) * weave;
+    const g = Math.floor(60 + depth * 50) * weave;
+    const b = Math.floor(100 + depth * 80) * weave;
+    return `rgb(${r|0},${g|0},${b|0})`;
+  }
+
+  function computeNormal(i) {
+    const row = Math.floor(i / COLS);
+    const col = i % COLS;
+    let nx = 0, ny = 0, nz = 1;
+    if (col < COLS - 1 && row < ROWS - 1) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const p2 = points[i + COLS];
+      const ax = p1.x - p0.x, ay = p1.y - p0.y;
+      const bx = p2.x - p0.x, by = p2.y - p0.y;
+      nz = ax * by - ay * bx;
+    }
+    return Math.max(0, Math.min(1, 0.5 + nz * 0.002));
+  }
+
+  function drawCloth() {
+    for (let y = 0; y < ROWS - 1; y++) {
+      for (let x = 0; x < COLS - 1; x++) {
+        const i = y * COLS + x;
+        const p0 = points[i];
+        const p1 = points[i + 1];
+        const p2 = points[i + COLS + 1];
+        const p3 = points[i + COLS];
+
+        const light = computeNormal(i);
+        const base = shadeForPoint(i, x, y);
+        const m = ctx.createLinearGradient(p0.x, p0.y, p2.x, p2.y);
+        m.addColorStop(0, base);
+        m.addColorStop(1, base.replace('rgb', 'rgba').replace(')', `,${0.7 + light * 0.3})`));
+
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fillStyle = m;
+        ctx.globalAlpha = 0.88 + light * 0.12;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        ctx.strokeStyle = `rgba(255,255,255,${0.04 + light * 0.06})`;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+    }
+
+    for (const p of points) {
+      if (p.pinned) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(150,200,255,0.7)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawWindStreaks(wind) {
+    if (wind < 5) return;
+    ctx.save();
+    ctx.globalAlpha = wind * 0.003;
+    for (let i = 0; i < 12; i++) {
+      const y = (H * 0.15) + (i / 12) * H * 0.6;
+      const phase = time * 2 + i * 1.7;
+      const x1 = W * 0.05 + Math.sin(phase) * 30;
+      const x2 = W * 0.95 + Math.sin(phase + 1) * 30;
+      ctx.beginPath();
+      ctx.moveTo(x1, y + Math.sin(phase * 0.5) * 8);
+      ctx.bezierCurveTo(
+        W * 0.3, y - 15 + Math.sin(phase) * 10,
+        W * 0.7, y + 15 + Math.cos(phase) * 10,
+        x2, y + Math.sin(phase * 0.5) * 8
+      );
+      ctx.strokeStyle = '#7ab8ff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function simulate() {
+    const wind = +windEl.value;
+    const grav = +gravEl.value * 0.018;
+    const stiff = +stiffEl.value * 0.05;
+    const substeps = 3;
+    const dt = 1;
+
+    for (let s = 0; s < substeps; s++) {
+      for (const p of points) {
+        p.update(dt / substeps, 0, grav, wind);
+        p.constrain();
+      }
+      for (let iter = 0; iter < 4; iter++) {
+        for (const c of constraints) c.solve(stiff);
+      }
+    }
+  }
+
+  function loop() {
+    time += 0.016;
+    simulate();
+    drawBackground();
+    drawWindStreaks(+windEl.value);
+    drawCloth();
+    requestAnimationFrame(loop);
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    mouse.down = true;
+    mouse.shift = e.shiftKey;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+    dragPoint = findNearestPoint(mouse.x, mouse.y);
+    if (dragPoint) dragPoint.pinned = false;
+    canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+    mouse.shift = e.shiftKey;
+  });
+
+  canvas.addEventListener('pointerup', () => {
+    mouse.down = false;
+    dragPoint = null;
+  });
+
+  window.addEventListener('keydown', e => { if (e.key === 'Shift') mouse.shift = true; });
+  window.addEventListener('keyup', e => { if (e.key === 'Shift') mouse.shift = false; });
+
+  resetBtn.addEventListener('click', initCloth);
+  window.addEventListener('resize', () => { resize(); initCloth(); });
+
+  resize();
+  initCloth();
+  loop();
+})();
+</script>
+</body>
+</html>

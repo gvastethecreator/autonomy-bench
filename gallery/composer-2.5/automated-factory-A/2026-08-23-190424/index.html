@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Automated Factory Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1419;
+    color: #e8eaed;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: linear-gradient(135deg, #1a2332 0%, #0f1419 100%);
+    border-bottom: 1px solid #2a3544;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: #64b5f6;
+  }
+  header h1 span { color: #78909c; font-weight: 400; font-size: 0.85rem; margin-left: 12px; }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .controls button {
+    background: #1e3a5f;
+    color: #90caf9;
+    border: 1px solid #2a5080;
+    padding: 6px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+  }
+  .controls button:hover { background: #264d7a; }
+  .controls button.active { background: #1565c0; color: #fff; border-color: #1976d2; }
+  .controls button.danger { background: #4a1c1c; border-color: #7f2d2d; color: #ef9a9a; }
+  .controls button.danger:hover { background: #6b2a2a; }
+  .speed-label { font-size: 0.8rem; color: #78909c; margin-left: 8px; }
+  .speed-label input { width: 80px; vertical-align: middle; accent-color: #64b5f6; }
+  main { flex: 1; display: flex; overflow: hidden; }
+  #canvas-wrap {
+    flex: 1;
+    position: relative;
+    background: #121820;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  aside {
+    width: 280px;
+    background: #151c27;
+    border-left: 1px solid #2a3544;
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 16px;
+  }
+  aside h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #546e7a;
+    margin-bottom: 12px;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: #1a2332;
+    border: 1px solid #2a3544;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .stat-card .label { font-size: 0.7rem; color: #78909c; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 1.4rem; font-weight: 700; margin-top: 2px; }
+  .stat-card .value.green { color: #66bb6a; }
+  .stat-card .value.blue { color: #42a5f5; }
+  .stat-card .value.orange { color: #ffa726; }
+  .stat-card .value.red { color: #ef5350; }
+  .station-list { list-style: none; }
+  .station-item {
+    background: #1a2332;
+    border: 1px solid #2a3544;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .station-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .station-dot.idle { background: #546e7a; }
+  .station-dot.working { background: #66bb6a; animation: pulse 1s infinite; }
+  .station-dot.blocked { background: #ef5350; }
+  .station-dot.waiting { background: #ffa726; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .station-info { flex: 1; }
+  .station-info .name { font-size: 0.85rem; font-weight: 600; }
+  .station-info .detail { font-size: 0.72rem; color: #78909c; margin-top: 2px; }
+  .station-queue {
+    font-size: 0.75rem;
+    color: #90caf9;
+    font-weight: 600;
+    min-width: 24px;
+    text-align: right;
+  }
+  .log-panel {
+    margin-top: 16px;
+    max-height: 160px;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    color: #78909c;
+    line-height: 1.6;
+  }
+  .log-panel .entry { border-left: 2px solid #2a3544; padding-left: 8px; margin-bottom: 4px; }
+  .log-panel .entry.warn { border-color: #ffa726; color: #ffcc80; }
+  .log-panel .entry.error { border-color: #ef5350; color: #ef9a9a; }
+  .log-panel .entry.info { border-color: #42a5f5; color: #90caf9; }
+  footer {
+    background: #151c27;
+    border-top: 1px solid #2a3544;
+    padding: 6px 24px;
+    font-size: 0.72rem;
+    color: #546e7a;
+    display: flex;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Automated Factory Simulation <span>v1.0 — Real-time discrete event model</span></h1>
+  <div class="controls">
+    <button id="btn-start" class="active">▶ Start</button>
+    <button id="btn-pause">⏸ Pause</button>
+    <button id="btn-reset" class="danger">↺ Reset</button>
+    <span class="speed-label">Speed: <input type="range" id="speed" min="0.25" max="4" step="0.25" value="1"> <span id="speed-val">1×</span></span>
+  </div>
+</header>
+<main>
+  <div id="canvas-wrap"><canvas id="sim"></canvas></div>
+  <aside>
+    <h2>Production Metrics</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Completed</div><div class="value green" id="stat-completed">0</div></div>
+      <div class="stat-card"><div class="label">Throughput</div><div class="value blue" id="stat-throughput">0/hr</div></div>
+      <div class="stat-card"><div class="label">Efficiency</div><div class="value orange" id="stat-efficiency">0%</div></div>
+      <div class="stat-card"><div class="label">Defects</div><div class="value red" id="stat-defects">0</div></div>
+      <div class="stat-card"><div class="label">WIP</div><div class="value blue" id="stat-wip">0</div></div>
+      <div class="stat-card"><div class="label">Uptime</div><div class="value green" id="stat-uptime">0s</div></div>
+    </div>
+    <h2>Workstations</h2>
+    <ul class="station-list" id="station-list"></ul>
+    <h2>Event Log</h2>
+    <div class="log-panel" id="log"></div>
+  </aside>
+</main>
+<footer>
+  <span>Simulation clock: <strong id="clock">00:00:00</strong></span>
+  <span id="status-text">Ready — press Start to begin production</span>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+
+  // ── Configuration ──────────────────────────────────────────────
+  const STATIONS = [
+    { id: 'intake',    name: 'Raw Intake',     x: 0.06, y: 0.5, processTime: 800,  defectRate: 0,    color: '#78909c', icon: '📦' },
+    { id: 'cutting',   name: 'CNC Cutting',    x: 0.22, y: 0.3, processTime: 2200, defectRate: 0.02, color: '#42a5f5', icon: '✂️' },
+    { id: 'assembly',  name: 'Robo Assembly',  x: 0.42, y: 0.5, processTime: 3000, defectRate: 0.03, color: '#66bb6a', icon: '🤖' },
+    { id: 'welding',   name: 'Auto Welding',   x: 0.42, y: 0.75, processTime: 1800, defectRate: 0.04, color: '#ffa726', icon: '⚡' },
+    { id: 'qc',        name: 'Quality Check',  x: 0.62, y: 0.5, processTime: 1500, defectRate: 0,    color: '#ab47bc', icon: '🔍' },
+    { id: 'packaging', name: 'Packaging',      x: 0.80, y: 0.5, processTime: 1200, defectRate: 0.01, color: '#26c6da', icon: '📋' },
+    { id: 'shipping',  name: 'Shipping Dock',  x: 0.94, y: 0.5, processTime: 600,  defectRate: 0,    color: '#66bb6a', icon: '🚚' },
+  ];
+
+  const CONVEYORS = [
+    { from: 'intake', to: 'cutting' },
+    { from: 'cutting', to: 'assembly' },
+    { from: 'cutting', to: 'welding' },
+    { from: 'assembly', to: 'qc' },
+    { from: 'welding', to: 'qc' },
+    { from: 'qc', to: 'packaging' },
+    { from: 'packaging', to: 'shipping' },
+  ];
+
+  const SPAWN_INTERVAL = 3500;
+  const MAX_LOG = 40;
+  const CONVEYOR_SPEED = 0.00035;
+
+  // ── State ──────────────────────────────────────────────────────
+  let running = false;
+  let speed = 1;
+  let simTime = 0;
+  let lastFrame = 0;
+  let lastSpawn = 0;
+  let completed = 0;
+  let defects = 0;
+  let wip = 0;
+  let throughputWindow = [];
+  let startTime = null;
+  let itemIdCounter = 0;
+
+  const stationState = {};
+  STATIONS.forEach(s => {
+    stationState[s.id] = { queue: [], processing: null, progress: 0, status: 'idle', totalProcessed: 0 };
+  });
+
+  const conveyorItems = [];
+  const logs = [];
+
+  // ── DOM ────────────────────────────────────────────────────────
+  const canvas = document.getElementById('sim');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvas-wrap');
+
+  function $(id) { return document.getElementById(id); }
+
+  // ── Helpers ────────────────────────────────────────────────────
+  function getStation(id) { return STATIONS.find(s => s.id === id); }
+
+  function stationPos(s, W, H) {
+    return { x: s.x * W, y: s.y * H };
+  }
+
+  function addLog(msg, type = '') {
+    const t = formatTime(simTime);
+    logs.unshift({ t, msg, type });
+    if (logs.length > MAX_LOG) logs.pop();
+    renderLog();
+  }
+
+  function formatTime(ms) {
+    const s = Math.floor(ms / 1000);
+    const h = String(Math.floor(s / 3600)).padStart(2, '0');
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    return `${h}:${m}:${sec}`;
+  }
+
+  function createItem() {
+    return {
+      id: ++itemIdCounter,
+      stage: 0,
+      path: ['intake', 'cutting', Math.random() < 0.5 ? 'assembly' : 'welding', 'qc', 'packaging', 'shipping'],
+      stageIndex: 0,
+      defective: false,
+      color: `hsl(${Math.random() * 60 + 180}, 70%, 55%)`,
+    };
+  }
+
+  // ── Simulation Logic ───────────────────────────────────────────
+  function spawnItem() {
+    const st = stationState.intake;
+    st.queue.push(createItem());
+    wip++;
+    addLog(`Item #${itemIdCounter} entered intake`, 'info');
+  }
+
+  function tryProcessStation(stationId) {
+    const st = stationState[stationId];
+    const cfg = getStation(stationId);
+    if (st.processing) return;
+    if (st.queue.length === 0) { st.status = 'idle'; return; }
+
+    st.processing = st.queue.shift();
+    st.progress = 0;
+    st.status = 'working';
+  }
+
+  function finishProcessing(stationId) {
+    const st = stationState[stationId];
+    const cfg = getStation(stationId);
+    const item = st.processing;
+    st.processing = null;
+    st.progress = 0;
+    st.totalProcessed++;
+
+    if (cfg.defectRate > 0 && Math.random() < cfg.defectRate) {
+      item.defective = true;
+      defects++;
+      addLog(`Item #${item.id} failed at ${cfg.name}`, 'error');
+      wip--;
+      updateStats();
+      tryProcessStation(stationId);
+      return;
+    }
+
+    const nextIdx = item.stageIndex + 1;
+    if (nextIdx >= item.path.length) {
+      completed++;
+      wip--;
+      throughputWindow.push(simTime);
+      addLog(`Item #${item.id} shipped ✓`, 'info');
+      updateStats();
+      tryProcessStation(stationId);
+      return;
+    }
+
+    item.stageIndex = nextIdx;
+    const nextStation = item.path[nextIdx];
+    const fromPos = stationPos(getStation(stationId), canvas.width, canvas.height);
+    const toPos = stationPos(getStation(nextStation), canvas.width, canvas.height);
+
+    conveyorItems.push({
+      item,
+      from: stationId,
+      to: nextStation,
+      x: fromPos.x,
+      y: fromPos.y,
+      tx: toPos.x,
+      ty: toPos.y,
+      progress: 0,
+    });
+
+    tryProcessStation(stationId);
+  }
+
+  function updateSimulation(dt) {
+    if (!running) return;
+    simTime += dt;
+
+    // Spawn
+    if (simTime - lastSpawn >= SPAWN_INTERVAL / speed) {
+      lastSpawn = simTime;
+      spawnItem();
+    }
+
+    // Process stations
+    STATIONS.forEach(s => {
+      const st = stationState[s.id];
+      if (st.processing) {
+        st.progress += dt * speed;
+        if (st.progress >= s.processTime) {
+          finishProcessing(s.id);
+        }
+      } else {
+        tryProcessStation(s.id);
+      }
+      if (st.queue.length > 3) st.status = 'blocked';
+      else if (st.queue.length > 0 && !st.processing) st.status = 'waiting';
+      else if (!st.processing) st.status = 'idle';
+    });
+
+    // Move conveyor items
+    for (let i = conveyorItems.length - 1; i >= 0; i--) {
+      const ci = conveyorItems[i];
+      ci.progress += CONVEYOR_SPEED * dt * speed;
+      ci.x = ci.x + (ci.tx - ci.x) * ci.progress * 0.08;
+      ci.y = ci.y + (ci.ty - ci.y) * ci.progress * 0.08;
+
+      if (ci.progress >= 1) {
+        stationState[ci.to].queue.push(ci.item);
+        conveyorItems.splice(i, 1);
+        tryProcessStation(ci.to);
+      }
+    }
+
+    // Trim throughput window (last 60 sim-seconds)
+    const cutoff = simTime - 60000;
+    throughputWindow = throughputWindow.filter(t => t > cutoff);
+
+    updateStats();
+    updateUI();
+  }
+
+  function updateStats() {
+    const elapsed = startTime ? (simTime / 1000) : 0;
+    const rate = throughputWindow.length > 0
+      ? Math.round((throughputWindow.length / 60) * 3600)
+      : 0;
+
+    let totalBusy = 0, totalCap = 0;
+    STATIONS.forEach(s => {
+      const st = stationState[s.id];
+      totalCap += s.processTime;
+      if (st.processing) totalBusy += st.progress;
+    });
+    const efficiency = totalCap > 0 ? Math.min(100, Math.round((totalBusy / totalCap) * 100 * STATIONS.length)) : 0;
+
+    $('stat-completed').textContent = completed;
+    $('stat-throughput').textContent = rate + '/hr';
+    $('stat-efficiency').textContent = efficiency + '%';
+    $('stat-defects').textContent = defects;
+    $('stat-wip').textContent = wip;
+    $('stat-uptime').textContent = Math.floor(elapsed) + 's';
+    $('clock').textContent = formatTime(simTime);
+  }
+
+  function updateUI() {
+    const list = $('station-list');
+    list.innerHTML = STATIONS.map(s => {
+      const st = stationState[s.id];
+      return `<li class="station-item">
+        <div class="station-dot ${st.status}"></div>
+        <div class="station-info">
+          <div class="name">${s.icon} ${s.name}</div>
+          <div class="detail">${st.status} · ${st.totalProcessed} processed</div>
+        </div>
+        <div class="station-queue">${st.queue.length}${st.processing ? '+1' : ''}</div>
+      </li>`;
+    }).join('');
+  }
+
+  function renderLog() {
+    $('log').innerHTML = logs.map(l =>
+      `<div class="entry ${l.type}">[${l.t}] ${l.msg}</div>`
+    ).join('');
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────
+  function resize() {
+    canvas.width = wrap.clientWidth;
+    canvas.height = wrap.clientHeight;
+  }
+
+  function drawConveyor(fromId, toId) {
+    const from = stationPos(getStation(fromId), canvas.width, canvas.height);
+    const to = stationPos(getStation(toId), canvas.width, canvas.height);
+    const mx = (from.x + to.x) / 2;
+    const my = (from.y + to.y) / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.quadraticCurveTo(mx, my - 30, to.x, to.y);
+    ctx.strokeStyle = '#2a3544';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    // Animated dashes
+    const dashOffset = (simTime * 0.05 * speed) % 20;
+    ctx.setLineDash([8, 8]);
+    ctx.lineDashOffset = -dashOffset;
+    ctx.strokeStyle = '#37474f';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawStation(s) {
+    const pos = stationPos(s, canvas.width, canvas.height);
+    const st = stationState[s.id];
+    const r = 36;
+
+    // Glow when working
+    if (st.processing) {
+      const glow = ctx.createRadialGradient(pos.x, pos.y, r, pos.x, pos.y, r + 20);
+      glow.addColorStop(0, s.color + '44');
+      glow.addColorStop(1, 'transparent');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r + 20, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Body
+    ctx.beginPath();
+    ctx.roundRect(pos.x - r, pos.y - r, r * 2, r * 2, 10);
+    ctx.fillStyle = '#1a2332';
+    ctx.fill();
+    ctx.strokeStyle = st.status === 'blocked' ? '#ef5350' : s.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Progress ring
+    if (st.processing) {
+      const pct = st.progress / s.processTime;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, r + 6, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // Icon
+    ctx.font = '22px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s.icon, pos.x, pos.y - 4);
+
+    // Label
+    ctx.font = '11px Segoe UI, sans-serif';
+    ctx.fillStyle = '#b0bec5';
+    ctx.fillText(s.name, pos.x, pos.y + r + 16);
+
+    // Queue badge
+    if (st.queue.length > 0) {
+      ctx.beginPath();
+      ctx.arc(pos.x + r - 4, pos.y - r + 4, 10, 0, Math.PI * 2);
+      ctx.fillStyle = '#1565c0';
+      ctx.fill();
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(st.queue.length, pos.x + r - 4, pos.y - r + 5);
+    }
+  }
+
+  function drawItem(x, y, item, scale = 1) {
+    const sz = 10 * scale;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = item.defective ? '#ef5350' : item.color;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(-sz, -sz * 0.6, sz * 2, sz * 1.2, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = '8px sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.id, 0, 0);
+    ctx.restore();
+  }
+
+  function render() {
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Grid
+    ctx.strokeStyle = '#1a2332';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 40) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += 40) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // Title overlay
+    ctx.font = '600 13px Segoe UI, sans-serif';
+    ctx.fillStyle = '#37474f';
+    ctx.textAlign = 'left';
+    ctx.fillText('PRODUCTION FLOOR', 16, 24);
+
+    // Conveyors
+    CONVEYORS.forEach(c => drawConveyor(c.from, c.to));
+
+    // Stations
+    STATIONS.forEach(drawStation);
+
+    // Items on conveyors
+    conveyorItems.forEach(ci => drawItem(ci.x, ci.y, ci.item));
+
+    // Items being processed (inside station)
+    STATIONS.forEach(s => {
+      const st = stationState[s.id];
+      if (st.processing) {
+        const pos = stationPos(s, W, H);
+        drawItem(pos.x, pos.y + 18, st.processing, 0.8);
+      }
+    });
+
+    // Legend
+    ctx.font = '10px Segoe UI, sans-serif';
+    ctx.fillStyle = '#546e7a';
+    ctx.textAlign = 'right';
+    const legends = [
+      ['#66bb6a', 'Working'],
+      ['#ffa726', 'Waiting'],
+      ['#ef5350', 'Blocked'],
+      ['#546e7a', 'Idle'],
+    ];
+    legends.forEach(([col, label], i) => {
+      const ly = H - 60 + i * 14;
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(W - 100, ly, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#78909c';
+      ctx.fillText(label, W - 12, ly + 3);
+    });
+  }
+
+  // ── Game Loop ──────────────────────────────────────────────────
+  function loop(timestamp) {
+    if (!lastFrame) lastFrame = timestamp;
+    const dt = timestamp - lastFrame;
+    lastFrame = timestamp;
+
+    updateSimulation(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ── Controls ───────────────────────────────────────────────────
+  $('btn-start').addEventListener('click', () => {
+    running = true;
+    if (!startTime) startTime = performance.now();
+    $('btn-start').classList.add('active');
+    $('btn-pause').classList.remove('active');
+    $('status-text').textContent = 'Production running';
+    addLog('Factory started', 'info');
+  });
+
+  $('btn-pause').addEventListener('click', () => {
+    running = false;
+    $('btn-pause').classList.add('active');
+    $('btn-start').classList.remove('active');
+    $('status-text').textContent = 'Production paused';
+    addLog('Factory paused', 'warn');
+  });
+
+  $('btn-reset').addEventListener('click', () => {
+    running = false;
+    simTime = 0; lastFrame = 0; lastSpawn = 0;
+    completed = 0; defects = 0; wip = 0;
+    itemIdCounter = 0; startTime = null;
+    throughputWindow = [];
+    conveyorItems.length = 0;
+    logs.length = 0;
+    STATIONS.forEach(s => {
+      stationState[s.id] = { queue: [], processing: null, progress: 0, status: 'idle', totalProcessed: 0 };
+    });
+    $('btn-start').classList.remove('active');
+    $('btn-pause').classList.remove('active');
+    $('status-text').textContent = 'Ready — press Start to begin production';
+    updateStats();
+    updateUI();
+    renderLog();
+    addLog('Factory reset', 'warn');
+  });
+
+  $('speed').addEventListener('input', e => {
+    speed = parseFloat(e.target.value);
+    $('speed-val').textContent = speed + '×';
+  });
+
+  window.addEventListener('resize', resize);
+
+  // ── Init ───────────────────────────────────────────────────────
+  resize();
+  updateStats();
+  updateUI();
+  addLog('Simulation initialized — 7 stations, 7 conveyors', 'info');
+  requestAnimationFrame(loop);
+
+  // Auto-start after brief delay
+  setTimeout(() => {
+    $('btn-start').click();
+  }, 800);
+})();
+</script>
+</body>
+</html>
