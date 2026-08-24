@@ -16,6 +16,7 @@ import { findRun, readJson, walkFiles } from './run-io.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GALLERY = join(ROOT, 'gallery');
+const GALLERY_ARCHIVE = join(ROOT, '.scratch', 'archive', 'gallery');
 const ANIME_BUNDLE = join(ROOT, 'node_modules', 'animejs', 'dist', 'bundles', 'anime.esm.min.js');
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 
@@ -38,13 +39,13 @@ function listRuns() {
 }
 
 function logStripped(retired, empty) {
-  if (retired) console.log(`removed ${retired} retired gallery folders`);
+  if (retired) console.log(`archived ${retired} retired gallery folders`);
   if (empty) console.log(`removed ${empty} gallery folders with no HTML`);
 }
 
 function finishGallery(extras, counts) {
   const suite = loadSuite();
-  const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite);
+  const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
   const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
   const known = liveBenchmarkIds(suite);
   const experimentOrder = [...(extras.experimentOrder || [])].filter(
@@ -78,7 +79,7 @@ function cmdGallery(args) {
   const experimentOrder = [];
   const seenExp = new Set();
   let last = null;
-  stripRetiredGalleryBenchmarks(GALLERY, suite);
+  stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
   stripNoHtmlGalleryTakes(GALLERY);
   const runs =
     args.all || (!args.run && !args.viewer)
@@ -119,7 +120,7 @@ try {
   const command = galleryCommand(args);
   const suite = loadSuite();
   if (command === 'viewer') {
-    const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite);
+    const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
     const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
     const catalog = writeCatalogFile(GALLERY, suite);
     const hash = writeGalleryViewer({

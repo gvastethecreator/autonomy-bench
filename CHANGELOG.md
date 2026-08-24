@@ -7,6 +7,8 @@
 - Move **Vote for this** next to **Reload** and **Copy prompt** on each take toolbar. Reload refreshes that take.
 - Deploy the gallery Worker from GitHub Actions on push to `main` after CI validates.
 - Catalog cells are an index plus `glance`. Prompt text lives on prompt revisions. The receipt panel loads `receipt.json` on demand. Takes repaired after generation show a **fixed** badge from `receipt.showcaseFixed`.
+- Models view loads every playable take. Extra WebGL canvases may go blank when Chrome hits its context limit.
+- Scope the live suite to Rollercoaster. Other v2.0.0 benches and their published takes leave the public tree so they can be restored locally later. Hide the experiment picker until a second live experiment exists.
 - Share run IO, cell identity, receipt status, planner, catalog query, and viewer ESM helpers behind smaller modules.
 
 ## 0.7.2 — 2026-08-24

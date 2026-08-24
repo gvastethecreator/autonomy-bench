@@ -6,7 +6,7 @@ The public stage is `gallery/index.html`. Preview it with `vp run dev`. After yo
 
 The title is the desaturated experiment emoji plus `{benchmark} Bench` for the selected experiment.
 
-The left sidebar holds the experiment select with previous and next arrows, A/B/C prompt-level buttons, and models. Compact (or `[`) collapses it to an icon rail. The experiment menu shows a desaturated emoji beside the name. The model list shows only models that have a generated HTML take for the selected benchmark and the current month or run. In Models view every listed take is on stage. Click a model to hide or show it. Anime.js layout animates models that enter or leave that list.
+The left sidebar holds A/B/C prompt-level buttons and models. The experiment select (previous/next and the dropdown) stays in the DOM and hides itself when the catalog has only one live experiment. Compact (or `[`) collapses the sidebar to an icon rail. When more than one experiment is live, the menu shows a desaturated emoji beside the name. The model list shows only models that have a generated HTML take for the selected benchmark and the current month or run. In Models view every listed take is on stage. Click a model to hide or show it. Anime.js layout animates models that enter or leave that list.
 
 **Table** is a coverage matrix: every benchmark against every model that has at least one playable take. A filled square is present for the current A/B/C level. An empty square is missing. A gold crown is the unique public vote leader for that prompt-V. A gold star is the staff pick (rollercoaster A prefers `grok-4.6`; other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`; B and C prefer `grok-4.6-high`). Click a filled cell to open that take. Click the bench name to open the staff pick.
 
@@ -14,15 +14,17 @@ Each take has a top toolbar: the model name, the prompt in small type, then Vote
 
 In Models grid or columns, that toolbar is two rows: actions on top, the prompt underneath. A status bar under the toolbar shows duration, approximate output tokens from the HTML (`chars ÷ 4`, marked `≈`), contributor avatar, and harness icon. Duration and harness come from a short catalog `glance`. Duration and harness token usage stay `—` when the receipt did not capture them. The `≈` count is derived at catalog build time from `index.html`; it is not harness billing. Opening **Receipt** loads `receipt.json` for that take. A gold **fixed** badge means the HTML was repaired after generation so it runs in the public gallery. Multi-take cards also have **Open full size**, which opens that take in Single.
 
+Models view loads every playable take. Chrome may drop older WebGL canvases (`Too many active WebGL contexts`) when many models are on stage at once.
+
 Open HTML or receipt panels stack on the right, one panel per take. If more than one panel is open, the stack scrolls and each panel keeps the same height.
 
 The crown is a public winner vote for that prompt-V (`rollercoaster-A`). It selects a model, not a take date. Gold on the toolbar means your vote. Gold on the model list and in the Table view marks the unique leader. A tie shows no public crown. You can move your vote or click the same crown to clear it. Votes use an anonymous `ab_voter` cookie. The API does not store IP. If a vote request fails, that prompt shows no crowns. A later successful request can still load other prompts. Vote buttons stay hidden until at least one request succeeds.
 
-The top toolbar groups three dropdowns: **Filters** (prompt version, month, and run), **View** (Single, Models, ABC, Table, plus Columns/Grid/Rows when that view needs a layout), and **Fit** (Fill or Fit). View has previous and next arrows, like the experiment picker. If a month has more than one run, Filters also lists those runs. Omit `date` to keep the month combined. Fit is disabled in Table.
+The top toolbar groups three dropdowns: **Filters** (prompt version, month, and run), **View** (Single, Models, ABC, Table, plus Columns/Grid/Rows when that view needs a layout), and **Fit** (Fill or Fit). View has previous and next arrows. If a month has more than one run, Filters also lists those runs. Omit `date` to keep the month combined. Fit is disabled in Table.
 
 If a listed model has no playable HTML for the current filters, the stage typesets the prompt instead of faking a preview.
 
-Default experiment order: Rollercoaster, Endless Driving, Medieval City, Procedural Biped, Infinite Maze.
+Default experiment order follows the live suite. Rollercoaster is first. The picker unhides when a second live experiment is in the catalog.
 
 ## Motion
 

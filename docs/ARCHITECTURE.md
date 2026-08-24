@@ -2,7 +2,7 @@
 
 Autonomy Bench has five layers:
 
-1. **Suite** — versioned benchmark definitions and frozen v1 prompts.
+1. **Suite** — versioned benchmark definitions and frozen A/B/C prompts.
 2. **Planner** — expands benchmark × model × attempt into immutable cells.
 3. **Adapter** — manual, isolated agent, or Prototype Lab execution.
 4. **Ledger** — per-cell factual receipts (including generation time and token spend) plus output hashes and the GitHub contributor.
@@ -19,8 +19,7 @@ Use Autonomy Bench to freeze and index a benchmark matrix. Use Prototype Lab whe
 ```text
 suites/                         versioned benchmark definitions
   browser-autonomy/
-    suite.json
-    README.md
+    suite.json                  live benches
 runs/
   YYYY/MM/DD/<run-id>/          one frozen execution
     manifest.json

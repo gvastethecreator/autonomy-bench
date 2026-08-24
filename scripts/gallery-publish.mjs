@@ -3,6 +3,7 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -17,13 +18,7 @@ import { outputSizeFromHtml } from './output-tokens.mjs';
 import { isPlayable, publishStatus } from './receipt.mjs';
 import { ensureDir, readJson, writeJson } from './run-io.mjs';
 
-export const DEFAULT_EXPERIMENT_ORDER = [
-  'rollercoaster',
-  'endless-driving',
-  'medieval-city',
-  'procedural-biped',
-  'infinite-maze',
-];
+export const DEFAULT_EXPERIMENT_ORDER = ['rollercoaster'];
 
 export const GALLERY_SKIP = new Set([
   'fonts',
@@ -103,7 +98,7 @@ export function stripNoHtmlGalleryTakes(galleryDir) {
   return removed;
 }
 
-export function stripRetiredGalleryBenchmarks(galleryDir, suite) {
+export function stripRetiredGalleryBenchmarks(galleryDir, suite, archiveDir = '') {
   if (!existsSync(galleryDir)) return 0;
   const known = liveBenchmarkIds(suite);
   if (!known.size) return 0;
@@ -116,7 +111,17 @@ export function stripRetiredGalleryBenchmarks(galleryDir, suite) {
       const parsed = parsePromptVersion(promptV);
       const id = parsed.benchmarkId;
       if (!id || known.has(id)) continue;
-      rmSync(join(modelDir, promptV), { recursive: true, force: true });
+      const src = join(modelDir, promptV);
+      if (archiveDir) {
+        const dest = join(archiveDir, modelName, promptV);
+        if (existsSync(dest)) rmSync(src, { recursive: true, force: true });
+        else {
+          ensureDir(join(archiveDir, modelName));
+          renameSync(src, dest);
+        }
+      } else {
+        rmSync(src, { recursive: true, force: true });
+      }
       removed++;
     }
     if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {

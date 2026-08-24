@@ -1,10 +1,10 @@
 # Browser Autonomy Benchmark Suite
 
-Version `2.0.0` · 32 benchmarks · frozen A/B/C prompt ladder
+Version `2.1.0` · live bench: Rollercoaster · frozen A/B/C prompt ladder
 
-Browser Autonomy v2 keeps the live v1.6 concepts and refactors the prompt ladder around controlled under-specification. Terrain Explorer is retired.
+The live suite is Rollercoaster only so the public gallery can stay small. Thirty-one additional v2.0.0 benches are shelved with frozen prompts. Adding a bench later is the same path as before: put it in `suite.json`, publish takes, rebuild the viewer. The experiment picker stays in the viewer and unhides when more than one live experiment exists.
 
-- **A — Raw:** minimum task statement. Unnecessary quality adjectives and interaction-first wording are removed where they are not part of the benchmark's identity.
+- **A — Raw:** minimum task statement.
 - **B — Autonomous:** A plus exactly 20 words granting explicit authority over unspecified decisions.
 - **C — Showcase:** B plus exactly 20 additional words asking for stronger presentation quality without prescribing concrete features.
 
@@ -20,44 +20,13 @@ The fixed C-only suffix is exactly 20 words:
 
 > Push toward presentation-ready quality with stronger art direction, motion, depth, transitions, atmosphere, and meaningful detail while preserving clarity and coherence.
 
-The suite is evaluated **showcase-first, interaction-optional**. That is an evaluation lens, not a hidden requirement added to A or B. Interaction may enrich a take and remains explicit where it is semantically central, such as Cursor Experiment. Infinite Maze remains explicitly self-navigating because autonomous traversal is part of that benchmark's identity.
+The suite is evaluated **showcase-first, interaction-optional**. That is an evaluation lens, not a hidden requirement added to A or B.
 
 ## Raw prompts
 
-|   # | Benchmark                                            | Category             | A — Raw prompt                                                                                                           |
-| --: | ---------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-|   1 | **Rollercoaster** (`rollercoaster`)                  | `3d-interactive`     | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js.                       |
-|   2 | **Solar System** (`solar-system`)                    | `3d-interactive`     | Create a miniature solar system in a single HTML file using Three.js.                                                    |
-|   3 | **Procedural City** (`procedural-city`)              | `3d-interactive`     | Create a living procedural city at night in a single HTML file using Three.js.                                           |
-|   4 | **Endless Driving** (`endless-driving`)              | `3d-interactive`     | Create an endless night-driving experience in a single HTML file using Three.js.                                         |
-|   5 | **Cloth Simulation** (`cloth-simulation`)            | `physics-simulation` | Create a cloth simulation in a single HTML file.                                                                         |
-|   6 | **Fluid Simulation** (`fluid-simulation`)            | `physics-simulation` | Create a colorful fluid simulation in a single HTML file.                                                                |
-|   7 | **Ecosystem** (`ecosystem`)                          | `physics-simulation` | Create a self-sustaining ecosystem simulation in a single HTML file.                                                     |
-|   8 | **Traffic Simulation** (`traffic-simulation`)        | `physics-simulation` | Create a city traffic simulation in a single HTML file.                                                                  |
-|   9 | **Music Player** (`music-player`)                    | `ui-product`         | Create a desktop music player in a single HTML file.                                                                     |
-|  10 | **Node Editor** (`node-editor`)                      | `ui-product`         | Create a visual node editor in a single HTML file.                                                                       |
-|  11 | **Image Editor** (`image-editor`)                    | `ui-product`         | Create an image editor in a single HTML file.                                                                            |
-|  12 | **Music Sequencer** (`music-sequencer`)              | `ui-product`         | Create a music sequencer in a single HTML file using the Web Audio API.                                                  |
-|  13 | **Shader Playground** (`shader-playground`)          | `ui-product`         | Create a shader playground in a single HTML file using WebGL.                                                            |
-|  14 | **Asteroids** (`asteroids`)                          | `games`              | Create an Asteroids-style arcade game in a single HTML file.                                                             |
-|  15 | **Tower Defense** (`tower-defense`)                  | `games`              | Create a tower defense game in a single HTML file.                                                                       |
-|  16 | **Dungeon Crawler** (`dungeon-crawler`)              | `games`              | Create a procedural dungeon crawler in a single HTML file.                                                               |
-|  17 | **Physics Sandbox** (`physics-sandbox`)              | `games`              | Create a 2D physics sandbox in a single HTML file.                                                                       |
-|  18 | **System Monitoring Dashboard** (`system-dashboard`) | `data-visualization` | Create a real-time system monitoring dashboard in a single HTML file using simulated data.                               |
-|  19 | **Network Visualization** (`network-visualization`)  | `data-visualization` | Create a visualization of a complex computer network in a single HTML file.                                              |
-|  20 | **Warehouse** (`warehouse`)                          | `system-reasoning`   | Create a warehouse simulation where workers move packages from incoming trucks to outgoing trucks in a single HTML file. |
-|  21 | **Elevator** (`elevator`)                            | `system-reasoning`   | Create a simulation of elevators serving a busy office building in a single HTML file.                                   |
-|  22 | **Airport** (`airport`)                              | `system-reasoning`   | Create a live airport operations simulation in a single HTML file.                                                       |
-|  23 | **Crowd Evacuation** (`crowd-evacuation`)            | `system-reasoning`   | Create a crowd evacuation simulation in a single HTML file.                                                              |
-|  24 | **Automated Factory** (`automated-factory`)          | `system-reasoning`   | Create an automated factory simulation in a single HTML file.                                                            |
-|  25 | **Clock** (`clock`)                                  | `minimal-creative`   | Create a clock in a single HTML file.                                                                                    |
-|  26 | **Loading Screen** (`loading-screen`)                | `minimal-creative`   | Create a loading screen in a single HTML file.                                                                           |
-|  27 | **Satisfying Button** (`satisfying-button`)          | `minimal-creative`   | Create a satisfying button in a single HTML file.                                                                        |
-|  28 | **Cursor Experiment** (`cursor-experiment`)          | `minimal-creative`   | Create an interactive cursor experiment in a single HTML file.                                                           |
-|  29 | **Interactive 404** (`interactive-404`)              | `minimal-creative`   | Create a 404 page in a single HTML file.                                                                                 |
-|  30 | **Medieval City** (`medieval-city`)                  | `3d-interactive`     | Create a living procedural medieval city in a single HTML file using Three.js.                                           |
-|  31 | **Infinite Maze** (`infinite-maze`)                  | `3d-interactive`     | Create a continuously self-navigating infinite first-person maze in a single HTML file using Three.js.                   |
-|  32 | **Procedural Biped** (`procedural-biped`)            | `3d-interactive`     | Create a biped creature with a procedural walking animation in a single HTML file using Three.js.                        |
+|   # | Benchmark                           | Category         | A — Raw prompt                                                                                     |
+| --: | ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------- |
+|   1 | **Rollercoaster** (`rollercoaster`) | `3d-interactive` | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. |
 
 ## Evaluation profile
 

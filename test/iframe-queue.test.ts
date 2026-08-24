@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vite-plus/test';
 import {
+  IFRAME_LIVE_BUDGET,
   IFRAME_STAGGER_GAP_MS,
   iframeLoadJobs,
+  isHotIframeSrc,
   loadIframesStaggered,
   loaderIdentity,
   loaderProgressLabel,
+  pickLiveIframes,
 } from '../scripts/iframe-queue.mjs';
 
 describe('loaderProgressLabel', () => {
@@ -30,6 +33,55 @@ describe('loaderIdentity', () => {
   it('falls back to Loading when the bench is missing', () => {
     expect(loaderIdentity({ level: 'B' })).toEqual({ headline: 'Loading B', model: '' });
     expect(loaderIdentity({})).toEqual({ headline: 'Loading', model: '' });
+  });
+});
+
+describe('isHotIframeSrc', () => {
+  it('treats about:blank as parked', () => {
+    expect(isHotIframeSrc('about:blank')).toBe(false);
+    expect(isHotIframeSrc('glm-5.3-max/rollercoaster-A/2026-08-23-191030/index.html')).toBe(true);
+    expect(isHotIframeSrc('')).toBe(false);
+  });
+});
+
+describe('pickLiveIframes', () => {
+  it('keeps the first budget slots in DOM order before anyone is visible', () => {
+    const items = Array.from({ length: 12 }, () => ({
+      visible: false,
+      ratio: 0,
+      live: false,
+      pin: 0,
+    }));
+    expect(pickLiveIframes(items, 8)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(IFRAME_LIVE_BUDGET).toBe(8);
+  });
+
+  it('prefers intersecting frames over older live ones', () => {
+    const items = [
+      { visible: false, ratio: 0, live: true, pin: 0 },
+      { visible: false, ratio: 0, live: true, pin: 0 },
+      { visible: true, ratio: 0.8, live: false, pin: 0 },
+      { visible: true, ratio: 0.4, live: false, pin: 0 },
+    ];
+    expect(pickLiveIframes(items, 2)).toEqual([2, 3]);
+  });
+
+  it('keeps already-live frames when visibility is tied', () => {
+    const items = [
+      { visible: true, ratio: 1, live: true, pin: 0 },
+      { visible: true, ratio: 1, live: false, pin: 0 },
+      { visible: true, ratio: 1, live: true, pin: 0 },
+    ];
+    expect(pickLiveIframes(items, 2)).toEqual([0, 2]);
+  });
+
+  it('lets a clicked take jump the queue', () => {
+    const items = [
+      { visible: true, ratio: 1, live: true, pin: 0 },
+      { visible: true, ratio: 1, live: true, pin: 0 },
+      { visible: true, ratio: 1, live: false, pin: 9 },
+    ];
+    expect(pickLiveIframes(items, 2)).toEqual([2, 0]);
   });
 });
 

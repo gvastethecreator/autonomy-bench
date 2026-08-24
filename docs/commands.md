@@ -21,7 +21,7 @@ vp run bench -- list
 vp run bench -- show rollercoaster --level A
 vp run bench -- show rollercoaster --level B
 vp run bench -- show rollercoaster --level C
-vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster,solar-system --levels A,B,C --attempts 2 --adapter manual --harness cursor --contributor gvastethecreator
+vp run bench -- plan --models gpt-5.6-sol,model-b --benchmarks rollercoaster --levels A,B,C --attempts 2 --adapter manual --harness cursor --contributor gvastethecreator
 vp run bench -- status --run <run-id>
 vp run bench -- gallery --run <run-id>
 vp run bench -- export-prototype-lab --run <run-id>
@@ -42,7 +42,7 @@ Run modes:
 - `prompt-ladder`: A/B/C for the same benchmark and model. A is Raw, B adds exactly 20 words of autonomy permission, and C adds exactly 20 further words of showcase pressure.
 - `model-shootout`: several models against the same frozen prompt.
 - `matrix`: chosen benchmarks × models × attempts.
-- `suite`: the complete 32-benchmark matrix.
+- `suite`: every live suite benchmark. The live set is currently Rollercoaster.
 
 Adapters:
 
@@ -63,7 +63,7 @@ vp run deploy
 
 A push to `main` deploys after CI validates. Use local `vp run deploy` only when you need to publish without that push. The deploy job needs repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
-`vp run bench -- gallery --run <run-id>` publishes one run. `vp run gallery` with no flags publishes every run, then rebuilds the catalog and viewer. `gallery --run` copies each publishable A/B/C take into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. It then rebuilds `catalog.json` from the whole published tree and writes `gallery/index.html` plus helper modules under `gallery/vendor/`.
+`vp run bench -- gallery --run <run-id>` publishes one run. `vp run gallery` with no flags publishes every run, then rebuilds the catalog and viewer. `gallery --run` copies each publishable A/B/C take **for live suite benches** into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. Takes for benches that are not in the live suite are skipped. Leftover published folders for retired or shelved benches leave the public `gallery/` tree so they can be restored locally. It then rebuilds `catalog.json` from the live `gallery/` tree and writes `gallery/index.html` plus helper modules under `gallery/vendor/`.
 
 Local votes need the D1 schema once:
 
