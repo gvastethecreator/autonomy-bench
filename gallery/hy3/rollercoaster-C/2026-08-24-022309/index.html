@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Velocity — A First-Person Coaster</title>
+<style>
+  :root { --ink: #eaf2ff; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #05060c; }
+  body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; color: var(--ink); }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* Vignette + film grain for presentation polish */
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 52%, rgba(0,0,0,0.55) 100%);
+    mix-blend-mode: multiply;
+  }
+  #grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.05;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  /* HUD */
+  #hud {
+    position: fixed; left: 0; right: 0; top: 0; z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 18px 22px; pointer-events: none;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.6);
+  }
+  .title { font-weight: 700; letter-spacing: 0.32em; font-size: 13px; text-transform: uppercase; opacity: 0.92; }
+  .sub { font-size: 10px; letter-spacing: 0.28em; opacity: 0.55; margin-top: 4px; text-transform: uppercase; }
+
+  #readout { text-align: right; font-variant-numeric: tabular-nums; }
+  #speed { font-size: 30px; font-weight: 700; letter-spacing: 0.04em; }
+  #speed small { font-size: 12px; font-weight: 500; opacity: 0.6; margin-left: 4px; letter-spacing: 0.1em; }
+  #alt { font-size: 11px; letter-spacing: 0.18em; opacity: 0.6; margin-top: 3px; text-transform: uppercase; }
+
+  #meter {
+    position: fixed; left: 22px; bottom: 20px; z-index: 10; width: 210px;
+    pointer-events: none; text-shadow: 0 1px 6px rgba(0,0,0,0.6);
+  }
+  #meterbar { height: 4px; border-radius: 4px; background: rgba(255,255,255,0.14); overflow: hidden; margin-top: 6px; }
+  #meterfill { height: 100%; width: 0%; background: linear-gradient(90deg,#6fd2ff,#b388ff); transition: width 0.1s linear; }
+  #meterlabel { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; opacity: 0.6; }
+
+  /* Cinematic intro overlay */
+  #intro {
+    position: fixed; inset: 0; z-index: 20; background: #05060c;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 1.1s ease; text-align: center;
+  }
+  #intro h1 {
+    font-size: clamp(34px, 7vw, 76px); font-weight: 800; letter-spacing: 0.18em;
+    background: linear-gradient(90deg,#9fe3ff,#c5a3ff 60%,#ff9ec8);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-transform: uppercase; opacity: 0; transform: translateY(14px);
+    animation: rise 1.2s 0.15s ease forwards;
+  }
+  #intro p {
+    margin-top: 16px; font-size: 12px; letter-spacing: 0.4em; text-transform: uppercase;
+    opacity: 0; animation: rise 1.2s 0.5s ease forwards; color: #cfe0ff;
+  }
+  #intro .go {
+    margin-top: 38px; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
+    opacity: 0; animation: rise 1s 1.1s ease forwards, pulse 2.4s 1.4s ease-in-out infinite;
+    border: 1px solid rgba(255,255,255,0.35); padding: 11px 26px; border-radius: 40px;
+  }
+  @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 50% { border-color: rgba(255,255,255,0.85); } }
+  #intro.hide { opacity: 0; pointer-events: none; }
+
+  #flash { position: fixed; inset: 0; z-index: 8; pointer-events: none; background: #fff; opacity: 0; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="vignette"></div>
+  <div id="grain"></div>
+  <div id="flash"></div>
+
+  <div id="hud">
+    <div>
+      <div class="title">Velocity</div>
+      <div class="sub">First-Person Grand Tour</div>
+    </div>
+    <div id="readout">
+      <div id="speed">0<small>km/h</small></div>
+      <div id="alt">0 m</div>
+    </div>
+  </div>
+
+  <div id="meter">
+    <div id="meterlabel">Track Progress</div>
+    <div id="meterbar"><div id="meterfill"></div></div>
+  </div>
+
+  <div id="intro">
+    <h1>Velocity</h1>
+    <p>A first-person rollercoaster</p>
+    <div class="go">Click to ride</div>
+  </div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from "three";
+
+// ----------------------------------------------------------------------------
+// Renderer / scene / camera
+// ----------------------------------------------------------------------------
+const app = document.getElementById("app");
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x9fc4e6, 0.0016);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.5, 6000);
+const carPos = new THREE.Vector3();
+const carLook = new THREE.Vector3();
+
+// ----------------------------------------------------------------------------
+// Sky: large gradient dome + sun + layered clouds
+// ----------------------------------------------------------------------------
+const skyGeo = new THREE.SphereGeometry(4000, 32, 16);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {
+    top: { value: new THREE.Color(0x2a5c9e) },
+    mid: { value: new THREE.Color(0x7fb4e6) },
+    bot: { value: new THREE.Color(0xe9f3ff) },
+    sun: { value: new THREE.Vector3(-1, 0.34, -0.92).normalize() }
+  },
+  vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    varying vec3 vP; uniform vec3 top; uniform vec3 mid; uniform vec3 bot; uniform vec3 sun;
+    void main(){
+      float h = normalize(vP).y;
+      vec3 col = mix(bot, mid, smoothstep(-0.05, 0.35, h));
+      col = mix(col, top, smoothstep(0.3, 0.85, h));
+      float d = max(dot(normalize(vP), sun), 0.0);
+      col += vec3(1.0,0.85,0.6) * pow(d, 90.0) * 1.4;
+      col += vec3(1.0,0.8,0.55) * pow(d, 6.0) * 0.18;
+      gl_FragColor = vec4(col, 1.0);
+    }`
+});
+scene.add(new THREE.Mesh(skyGeo, skyMat));
+
+const sunDir = new THREE.Vector3(-1, 0.34, -0.92).normalize();
+const sunLight = new THREE.DirectionalLight(0xfff0d8, 2.0);
+sunLight.position.copy(sunDir).multiplyScalar(600);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.near = 10;
+sunLight.shadow.camera.far = 1400;
+const sc = 900; sunLight.shadow.camera.left = -sc; sunLight.shadow.camera.right = sc;
+sunLight.shadow.camera.top = sc; sunLight.shadow.camera.bottom = -sc;
+sunLight.shadow.bias = -0.0004;
+scene.add(sunLight);
+scene.add(new THREE.HemisphereLight(0xbfe0ff, 0x4a6b3a, 0.85));
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+// Visible sun disc
+const sunDisc = new THREE.Mesh(
+  new THREE.CircleGeometry(70, 48),
+  new THREE.MeshBasicMaterial({ color: 0xfff3da, fog: false })
+);
+sunDisc.position.copy(sunDir).multiplyScalar(3200);
+sunDisc.lookAt(0, 0, 0);
+scene.add(sunDisc);
+
+// ----------------------------------------------------------------------------
+// Ground
+// ----------------------------------------------------------------------------
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x5f8f4a, roughness: 1.0, metalness: 0.0 });
+const ground = new THREE.Mesh(new THREE.CircleGeometry(3200, 64), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Distant mountain ring
+function makeMountains(radius, count, hMin, hMax, color) {
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0, fog: true });
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + Math.random() * 0.2;
+    const r = radius + (Math.random() - 0.5) * 200;
+    const h = hMin + Math.random() * (hMax - hMin);
+    const geo = new THREE.ConeGeometry(120 + Math.random() * 160, h, 6 + (Math.random() * 3 | 0));
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(Math.cos(a) * r, h / 2 - 12, Math.sin(a) * r);
+    m.rotation.y = Math.random() * Math.PI;
+    grp.add(m);
+  }
+  return grp;
+}
+scene.add(makeMountains(2400, 46, 260, 620, 0x6f86a8));
+scene.add(makeMountains(2000, 40, 140, 360, 0x86a0c2));
+
+// ----------------------------------------------------------------------------
+// Lakes / water
+// ----------------------------------------------------------------------------
+function makeWater(x, z, rx, rz) {
+  const w = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 48),
+    new THREE.MeshStandardMaterial({ color: 0x3b7fd1, roughness: 0.15, metalness: 0.5, transparent: true, opacity: 0.9 })
+  );
+  w.rotation.x = -Math.PI / 2;
+  w.scale.set(rx, rz, 1);
+  w.position.set(x, 0.4, z);
+  scene.add(w);
+  return w;
+}
+makeWater(560, -420, 360, 240);
+makeWater(-700, 520, 300, 220);
+
+// ----------------------------------------------------------------------------
+// Trees (instanced for performance)
+// ----------------------------------------------------------------------------
+const trunkGeo = new THREE.CylinderGeometry(1.1, 1.6, 9, 6);
+const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 });
+const leafGeo = new THREE.ConeGeometry(6.5, 16, 7);
+const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: 1 });
+const leaves = new THREE.InstancedMesh(leafGeo, leafMat, 700);
+const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, 700);
+leaves.castShadow = true; trunks.castShadow = true;
+const dummy = new THREE.Object3D();
+const TRACK_SAFE = 70; // keep trees away from the track
+let placed = 0, guard = 0;
+const treePositions = [];
+while (placed < 700 && guard < 6000) {
+  guard++;
+  const x = (Math.random() - 0.5) * 3000;
+  const z = (Math.random() - 0.5) * 3000;
+  if (Math.hypot(x, z) < 180) continue; // keep center clear
+  treePositions.push([x, z]);
+  placed++;
+}
+for (let i = 0; i < treePositions.length; i++) {
+  const [x, z] = treePositions[i];
+  const s = 0.7 + Math.random() * 1.1;
+  dummy.position.set(x, 4.5 * s, z);
+  dummy.scale.set(s, s, s);
+  dummy.rotation.set(0, Math.random() * Math.PI, 0);
+  dummy.updateMatrix();
+  trunks.setMatrixAt(i, dummy.matrix);
+  dummy.position.set(x, (9 + 8) * s, z);
+  dummy.scale.set(s, s, s);
+  dummy.updateMatrix();
+  leaves.setMatrixAt(i, dummy.matrix);
+}
+trunks.instanceMatrix.needsUpdate = true;
+leaves.instanceMatrix.needsUpdate = true;
+scene.add(trunks); scene.add(leaves);
+
+// ----------------------------------------------------------------------------
+// The track: a rich looping Catmull-Rom spline with elevation + banking
+// ----------------------------------------------------------------------------
+const ctrl = [
+  [0, 14, 0], [180, 26, 120], [360, 60, 60], [520, 96, -120],
+  [560, 70, -360], [420, 30, -540], [200, 18, -520], [40, 26, -360],
+  [-120, 64, -260], [-260, 120, -180], [-360, 150, -20], [-320, 110, 200],
+  [-160, 44, 320], [60, 22, 420], [260, 40, 480], [420, 84, 360]
+];
+const curve = new THREE.CatmullRomCurve3(
+  ctrl.map(p => new THREE.Vector3(p[0], p[1], p[2])), true, "catmullrom", 0.5
+);
+const TUBES = 1600;
+const pts = curve.getSpacedPoints(TUBES);
+
+// Support pillars from track down to ground
+const pillarMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.8, metalness: 0.3 });
+const pillarGeo = new THREE.CylinderGeometry(1.4, 1.8, 1, 8);
+const pillarStep = 26;
+const pillarCount = Math.floor(TUBES / pillarStep);
+const pillars = new THREE.InstancedMesh(pillarGeo, pillarMat, pillarCount);
+pillars.castShadow = true; pillars.receiveShadow = true;
+let pi = 0;
+for (let i = 0; i < TUBES; i += pillarStep) {
+  const p = pts[i];
+  if (p.y < 8) { pi++; continue; }
+  const h = p.y - 0.5;
+  dummy.position.set(p.x, h / 2, p.z);
+  dummy.scale.set(1, h, 1);
+  dummy.rotation.set(0, 0, 0);
+  dummy.updateMatrix();
+  pillars.setMatrixAt(pi++, dummy.matrix);
+}
+pillars.count = pi;
+pillars.instanceMatrix.needsUpdate = true;
+scene.add(pillars);
+
+// Rails (two tube geometries offset along track normal)
+const up = new THREE.Vector3(0, 1, 0);
+function buildRail(offset) {
+  const railPts = [];
+  const fr = new THREE.Vector3(), right = new THREE.Vector3();
+  for (let i = 0; i <= TUBES; i++) {
+    const t = i / TUBES;
+    const p = curve.getPointAt(t);
+    const tng = curve.getTangentAt(t).normalize();
+    right.crossVectors(up, tng).normalize();
+    const off = right.multiplyScalar(offset);
+    railPts.push(new THREE.Vector3(p.x + off.x, p.y + 1.6, p.z + off.z));
+  }
+  const rc = new THREE.CatmullRomCurve3(railPts, true);
+  const geo = new THREE.TubeGeometry(rc, TUBES, 0.7, 8, true);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xc23b3b, roughness: 0.35, metalness: 0.85, emissive: 0x220505 });
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = true;
+  return m;
+}
+scene.add(buildRail(-3.2));
+scene.add(buildRail(3.2));
+
+// Cross ties
+const tieGeo = new THREE.BoxGeometry(8, 0.6, 1.4);
+const tieMat = new THREE.MeshStandardMaterial({ color: 0x8a8f99, roughness: 0.7, metalness: 0.4 });
+const ties = new THREE.InstancedMesh(tieGeo, tieMat, TUBES);
+for (let i = 0; i <= TUBES; i++) {
+  const t = i / TUBES;
+  const p = curve.getPointAt(t);
+  const tng = curve.getTangentAt(t).normalize();
+  const right = new THREE.Vector3().crossVectors(up, tng).normalize();
+  const m = new THREE.Matrix4().makeBasis(right, up, tng);
+  dummy.position.set(p.x, p.y + 1.0, p.z);
+  dummy.quaternion.setFromRotationMatrix(m);
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+  ties.setMatrixAt(i, dummy.matrix);
+}
+ties.instanceMatrix.needsUpdate = true;
+ties.castShadow = true;
+scene.add(ties);
+
+// ----------------------------------------------------------------------------
+// A tunnel section near the middle of the loop for drama
+// ----------------------------------------------------------------------------
+const tunnelGroup = new THREE.Group();
+const tunnelMat = new THREE.MeshStandardMaterial({ color: 0x35404f, roughness: 0.9, metalness: 0.2, side: THREE.BackSide });
+const tunnelSegs = 60;
+const tStart = 0.42, tEnd = 0.55;
+for (let i = 0; i < tunnelSegs; i++) {
+  const t = tStart + (tEnd - tStart) * (i / (tunnelSegs - 1));
+  const p = curve.getPointAt(t);
+  const tng = curve.getTangentAt(t).normalize();
+  const right = new THREE.Vector3().crossVectors(up, tng).normalize();
+  const m = new THREE.Matrix4().makeBasis(right, up, tng);
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 10, 16, 1, true), tunnelMat);
+  dummy.position.copy(p); dummy.position.y += 1.4;
+  dummy.quaternion.setFromRotationMatrix(m);
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+  ring.matrix.copy(dummy.matrix); ring.matrixAutoUpdate = false;
+  tunnelGroup.add(ring);
+}
+scene.add(tunnelGroup);
+
+// ----------------------------------------------------------------------------
+// Coaster car nose visible in view (first-person dashboard)
+// ----------------------------------------------------------------------------
+const carGroup = new THREE.Group();
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1b2330, roughness: 0.4, metalness: 0.6 });
+const nose = new THREE.Mesh(new THREE.BoxGeometry(7, 2.2, 6), bodyMat);
+nose.position.set(0, -3.4, -7);
+nose.castShadow = true;
+const tip = new THREE.Mesh(new THREE.ConeGeometry(1.6, 4, 4), new THREE.MeshStandardMaterial({ color: 0xff5a5a, roughness: 0.3, metalness: 0.5 }));
+tip.rotation.x = -Math.PI / 2; tip.position.set(0, -3.0, -11);
+carGroup.add(nose, tip);
+// side rails of the car
+for (const sx of [-3.4, 3.4]) {
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.4, 9), new THREE.MeshStandardMaterial({ color: 0x2b3442, metalness: 0.6, roughness: 0.4 }));
+  rail.position.set(sx, -2.6, -6);
+  carGroup.add(rail);
+}
+scene.add(carGroup);
+
+// Headlight
+const headlight = new THREE.SpotLight(0xfff4e0, 6, 220, Math.PI / 5, 0.4, 1.2);
+headlight.position.set(0, -2.5, -9);
+headlight.target.position.set(0, -4, -60);
+carGroup.add(headlight, headlight.target);
+
+// ----------------------------------------------------------------------------
+// Motion
+// ----------------------------------------------------------------------------
+const speedDOM = document.getElementById("speed");
+const altDOM = document.getElementById("alt");
+const meterFill = document.getElementById("meterfill");
+const flash = document.getElementById("flash");
+
+let t = 0;            // param along curve [0..1)
+let speed = 0;        // current units/sec
+const baseSpeed = 78; // cruising speed
+let started = false;
+let lastTime = performance.now();
+const fwd = new THREE.Vector3();
+const tmpRight = new THREE.Vector3();
+const bankQuat = new THREE.Quaternion();
+const rollAxis = new THREE.Vector3();
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (started) {
+    // speed gently varies with slope for physical feel: faster downhill
+    const p0 = curve.getPointAt(t);
+    const p1 = curve.getPointAt((t + 0.01) % 1);
+    const slope = (p1.y - p0.y);
+    const target = baseSpeed * (1 + slope * 0.06);
+    speed += (target - speed) * Math.min(dt * 1.6, 1);
+    t = (t + (speed * dt) / curve.getLength()) % 1;
+  }
+
+  const p = curve.getPointAt(t);
+  const tng = curve.getTangentAt(t).normalize();
+  fwd.copy(tng);
+  tmpRight.crossVectors(up, tng).normalize();
+  // Banking: tilt into turns based on curvature
+  const pAhead = curve.getPointAt((t + 0.012) % 1);
+  const pBehind = curve.getPointAt((t + 1 - 0.012) % 1);
+  const turn = tmpRight.clone().multiplyScalar(-1).dot(pAhead.clone().sub(pBehind));
+  const bank = THREE.MathUtils.clamp(turn * 0.02, -0.5, 0.5);
+
+  carPos.copy(p); carPos.y += 2.6;
+  carLook.copy(p).add(tng.clone().multiplyScalar(20)); carLook.y += 2.0;
+
+  camera.position.lerp(carPos, started ? 0.5 : 1);
+  camera.up.set(0, 1, 0);
+  // Apply bank roll
+  rollAxis.copy(tng);
+  bankQuat.setFromAxisAngle(rollAxis, bank);
+  camera.up.applyQuaternion(bankQuat);
+  camera.lookAt(carLook.clone().applyAxisAngle(rollAxis, bank));
+
+  carGroup.position.copy(camera.position);
+  carGroup.quaternion.copy(camera.quaternion);
+
+  // HUD
+  const kmh = Math.round(speed * 3.0);
+  speedDOM.innerHTML = kmh + '<small>km/h</small>';
+  altDOM.textContent = Math.max(0, Math.round(p.y)) + ' m';
+  meterFill.style.width = (t * 100).toFixed(1) + '%';
+
+  // subtle speed-based FOV for sense of velocity
+  camera.fov = 72 + Math.min(kmh * 0.05, 12);
+  camera.updateProjectionMatrix();
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+// ----------------------------------------------------------------------------
+// Start interaction
+// ----------------------------------------------------------------------------
+const intro = document.getElementById("intro");
+function start() {
+  if (started) return;
+  started = true;
+  intro.classList.add("hide");
+  setTimeout(() => intro.remove(), 1200);
+  // launch flash for cinematic pop
+  flash.style.transition = "opacity 0.5s ease";
+  flash.style.opacity = "0.6";
+  setTimeout(() => { flash.style.opacity = "0"; }, 60);
+}
+intro.addEventListener("click", start);
+window.addEventListener("keydown", (e) => { if (e.code === "Space") start(); });
+
+// ----------------------------------------------------------------------------
+// Resize
+// ----------------------------------------------------------------------------
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Idle preview: slowly drift the camera before the rider starts, for showcase
+(function previewDrift() {
+  if (started) return;
+  t = (t + 0.0004) % 1;
+  requestAnimationFrame(previewDrift);
+})();
+</script>
+</body>
+</html>
