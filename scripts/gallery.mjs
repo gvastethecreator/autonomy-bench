@@ -228,10 +228,6 @@ function writeGalleryViewer() {
   return createHash('sha256').update(template).digest('hex').slice(0, 12);
 }
 
-function previousIds(rows) {
-  return (rows || []).map((row) => row.id).filter(Boolean);
-}
-
 function writeCatalog(extras = {}) {
   const catalogPath = join(GALLERY, 'catalog.json');
   const prev = existsSync(catalogPath) ? json(catalogPath) : {};
@@ -246,7 +242,6 @@ function writeCatalog(extras = {}) {
     experimentOrder: DEFAULT_EXPERIMENT_ORDER.concat(
       preferred.filter((id) => !DEFAULT_EXPERIMENT_ORDER.includes(id)),
     ),
-    modelOrder: extras.modelOrder || previousIds(prev.models),
   });
   writeFileSync(catalogPath, JSON.stringify(catalog, null, 2) + '\n');
   return catalog;
@@ -270,8 +265,6 @@ function publishRun(runDir) {
   const levels = supportedPromptLevels();
   const experimentOrder = [];
   const seenExp = new Set();
-  const modelOrder = [];
-  const seenModel = new Set();
   const known = liveBenchmarkIds();
   let copiedHtml = 0;
   let copiedReceipts = 0;
@@ -287,10 +280,6 @@ function publishRun(runDir) {
     if (!seenExp.has(benchmarkId)) {
       seenExp.add(benchmarkId);
       experimentOrder.push(benchmarkId);
-    }
-    if (!seenModel.has(model)) {
-      seenModel.add(model);
-      modelOrder.push(model);
     }
     const htmlPath = join(runDir, cellField(cell, 'outputPath'), 'index.html');
     const recPath = join(runDir, cellField(cell, 'receiptPath'));
@@ -326,7 +315,6 @@ function publishRun(runDir) {
   return {
     manifest: m,
     experimentOrder,
-    modelOrder,
     copiedHtml,
     copiedReceipts,
     copiedPrompts,
@@ -365,8 +353,6 @@ function cmdGallery(args) {
   const totals = { copiedHtml: 0, copiedReceipts: 0, copiedPrompts: 0 };
   const experimentOrder = [];
   const seenExp = new Set();
-  const modelOrder = [];
-  const seenModel = new Set();
   let last = null;
 
   stripRetiredGalleryBenchmarks();
@@ -389,11 +375,6 @@ function cmdGallery(args) {
       seenExp.add(id);
       experimentOrder.push(id);
     }
-    for (const id of published.modelOrder) {
-      if (seenModel.has(id)) continue;
-      seenModel.add(id);
-      modelOrder.push(id);
-    }
   }
 
   finishGallery(
@@ -403,7 +384,6 @@ function cmdGallery(args) {
       harness: last?.harness || '',
       adapter: last?.adapter || '',
       experimentOrder,
-      modelOrder,
     },
     totals,
   );

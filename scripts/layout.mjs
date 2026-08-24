@@ -222,14 +222,7 @@ export function buildCatalogFromCells(cells, extras = {}) {
     seenModel.add(cell.model);
     modelIds.push(cell.model);
   }
-  const preferredModel = extras.modelOrder || [];
-  modelIds.sort((a, b) => {
-    const ia = preferredModel.indexOf(a);
-    const ib = preferredModel.indexOf(b);
-    const sa = ia === -1 ? 1000 : ia;
-    const sb = ib === -1 ? 1000 : ib;
-    return sa - sb || a.localeCompare(b);
-  });
+  modelIds.sort((a, b) => a.localeCompare(b));
   const models = modelIds.map((id) => {
     const mine = revised.filter((cell) => cell.model === id);
     return {

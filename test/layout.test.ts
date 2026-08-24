@@ -220,7 +220,7 @@ describe('layout', () => {
           receipt: { runId: 'run-new', harness: 'cursor', adapter: 'agent' },
         },
       ],
-      { modelOrder: ['grok-4.6', 'kimi-k3-max'] },
+      { modelOrder: ['kimi-k3-max', 'grok-4.6'] },
     );
     expect(catalog.dates[0]).toBe('2026-08-22-010000');
     expect(catalog.promptRevisions).toHaveLength(2);
