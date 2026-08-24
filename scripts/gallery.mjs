@@ -217,6 +217,7 @@ function writeGalleryViewer() {
   template = injectSnippet(template, '/* __IFRAME_QUEUE__ */', join(here, 'iframe-queue.mjs'));
   template = injectSnippet(template, '/* __RUN_MONTH__ */', join(here, 'run-month.mjs'));
   template = injectSnippet(template, '/* __VOTES__ */', join(here, 'votes.mjs'));
+  template = injectSnippet(template, '/* __STAFF_PICKS__ */', join(here, 'staff-picks.mjs'));
   writeFileSync(join(GALLERY, 'index.html'), template);
   return createHash('sha256').update(template).digest('hex').slice(0, 12);
 }

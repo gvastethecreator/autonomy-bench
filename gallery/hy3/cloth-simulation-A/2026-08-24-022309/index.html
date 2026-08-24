@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloth Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: radial-gradient(circle at 50% 20%, #1b2735 0%, #090a0f 100%);
+    color: #cdd6e4;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  canvas {
+    display: block;
+    cursor: grab;
+    touch-action: none;
+  }
+  canvas:active { cursor: grabbing; }
+  #hud {
+    position: absolute;
+    top: 14px;
+    left: 16px;
+    font-size: 13px;
+    line-height: 1.5;
+    background: rgba(10,14,22,0.55);
+    border: 1px solid rgba(120,150,200,0.18);
+    padding: 12px 14px;
+    border-radius: 10px;
+    backdrop-filter: blur(6px);
+    max-width: 280px;
+    pointer-events: none;
+    user-select: none;
+  }
+  #hud h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #eaf1ff;
+    letter-spacing: .2px;
+  }
+  #hud .key {
+    color: #8fd2ff;
+    font-weight: 600;
+  }
+  #hud .dim { color: #7e8aa3; }
+  #panel {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: rgba(10,14,22,0.55);
+    border: 1px solid rgba(120,150,200,0.18);
+    padding: 10px 12px;
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+  }
+  #panel button {
+    background: linear-gradient(180deg, #2a3550, #1c2438);
+    color: #d7e1f5;
+    border: 1px solid rgba(140,170,220,0.25);
+    padding: 7px 12px;
+    font-size: 12.5px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background .15s, transform .05s;
+  }
+  #panel button:hover { background: linear-gradient(180deg, #33415f, #232d45); }
+  #panel button:active { transform: scale(0.96); }
+  #panel label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #9fb0cc;
+  }
+  #panel input[type=range] { width: 110px; accent-color: #6fb0ff; }
+  #stat {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    font-size: 12px;
+    color: #7e8aa3;
+    background: rgba(10,14,22,0.5);
+    border: 1px solid rgba(120,150,200,0.15);
+    padding: 7px 11px;
+    border-radius: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <h1>Cloth Simulation</h1>
+    <div><span class="key">Drag</span> to push &amp; stretch the cloth</div>
+    <div><span class="key">Right-drag</span> to tear the fabric</div>
+    <div><span class="dim">Verlet integration · structural + shear + bend constraints</span></div>
+  </div>
+  <div id="stat">— fps</div>
+  <div id="panel">
+    <button id="reset">Reset</button>
+    <button id="wind">Wind: off</button>
+    <button id="ball">Drop ball: off</button>
+    <label>Gravity
+      <input id="grav" type="range" min="0" max="0.9" step="0.02" value="0.32">
+    </label>
+    <label>Stiffness
+      <input id="stiff" type="range" min="1" max="8" step="1" value="4">
+    </label>
+  </div>
+</div>
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const statEl = document.getElementById("stat");
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener("resize", () => { resize(); build(); });
+
+  // ---- Cloth model ----
+  // Grid of particles connected by distance constraints solved with Verlet integration.
+  let cols, rows, spacing, points, constraints;
+  let originX, originY;
+
+  const mouse = { x: 0, y: 0, px: 0, py: 0, down: false, button: 0 };
+
+  const opt = {
+    gravity: 0.32,
+    wind: false,
+    ball: false,
+    stiffness: 4,
+    friction: 0.99,
+    torn: false,
+  };
+
+  function build() {
+    // Size the cloth to fit the viewport comfortably.
+    const targetW = Math.min(W * 0.6, 720);
+    spacing = Math.max(8, Math.floor(targetW / 46));
+    cols = Math.min(60, Math.floor(targetW / spacing));
+    rows = Math.min(40, Math.max(14, Math.floor((H * 0.55) / spacing)));
+    originX = (W - cols * spacing) / 2;
+    originY = Math.max(40, H * 0.12);
+
+    points = [];
+    for (let y = 0; y <= rows; y++) {
+      for (let x = 0; x <= cols; x++) {
+        const px = originX + x * spacing;
+        const py = originY + y * spacing;
+        points.push({
+          x: px, y: py, ox: px, oy: py,
+          // Pin the top row so the cloth hangs like a flag/curtain.
+          pinned: y === 0 && (x % 6 === 0 || x === cols),
+          pinX: px, pinY: py,
+        });
+      }
+    }
+
+    constraints = [];
+    const idx = (x, y) => y * (cols + 1) + x;
+    for (let y = 0; y <= rows; y++) {
+      for (let x = 0; x <= cols; x++) {
+        if (x < cols) addConstraint(idx(x, y), idx(x + 1, y)); // structural horizontal
+        if (y < rows) addConstraint(idx(x, y), idx(x, y + 1)); // structural vertical
+        if (x < cols && y < rows) {
+          addConstraint(idx(x, y), idx(x + 1, y + 1)); // shear
+          addConstraint(idx(x + 1, y), idx(x, y + 1)); // shear
+        }
+        if (x < cols - 1) addConstraint(idx(x, y), idx(x + 2, y)); // bend
+        if (y < rows - 1) addConstraint(idx(x, y), idx(x, y + 2)); // bend
+      }
+    }
+    opt.torn = false;
+  }
+
+  function addConstraint(a, b) {
+    const pa = points[a], pb = points[b];
+    const dx = pa.x - pb.x, dy = pa.y - pb.y;
+    constraints.push({ a, b, len: Math.hypot(dx, dy), alive: true });
+  }
+
+  // A physics ball that collides with the cloth.
+  const ballState = { x: 0, y: 0, r: 46, vy: 0, alive: false };
+
+  function step() {
+    const g = opt.gravity;
+    const wind = opt.wind ? Math.sin(performance.now() * 0.0011) * 0.55 + 0.25 : 0;
+    const drag = opt.friction;
+
+    // Verlet integration.
+    for (const p of points) {
+      if (p.pinned) { p.x = p.pinX; p.y = p.pinY; p.ox = p.x; p.oy = p.y; continue; }
+      const vx = (p.x - p.ox) * drag;
+      const vy = (p.y - p.oy) * drag;
+      p.ox = p.x; p.oy = p.y;
+      p.x += vx + wind;
+      p.y += vy + g;
+    }
+
+    // Mouse interaction.
+    if (mouse.down) {
+      const r = mouse.button === 2 ? 22 : 26; // tear radius vs push radius
+      for (const p of points) {
+        if (p.pinned) continue;
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d = Math.hypot(dx, dy);
+        if (d < r) {
+          if (mouse.button === 2) {
+            // Tear: kill constraints touching this point.
+            for (const c of constraints) {
+              if (c.a === points.indexOf(p) || c.b === points.indexOf(p)) c.alive = false;
+            }
+            opt.torn = true;
+          } else {
+            const mvx = mouse.x - mouse.px;
+            const mvy = mouse.y - mouse.py;
+            p.x += mvx * 0.9;
+            p.y += mvy * 0.9;
+            p.ox = p.x - mvx * 0.5;
+            p.oy = p.y - mvy * 0.5;
+          }
+        }
+      }
+    }
+
+    // Ball physics.
+    if (opt.ball) {
+      if (!ballState.alive) {
+        ballState.alive = true;
+        ballState.x = W / 2;
+        ballState.y = -60;
+        ballState.vy = 0;
+      }
+      ballState.vy += g * 0.6;
+      ballState.y += ballState.vy;
+      if (ballState.y + ballState.r > H) { ballState.y = H - ballState.r; ballState.vy *= -0.4; }
+      // Collide cloth with ball.
+      for (const p of points) {
+        if (p.pinned) continue;
+        const dx = p.x - ballState.x, dy = p.y - ballState.y;
+        const d = Math.hypot(dx, dy);
+        if (d < ballState.r && d > 0.001) {
+          const nx = dx / d, ny = dy / d;
+          p.x = ballState.x + nx * ballState.r;
+          p.y = ballState.y + ny * ballState.r;
+        }
+      }
+    } else {
+      ballState.alive = false;
+    }
+
+    // Satisfy constraints iteratively (higher stiffness = more iterations).
+    const iter = opt.stiffness;
+    for (let k = 0; k < iter; k++) {
+      for (const c of constraints) {
+        if (!c.alive) continue;
+        const pa = points[c.a], pb = points[c.b];
+        let dx = pb.x - pa.x, dy = pb.y - pa.y;
+        const d = Math.hypot(dx, dy) || 0.0001;
+        const diff = (d - c.len) / d * 0.5;
+        const ox = dx * diff, oy = dy * diff;
+        if (!pa.pinned) { pa.x += ox; pa.y += oy; }
+        if (!pb.pinned) { pb.x -= ox; pb.y -= oy; }
+      }
+      // Keep points inside the viewport.
+      for (const p of points) {
+        if (p.pinned) continue;
+        if (p.y > H) p.y = H;
+        if (p.x < 0) p.x = 0;
+        if (p.x > W) p.x = W;
+      }
+    }
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Soft grid glow backdrop.
+    const grd = ctx.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, "rgba(40,60,95,0.10)");
+    grd.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw constraints as the cloth weave. Color by strain (stretch) for a nice effect.
+    ctx.lineWidth = 1.1;
+    for (const c of constraints) {
+      if (!c.alive) continue;
+      const pa = points[c.a], pb = points[c.b];
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const d = Math.hypot(dx, dy);
+      const strain = Math.min(1, Math.abs(d - c.len) / c.len);
+      // Blue base shifting toward warm red under tension.
+      const r = Math.floor(90 + strain * 150);
+      const g = Math.floor(150 - strain * 90);
+      const b = Math.floor(220 - strain * 120);
+      ctx.strokeStyle = `rgba(${r},${g},${b},${0.85 - strain * 0.25})`;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+
+    // Ball.
+    if (opt.ball && ballState.alive) {
+      const bg = ctx.createRadialGradient(
+        ballState.x - ballState.r * 0.3, ballState.y - ballState.r * 0.3, ballState.r * 0.2,
+        ballState.x, ballState.y, ballState.r);
+      bg.addColorStop(0, "#ffd28a");
+      bg.addColorStop(1, "#c8742a");
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.arc(ballState.x, ballState.y, ballState.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,220,160,0.6)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Pinned anchors.
+    ctx.fillStyle = "#9fd0ff";
+    for (const p of points) {
+      if (p.pinned) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // ---- Main loop ----
+  let last = performance.now();
+  let fpsSmooth = 60;
+  function loop() {
+    const now = performance.now();
+    const dt = now - last;
+    last = now;
+    const fps = 1000 / Math.max(1, dt);
+    fpsSmooth = fpsSmooth * 0.92 + fps * 0.08;
+
+    step();
+    render();
+
+    statEl.textContent = Math.round(fpsSmooth) + " fps" + (opt.wind ? " · wind" : "");
+    requestAnimationFrame(loop);
+  }
+
+  // ---- Input ----
+  function setMouse(e) {
+    const rect = canvas.getBoundingClientRect();
+    mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+  }
+  canvas.addEventListener("mousedown", (e) => {
+    setMouse(e); mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.down = true; mouse.button = e.button; e.preventDefault();
+  });
+  window.addEventListener("mousemove", setMouse);
+  window.addEventListener("mouseup", () => { mouse.down = false; });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Touch support.
+  canvas.addEventListener("touchstart", (e) => {
+    const t = e.touches[0]; const rect = canvas.getBoundingClientRect();
+    mouse.x = t.clientX - rect.left; mouse.y = t.clientY - rect.top;
+    mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.down = true; mouse.button = 0; e.preventDefault();
+  }, { passive: false });
+  canvas.addEventListener("touchmove", (e) => {
+    const t = e.touches[0]; const rect = canvas.getBoundingClientRect();
+    mouse.x = t.clientX - rect.left; mouse.y = t.clientY - rect.top;
+    e.preventDefault();
+  }, { passive: false });
+  window.addEventListener("touchend", () => { mouse.down = false; });
+
+  // ---- Controls ----
+  document.getElementById("reset").addEventListener("click", build);
+  const windBtn = document.getElementById("wind");
+  windBtn.addEventListener("click", () => {
+    opt.wind = !opt.wind;
+    windBtn.textContent = "Wind: " + (opt.wind ? "on" : "off");
+  });
+  const ballBtn = document.getElementById("ball");
+  ballBtn.addEventListener("click", () => {
+    opt.ball = !opt.ball;
+    ballBtn.textContent = "Drop ball: " + (opt.ball ? "on" : "off");
+  });
+  document.getElementById("grav").addEventListener("input", (e) => { opt.gravity = parseFloat(e.target.value); });
+  document.getElementById("stiff").addEventListener("input", (e) => { opt.stiffness = parseInt(e.target.value, 10); });
+
+  resize();
+  build();
+  loop();
+})();
+</script>
+</body>
+</html>

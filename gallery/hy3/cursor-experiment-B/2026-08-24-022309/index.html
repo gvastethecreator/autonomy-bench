@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Cursor Field — an interactive experiment</title>
+<style>
+  :root {
+    --bg-0: #06070d;
+    --bg-1: #0c1020;
+    --ink: rgba(233, 240, 255, 0.92);
+    --ink-dim: rgba(233, 240, 255, 0.45);
+    --accent: #7cf3ff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--bg-0);
+    color: var(--ink);
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    cursor: none;
+  }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    background:
+      radial-gradient(120% 120% at 50% -10%, var(--bg-1) 0%, var(--bg-0) 55%);
+  }
+
+  /* ---- foreground copy ---- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: clamp(18px, 4vw, 48px);
+    mix-blend-mode: screen;
+  }
+
+  .title {
+    font-size: clamp(20px, 4.4vw, 40px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    max-width: 16ch;
+    text-shadow: 0 0 24px rgba(124, 243, 255, 0.25);
+  }
+  .title small {
+    display: block;
+    margin-top: 10px;
+    font-size: clamp(12px, 1.8vw, 15px);
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: var(--ink-dim);
+    max-width: 34ch;
+  }
+
+  .hud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: clamp(14px, 3vw, 40px);
+    align-items: flex-end;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat { min-width: 78px; }
+  .stat b {
+    display: block;
+    font-size: clamp(18px, 3vw, 28px);
+    font-weight: 600;
+    color: var(--accent);
+    text-shadow: 0 0 18px rgba(124, 243, 255, 0.35);
+  }
+  .stat span {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: clamp(18px, 4vw, 40px);
+    transform: translateX(-50%);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    pointer-events: none;
+    animation: breathe 3.4s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.85; }
+  }
+
+  /* --- custom cursor: a soft ring + dot --- */
+  .cursor-ring {
+    position: fixed;
+    top: 0; left: 0;
+    width: 42px; height: 42px;
+    margin: -21px 0 0 -21px;
+    border: 1px solid rgba(124, 243, 255, 0.55);
+    border-radius: 50%;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    transition: width .25s ease, height .25s ease,
+                margin .25s ease, border-color .25s ease,
+                background-color .25s ease;
+    will-change: transform;
+  }
+  .cursor-dot {
+    position: fixed;
+    top: 0; left: 0;
+    width: 6px; height: 6px;
+    margin: -3px 0 0 -3px;
+    background: #fff;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 12px rgba(255,255,255,0.9);
+    will-change: transform;
+  }
+  body.pressed .cursor-ring {
+    width: 30px; height: 30px;
+    margin: -15px 0 0 -15px;
+    border-color: rgba(255, 196, 240, 0.85);
+    background: rgba(255, 196, 240, 0.08);
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div class="overlay">
+    <div class="title">
+      Cursor Field
+      <small>A field of light that bends toward your movement. Move slowly to listen; move fast to disturb it.</small>
+    </div>
+    <div class="hud">
+      <div class="stat"><b id="s-speed">0</b><span>speed</span></div>
+      <div class="stat"><b id="s-energy">0</b><span>energy</span></div>
+      <div class="stat"><b id="s-dots">0</b><span>linked</span></div>
+      <div class="stat"><b id="s-hue">0°</b><span>hue</span></div>
+    </div>
+  </div>
+
+  <div class="hint">move · hold to bloom · double-tap to scatter</div>
+
+  <div class="cursor-ring" id="ring"></div>
+  <div class="cursor-dot" id="dot"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const ring = document.getElementById("ring");
+  const dot = document.getElementById("dot");
+
+  const sSpeed = document.getElementById("s-speed");
+  const sEnergy = document.getElementById("s-energy");
+  const sDots = document.getElementById("s-dots");
+  const sHue = document.getElementById("s-hue");
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    seedField();
+  }
+
+  // ---- pointer state (smoothed) ----
+  const mouse = { x: W / 2, y: H / 2 };       // raw target
+  const ptr = { x: W / 2, y: H / 2, vx: 0, vy: 0, speed: 0 };
+  let pressed = false;
+  let hue = 188;           // base cyan
+  let energy = 0;          // 0..1 disturbance
+
+  // ---- field of attractor dots ----
+  let dots = [];
+  function seedField() {
+    const area = W * H;
+    const count = Math.round(Math.min(260, Math.max(70, area / 9000)));
+    dots = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * W;
+      const y = Math.random() * H;
+      dots[i] = {
+        hx: x, hy: y,        // home
+        x, y,                // current
+        vx: 0, vy: 0,
+        r: 0.8 + Math.random() * 1.6,
+        phase: Math.random() * Math.PI * 2,
+        twk: 0.5 + Math.random() * 0.8
+      };
+    }
+  }
+
+  // ---- trailing particles ----
+  const trail = [];
+  const MAX_TRAIL = 240;
+
+  function spawnTrail(x, y, vx, vy, e) {
+    const n = 1 + Math.floor(e * 3);
+    for (let i = 0; i < n; i++) {
+      trail.push({
+        x: x + (Math.random() - 0.5) * 10,
+        y: y + (Math.random() - 0.5) * 10,
+        vx: vx * 0.12 + (Math.random() - 0.5) * 1.4,
+        vy: vy * 0.12 + (Math.random() - 0.5) * 1.4,
+        life: 1,
+        decay: 0.012 + Math.random() * 0.02,
+        r: 1 + Math.random() * 2.5,
+        hue: hue + (Math.random() - 0.5) * 40
+      });
+    }
+    if (trail.length > MAX_TRAIL) trail.splice(0, trail.length - MAX_TRAIL);
+  }
+
+  // ---- ripple bursts ----
+  const bursts = [];
+  function burst(x, y, power) {
+    bursts.push({ x, y, r: 0, max: 120 + power * 220, life: 1, hue });
+    // push dots outward
+    for (const d of dots) {
+      const dx = d.x - x, dy = d.y - y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const f = (power * 26) / (1 + dist * 0.04);
+      d.vx += (dx / dist) * f;
+      d.vy += (dy / dist) * f;
+    }
+  }
+
+  // ---- input ----
+  function setTarget(x, y) {
+    mouse.x = x; mouse.y = y;
+  }
+  window.addEventListener("pointermove", (e) => setTarget(e.clientX, e.clientY), { passive: true });
+  window.addEventListener("pointerdown", (e) => {
+    pressed = true; document.body.classList.add("pressed");
+    setTarget(e.clientX, e.clientY);
+    burst(e.clientX, e.clientY, 1.4);
+  });
+  window.addEventListener("pointerup", () => { pressed = false; document.body.classList.remove("pressed"); });
+  window.addEventListener("dblclick", (e) => burst(e.clientX, e.clientY, 1));
+  window.addEventListener("resize", resize);
+
+  // ---- simulation ----
+  let lastT = performance.now();
+  let linked = 0;
+
+  function step(now) {
+    const dt = Math.min(40, now - lastT) / 16.67;
+    lastT = now;
+
+    // ease pointer toward target
+    const ax = mouse.x - ptr.x;
+    const ay = mouse.y - ptr.y;
+    ptr.vx = ptr.vx * 0.82 + ax * 0.18;
+    ptr.vy = ptr.vy * 0.82 + ay * 0.18;
+    ptr.x += ptr.vx * dt;
+    ptr.y += ptr.vy * dt;
+    ptr.speed = Math.hypot(ptr.vx, ptr.vy);
+
+    // disturbance energy from speed + press
+    const targetEnergy = Math.min(1, ptr.speed / 36 + (pressed ? 0.5 : 0));
+    energy += (targetEnergy - energy) * 0.06;
+
+    // hue drifts with motion direction, settles to cyan
+    const dir = Math.atan2(ptr.vy, ptr.vx);
+    const hueTarget = 188 + Math.sin(dir * 1.3) * 60 * energy + (pressed ? 120 : 0);
+    hue += (hueTarget - hue) * 0.04;
+
+    // dot physics
+    const R = 150;            // influence radius
+    const R2 = R * R;
+    linked = 0;
+    for (const d of dots) {
+      const dx = ptr.x - d.x;
+      const dy = ptr.y - d.y;
+      const dist2 = dx * dx + dy * dy;
+      if (dist2 < R2) {
+        linked++;
+        const dist = Math.sqrt(dist2) || 1;
+        const pull = (1 - dist / R);
+        // attract when calm, repel/agitate when energetic
+        const sign = pressed ? -1 : 0.6;
+        const f = sign * pull * (0.5 + energy * 3);
+        d.vx += (dx / dist) * f;
+        d.vy += (dy / dist) * f;
+      }
+      // spring home + damping + idle drift
+      d.vx += (d.hx - d.x) * 0.012;
+      d.vy += (d.hy - d.y) * 0.012;
+      d.vx *= 0.9; d.vy *= 0.9;
+      d.x += d.vx * dt + Math.cos(now * 0.001 * d.twk + d.phase) * 0.12;
+      d.y += d.vy * dt + Math.sin(now * 0.001 * d.twk + d.phase) * 0.12;
+    }
+
+    // trail emission
+    if (ptr.speed > 1.2 || pressed) {
+      spawnTrail(ptr.x, ptr.y, ptr.vx, ptr.vy, 0.3 + energy);
+    }
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const t = trail[i];
+      t.x += t.vx * dt; t.y += t.vy * dt;
+      t.vx *= 0.96; t.vy *= 0.96;
+      t.life -= t.decay * dt;
+      if (t.life <= 0) trail.splice(i, 1);
+    }
+
+    // bursts
+    for (let i = bursts.length - 1; i >= 0; i--) {
+      const b = bursts[i];
+      b.r += (b.max - b.r) * 0.08 * dt;
+      b.life -= 0.02 * dt;
+      if (b.life <= 0) bursts.splice(i, 1);
+    }
+
+    render(now);
+    requestAnimationFrame(step);
+  }
+
+  // ---- render ----
+  function render(now) {
+    // fade trail rather than clear => motion smear
+    ctx.fillStyle = "rgba(6, 7, 13, 0.18)";
+    ctx.fillRect(0, 0, W, H);
+
+    // connection lines between nearby dots (constellation)
+    const LINK = 96, LINK2 = LINK * LINK;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < dots.length; i++) {
+      const a = dots[i];
+      for (let j = i + 1; j < dots.length; j++) {
+        const b = dots[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < LINK2) {
+          const al = (1 - d2 / LINK2) * 0.5;
+          ctx.strokeStyle = `hsla(${hue}, 90%, 70%, ${al})`;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // dots
+    for (const d of dots) {
+      const speed = Math.hypot(d.vx, d.vy);
+      const l = 55 + Math.min(35, speed * 6);
+      ctx.fillStyle = `hsla(${hue + (d.phase % 30)}, 85%, ${l}%, ${0.55 + speed * 0.04})`;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r + Math.min(2.5, speed * 0.2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // trail particles
+    for (const t of trail) {
+      ctx.fillStyle = `hsla(${t.hue}, 95%, 68%, ${t.life * 0.8})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * t.life + 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // bursts
+    for (const b of bursts) {
+      ctx.strokeStyle = `hsla(${b.hue}, 95%, 72%, ${b.life * 0.6})`;
+      ctx.lineWidth = 2 * b.life;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // cursor glow
+    const glow = ctx.createRadialGradient(ptr.x, ptr.y, 0, ptr.x, ptr.y, 60 + energy * 60);
+    glow.addColorStop(0, `hsla(${hue + (pressed ? 120 : 0)}, 100%, 75%, ${0.5 + energy * 0.3})`);
+    glow.addColorStop(1, "hsla(0,0%,100%,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(ptr.x, ptr.y, 60 + energy * 60, 0, Math.PI * 2);
+    ctx.fill();
+
+    // custom cursor visuals
+    ring.style.transform = `translate(${ptr.x}px, ${ptr.y}px)`;
+    dot.style.transform = `translate(${mouse.x}px, ${mouse.y}px)`;
+
+    // HUD
+    sSpeed.textContent = Math.round(ptr.speed);
+    sEnergy.textContent = (energy * 100).toFixed(0);
+    sDots.textContent = linked;
+    sHue.textContent = Math.round(((hue % 360) + 360) % 360) + "°";
+  }
+
+  // gentle auto-demo until the user moves
+  let idle = true;
+  const moveOnce = () => { idle = false; };
+  window.addEventListener("pointermove", moveOnce, { once: true });
+  let td = 0;
+  const demo = (t) => {
+    if (!idle) return;
+    td += 0.006;
+    setTarget(W / 2 + Math.cos(td) * W * 0.28, H / 2 + Math.sin(td * 1.7) * H * 0.26);
+  };
+  const loop = (t) => { demo(t); };
+  (function hookDemo() {
+    const origStep = step;
+    // attach demo tick via its own rAF is overkill; fold into step:
+  })();
+
+  // fold idle-demo into the main loop
+  const _step = step;
+  step = function (now) {
+    if (idle) {
+      td += 0.006;
+      setTarget(W / 2 + Math.cos(td) * W * 0.28, H / 2 + Math.sin(td * 1.7) * H * 0.26);
+    }
+    _step(now);
+  };
+
+  resize();
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>

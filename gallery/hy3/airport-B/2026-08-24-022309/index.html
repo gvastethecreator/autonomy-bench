@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KSIM — Live Airport Operations</title>
+<style>
+  :root{
+    --bg:#070d14; --panel:#0c1622; --panel2:#101d2c; --line:#1c2c3e;
+    --text:#cfe3f2; --dim:#6f8aa1; --accent:#36d0c4; --warn:#ffb454;
+    --arr:#36d0c4; --dep:#ff7a7a; --gate:#ffd166; --ok:#7ce38b;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  header{
+    display:flex; align-items:center; gap:14px; padding:8px 16px;
+    background:linear-gradient(90deg,#0c1622,#0a131d);
+    border-bottom:1px solid var(--line);
+  }
+  header .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 10px var(--accent);animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+  header h1{font-size:14px;letter-spacing:2px;margin:0;font-weight:600;}
+  header .sub{color:var(--dim);font-size:11px;letter-spacing:1px;}
+  header .clock{margin-left:auto;font-size:18px;letter-spacing:2px;
+    color:var(--accent);text-shadow:0 0 8px rgba(54,208,196,.4);}
+  header .wx{color:var(--dim);font-size:11px;}
+  main{flex:1;display:flex;min-height:0;}
+  #stage{flex:1;position:relative;min-width:0;}
+  canvas#ap{width:100%;height:100%;display:block;background:#070d14;}
+  aside{
+    width:330px;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;min-height:0;
+  }
+  .panel-sec{padding:12px 14px;border-bottom:1px solid var(--line);}
+  .panel-sec h2{font-size:10px;letter-spacing:2px;color:var(--dim);
+    margin:0 0 8px;font-weight:600;}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+    padding:7px 9px;}
+  .stat .v{font-size:19px;color:var(--text);line-height:1;}
+  .stat .k{font-size:9px;letter-spacing:1px;color:var(--dim);margin-top:4px;}
+  .controls{display:flex;gap:6px;flex-wrap:wrap;}
+  .controls button{
+    flex:1;min-width:54px;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:6px;padding:7px 4px;
+    font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:1px;
+    transition:.15s;
+  }
+  .controls button:hover{border-color:var(--accent);color:var(--accent);}
+  .controls button.active{background:var(--accent);color:#04201d;border-color:var(--accent);font-weight:700;}
+  #board{flex:1;overflow-y:auto;min-height:0;}
+  .fl{display:grid;grid-template-columns:30px 1fr auto;gap:6px;align-items:center;
+    padding:6px 14px;border-bottom:1px solid #0e1925;font-size:11px;}
+  .fl .tag{font-size:9px;font-weight:700;text-align:center;border-radius:3px;padding:2px 0;}
+  .fl .tag.A{background:rgba(54,208,196,.15);color:var(--arr);}
+  .fl .tag.D{background:rgba(255,122,122,.15);color:var(--dep);}
+  .fl .cs{font-weight:600;letter-spacing:.5px;}
+  .fl .st{color:var(--dim);font-size:10px;}
+  .fl .gt{color:var(--gate);font-size:10px;text-align:right;}
+  #radarWrap{display:flex;justify-content:center;padding:6px 0 12px;}
+  canvas#radar{width:280px;height:280px;border-radius:50%;
+    background:radial-gradient(circle at 50% 50%,#0b1a24,#060f16);
+    border:1px solid var(--line);}
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:#1c2c3e;border-radius:4px;}
+  .legend{display:flex;gap:12px;font-size:9px;color:var(--dim);
+    justify-content:center;padding:4px 0 10px;flex-wrap:wrap;}
+  .legend span b{display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:4px;vertical-align:middle;}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span>
+  <div>
+    <h1>KSIM · TOWER</h1>
+    <div class="sub">LIVE AIRPORT OPERATIONS — METAR 27012KT 10SM CLR</div>
+  </div>
+  <div class="wx" id="wx">RWY 27 ACTIVE · WESTERLY OPS</div>
+  <div class="clock" id="clock">06:00:00Z</div>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="ap"></canvas>
+  </div>
+  <aside>
+    <div class="panel-sec">
+      <h2>MOVEMENT AREA</h2>
+      <div class="stats">
+        <div class="stat"><div class="v" id="sAir">0</div><div class="k">AIRBORNE</div></div>
+        <div class="stat"><div class="v" id="sTaxi">0</div><div class="k">TAXIING</div></div>
+        <div class="stat"><div class="v" id="sGate">0</div><div class="k">AT GATE</div></div>
+        <div class="stat"><div class="v" id="sHand">0</div><div class="k">DEPARTED</div></div>
+      </div>
+    </div>
+    <div class="panel-sec">
+      <h2>SIM CONTROL</h2>
+      <div class="controls">
+        <button id="btnPause">PAUSE</button>
+        <button id="btn1" class="active">1×</button>
+        <button id="btn2">2×</button>
+        <button id="btn4">4×</button>
+        <button id="btnAdd">+ FLIGHT</button>
+      </div>
+      <div class="legend">
+        <span><b style="background:#36d0c4"></b>ARRIVAL</span>
+        <span><b style="background:#ff7a7a"></b>DEPARTURE</span>
+        <span><b style="background:#ffd166"></b>GATE</span>
+      </div>
+    </div>
+    <div class="panel-sec" style="flex:1;display:flex;flex-direction:column;min-height:0;padding-bottom:0;">
+      <h2>FLIGHT STRIP BOARD</h2>
+      <div id="board"></div>
+    </div>
+    <div class="panel-sec" style="border-bottom:none;">
+      <h2>SURFACE RADAR</h2>
+      <div id="radarWrap"><canvas id="radar" width="280" height="280"></canvas></div>
+    </div>
+  </aside>
+</main>
+<script>
+(function(){
+  "use strict";
+  // ---------- Layout (virtual coordinate space) ----------
+  const VW=1200, VH=750;
+  const GATES=[200,320,440,560,680,800,920];
+  const TERM_Y=150, SPINE_Y=470;
+  const RW1=560, RW2=630, RWX0=80, RWX1=1140;
+  const WEST_X=150, EAST_X=1090;
+
+  const AIRLINES=[
+    {c:"#36d0c4",p:["KS","AV"]},{c:"#ff7a7a",p:["DL","SC"]},
+    {c:"#ffd166",p:["UA","SR"]},{c:"#9b8cff",p:["BA","KZ"]},
+    {c:"#7ce38b",p:["LH","GR"]},{c:"#5fb8ff",p:["AF","BL"]},
+    {c:"#ff9f5f",p:["KL","OR"]},{c:"#e36bd0",p:["EK","GD"]}
+  ];
+  const STATES={APPROACH:"Approaching",TAXI_IN:"Taxi→gate",GATE:"Boarding",TAXI_OUT:"Taxi→Rwy",TAKEOFF:"Departing"};
+
+  // ---------- State ----------
+  const gates=GATES.map((x,i)=>({x,occupied:false,idx:i}));
+  const planes=[];
+  const completed=[];
+  let flightsHandled=0, sumTurn=0, nTurn=0;
+  let simSec=6*3600;
+  let speed=1, paused=false;
+  let lastSpawn=0;
+
+  function rnd(a,b){return a+Math.random()*(b-a);}
+  function pick(a){return a[(Math.random()*a.length)|0];}
+
+  function newCallsign(){
+    const a=pick(AIRLINES);
+    return pick(a.p)+(100+(Math.random()*899|0));
+  }
+  function airlineColor(cs){
+    for(const a of AIRLINES) if(a.p.some(p=>cs.startsWith(p))) return a.c;
+    return "#cfe3f2";
+  }
+
+  function freeGate(){ for(const g of gates) if(!g.occupied) return g; return null; }
+
+  function makePlane(gi, opts){
+    opts=opts||{};
+    const g=gates[gi];
+    const cs=newCallsign();
+    const p={
+      cs, color:airlineColor(cs), gi, gx:g.x, gy:TERM_Y,
+      x:opts.x, y:opts.y, heading:opts.heading||0,
+      speed:opts.speed||60, state:opts.state, airborne:!!opts.airborne,
+      path:opts.path||[], seg:0, gateTimer:opts.gateTimer||0,
+      turnStart:opts.turnStart||null
+    };
+    planes.push(p);
+    return p;
+  }
+
+  function spawnArrival(gate){
+    const p=makePlane(gate.idx,{
+      x:RWX1+40, y:RW1, heading:Math.PI,
+      speed:150, state:"APPROACH", airborne:true,
+      path:[{x:1020,y:RW1},{x:WEST_X,y:RW1}]
+    });
+    return p;
+  }
+
+  function onComplete(p){
+    if(p.state==="APPROACH"){
+      p.state="TAXI_IN"; p.airborne=false; p.speed=58; p.seg=0;
+      p.path=[{x:WEST_X,y:SPINE_Y},{x:p.gx,y:SPINE_Y},{x:p.gx,y:TERM_Y}];
+    } else if(p.state==="TAXI_IN"){
+      p.state="GATE"; gates[p.gi].occupied=true;
+      p.gateTimer=rnd(8,16); p.turnStart=simSec;
+    } else if(p.state==="GATE"){
+      // depart
+      gates[p.gi].occupied=false;
+      const turn=p.turnStart?simSec-p.turnStart:0;
+      sumTurn+=turn; nTurn++;
+      p.state="TAXI_OUT"; p.speed=58; p.seg=0;
+      p.path=[{x:p.gx,y:SPINE_Y},{x:EAST_X,y:SPINE_Y},{x:EAST_X,y:RW2}];
+    } else if(p.state==="TAXI_OUT"){
+      p.state="TAKEOFF"; p.speed=300; p.seg=0;
+      p.path=[{x:-60,y:RW2}];
+    } else if(p.state==="TAKEOFF"){
+      flightsHandled++;
+      completed.unshift({cs:p.cs,kind:"D",gate:GATES[p.gi],status:"Airborne"});
+      if(completed.length>6) completed.pop();
+      const i=planes.indexOf(p); if(i>=0) planes.splice(i,1);
+    }
+  }
+
+  function step(p,dt){
+    if(p.state==="GATE"){
+      p.gateTimer-=dt;
+      if(p.gateTimer<=0) onComplete(p);
+      return;
+    }
+    const t=p.path[p.seg];
+    if(!t){ onComplete(p); return; }
+    const dx=t.x-p.x, dy=t.y-p.y;
+    const dist=Math.hypot(dx,dy);
+    const len=p.speed*dt;
+    if(dist<=len || dist<0.4){
+      p.x=t.x; p.y=t.y; p.seg++;
+      if(p.seg>=p.path.length){ onComplete(p); }
+      else { const n=p.path[p.seg]; p.heading=Math.atan2(n.y-p.y,n.x-p.x); }
+    } else {
+      p.x+=dx/dist*len; p.y+=dy/dist*len;
+      p.heading=Math.atan2(dy,dx);
+    }
+  }
+
+  // ---------- Seed initial traffic ----------
+  (function seed(){
+    // one boarding at gate 0
+    gates[0].occupied=true;
+    makePlane(0,{x:GATES[0],y:TERM_Y,state:"GATE",gateTimer:9,turnStart:simSec-3});
+    // one taxiing in to gate 3
+    makePlane(3,{x:420,y:SPINE_Y,heading:0,speed:58,state:"TAXI_IN",
+      path:[{x:GATES[3],y:SPINE_Y},{x:GATES[3],y:TERM_Y}]});
+    // one taxiing out from gate 5
+    makePlane(5,{x:GATES[5],y:SPINE_Y,heading:0,speed:58,state:"TAXI_OUT",
+      path:[{x:EAST_X,y:SPINE_Y},{x:EAST_X,y:RW2}]});
+    // one on approach
+    makePlane(2,{x:780,y:RW1,heading:Math.PI,speed:150,state:"APPROACH",airborne:true,
+      path:[{x:WEST_X,y:RW1}]});
+  })();
+
+  // ---------- Canvas ----------
+  const canvas=document.getElementById("ap");
+  const ctx=canvas.getContext("2d");
+  let dpr=Math.max(1,Math.min(2,window.devicePixelRatio||1));
+  function resize(){
+    const r=canvas.getBoundingClientRect();
+    canvas.width=Math.round(r.width*dpr);
+    canvas.height=Math.round(r.height*dpr);
+  }
+  window.addEventListener("resize",resize);
+
+  function rr(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function drawTaxiLine(x1,y1,x2,y2,w){
+    ctx.strokeStyle="#16222f"; ctx.lineWidth=w; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    ctx.strokeStyle="rgba(255,200,80,.55)"; ctx.lineWidth=2;
+    ctx.setLineDash([10,12]);
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawRunway(y){
+    const h=26;
+    rr(RWX0,y-h/2,RWX1-RWX0,h,h/2);
+    ctx.fillStyle="#222d3a"; ctx.fill();
+    ctx.strokeStyle="#33414f"; ctx.lineWidth=1.5; ctx.stroke();
+    // centerline
+    ctx.strokeStyle="rgba(220,230,240,.8)"; ctx.lineWidth=2;
+    ctx.setLineDash([22,18]);
+    ctx.beginPath(); ctx.moveTo(RWX0+14,y); ctx.lineTo(RWX1-14,y); ctx.stroke();
+    ctx.setLineDash([]);
+    // threshold bars (west = landing end)
+    ctx.fillStyle="rgba(220,230,240,.8)";
+    for(let i=0;i<6;i++) ctx.fillRect(RWX0+6+i*9, y-11, 4, 22);
+    for(let i=0;i<6;i++) ctx.fillRect(RWX1-58+i*9, y-11, 4, 22);
+    // designator
+    ctx.fillStyle="rgba(220,230,240,.9)";
+    ctx.font="bold 14px ui-monospace,monospace";
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("27", RWX1-30, y-18);
+    ctx.fillText("09", RWX0+30, y+18);
+  }
+
+  function drawTerminal(){
+    const x0=GATES[0]-46, x1=GATES[GATES.length-1]+46;
+    rr(x0,108,x1-x0,40,8);
+    ctx.fillStyle="#16242f"; ctx.fill();
+    ctx.strokeStyle="#243748"; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle="rgba(120,150,175,.5)";
+    ctx.font="10px ui-monospace,monospace"; ctx.textAlign="center";
+    ctx.fillText("TERMINAL A",(x0+x1)/2,128);
+    // gates / jet bridges
+    for(const g of gates){
+      ctx.fillStyle="#1b2b39";
+      rr(g.x-13,TERM_Y-6,26,18,3); ctx.fill();
+      ctx.strokeStyle="#2c4356"; ctx.stroke();
+      // bridge
+      ctx.strokeStyle="#243748"; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(g.x,TERM_Y+12); ctx.lineTo(g.x,TERM_Y+24); ctx.stroke();
+      // label
+      ctx.fillStyle=gates[g.idx].occupied?"#ffd166":"#56708a";
+      ctx.font="9px ui-monospace,monospace";
+      ctx.fillText("G"+(g.idx+1),g.x,TERM_Y+34);
+    }
+  }
+
+  function drawPlane(p){
+    ctx.save();
+    ctx.translate(p.x,p.y);
+    // shadow
+    ctx.save();
+    ctx.translate(p.airborne?7:3, p.airborne?7:3);
+    ctx.fillStyle="rgba(0,0,0,.30)";
+    rr(-15,-3,30,7,3); ctx.fill();
+    ctx.restore();
+    ctx.rotate(p.heading);
+    // wings (perpendicular)
+    ctx.fillStyle=shade(p.color,-30);
+    ctx.fillRect(-3,-13,6,26);
+    // fuselage
+    ctx.fillStyle=p.color;
+    rr(-15,-3.2,30,6.4,3.2); ctx.fill();
+    // cockpit hint + tail
+    ctx.fillStyle=shade(p.color,30);
+    ctx.beginPath(); ctx.arc(11,0,3,0,7); ctx.fill();
+    ctx.fillStyle=shade(p.color,-20);
+    ctx.fillRect(11,-4.5,5,9);
+    // windows
+    ctx.fillStyle="rgba(255,255,255,.5)";
+    for(let i=-9;i<9;i+=4) ctx.fillRect(i,-1.4,2,2.8);
+    ctx.restore();
+    // label
+    ctx.fillStyle="rgba(207,227,242,.85)";
+    ctx.font="9px ui-monospace,monospace";
+    ctx.textAlign="center"; ctx.textBaseline="bottom";
+    ctx.fillText(p.cs, p.x, p.y-13);
+  }
+  function shade(hex,amt){
+    const n=parseInt(hex.slice(1),16);
+    let r=(n>>16)+amt, g=((n>>8)&255)+amt, b=(n&255)+amt;
+    r=Math.max(0,Math.min(255,r));g=Math.max(0,Math.min(255,g));b=Math.max(0,Math.min(255,b));
+    return "#"+((r<<16)|(g<<8)|b).toString(16).padStart(6,"0");
+  }
+
+  function draw(){
+    const r=canvas.getBoundingClientRect();
+    const s=Math.min(r.width/VW, r.height/VH);
+    const ox=(r.width-VW*s)/2, oy=(r.height-VH*s)/2;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,r.width,r.height);
+    ctx.fillStyle="#070d14"; ctx.fillRect(0,0,r.width,r.height);
+    ctx.setTransform(dpr*s,0,0,dpr*s,dpr*ox,dpr*oy);
+
+    // ground apron
+    ctx.fillStyle="#0c151e";
+    rr(40,90,VW-80,VH-140,18); ctx.fill();
+
+    // taxiways
+    drawTaxiLine(WEST_X,RW1,WEST_X,SPINE_Y,18);
+    drawTaxiLine(EAST_X,SPINE_Y,EAST_X,RW2,18);
+    drawTaxiLine(WEST_X,SPINE_Y,EAST_X,SPINE_Y,18);
+    for(const g of gates) drawTaxiLine(g.x,TERM_Y+12,g.x,SPINE_Y,14);
+
+    // runways
+    drawRunway(RW1);
+    drawRunway(RW2);
+
+    drawTerminal();
+
+    // planes sorted by y
+    const sorted=planes.slice().sort((a,b)=>a.y-b.y);
+    for(const p of sorted) drawPlane(p);
+  }
+
+  // ---------- Radar ----------
+  const rad=document.getElementById("radar");
+  const rctx=rad.getContext("2d");
+  let sweep=0;
+  function drawRadar(){
+    const w=rad.width,h=rad.height,cx=w/2,cy=h/2,R=w/2-10;
+    rctx.clearRect(0,0,w,h);
+    rctx.strokeStyle="#16313d"; rctx.lineWidth=1;
+    for(let i=1;i<=3;i++){rctx.beginPath();rctx.arc(cx,cy,R*i/3,0,7);rctx.stroke();}
+    rctx.beginPath();rctx.moveTo(cx-R,cy);rctx.lineTo(cx+R,cy);
+    rctx.moveTo(cx,cy-R);rctx.lineTo(cx,cy+R);rctx.stroke();
+    // sweep
+    sweep=(sweep+0.025)% (Math.PI*2);
+    const grad=rctx.createConicGradient?rctx.createConicGradient(sweep,cx,cy):null;
+    rctx.save();
+    rctx.beginPath();rctx.moveTo(cx,cy);
+    rctx.arc(cx,cy,R,sweep-0.5,sweep);rctx.closePath();
+    rctx.fillStyle="rgba(54,208,196,.10)";rctx.fill();
+    rctx.restore();
+    rctx.strokeStyle="rgba(54,208,196,.5)";
+    rctx.beginPath();rctx.moveTo(cx,cy);
+    rctx.lineTo(cx+Math.cos(sweep)*R,cy+Math.sin(sweep)*R);rctx.stroke();
+    // blips
+    for(const p of planes){
+      const nx=p.x/VW, ny=p.y/VH;
+      const bx=cx+(nx-0.5)*2*R*0.96, by=cy+(ny-0.5)*2*R*0.96;
+      rctx.fillStyle=p.state==="APPROACH"?"#36d0c4":(p.state==="TAKEOFF"?"#ff7a7a":(p.state==="GATE"?"#ffd166":"#9b8cff"));
+      rctx.beginPath();rctx.arc(bx,by,3,0,7);rctx.fill();
+    }
+  }
+
+  // ---------- Board + stats ----------
+  const board=document.getElementById("board");
+  function updateBoard(){
+    const rows=[];
+    for(const p of planes){
+      const kind=p.state==="APPROACH"||p.state==="TAXI_IN"?"A":"D";
+      rows.push({cs:p.cs,kind,gate:GATES[p.gi],status:STATES[p.state]||""});
+    }
+    for(const c of completed) rows.push(c);
+    board.innerHTML=rows.slice(0,14).map(r=>
+      `<div class="fl"><div class="tag ${r.kind}">${r.kind}</div>`+
+      `<div><div class="cs">${r.cs}</div><div class="st">${r.status}</div></div>`+
+      `<div class="gt">${r.gate?("G"+(GATES.indexOf(r.gate)+1)):"—"}</div></div>`
+    ).join("");
+  }
+  function updateStats(){
+    let air=0,taxi=0,gate=0;
+    for(const p of planes){
+      if(p.state==="APPROACH")air++;
+      else if(p.state==="GATE")gate++;
+      else taxi++;
+    }
+    document.getElementById("sAir").textContent=air;
+    document.getElementById("sTaxi").textContent=taxi;
+    document.getElementById("sGate").textContent=gate;
+    document.getElementById("sHand").textContent=flightsHandled;
+  }
+  function updateClock(){
+    const h=Math.floor(simSec/3600)%24, m=Math.floor(simSec/60)%60, s=Math.floor(simSec)%60;
+    const z=n=>String(n).padStart(2,"0");
+    document.getElementById("clock").textContent=`${z(h)}:${z(m)}:${z(s)}Z`;
+  }
+
+  // ---------- Loop ----------
+  let last=performance.now();
+  function frame(now){
+    let dt=(now-last)/1000; last=now;
+    if(dt>0.05) dt=0.05;
+    if(!paused){
+      const sdt=dt*speed;
+      simSec+=sdt*30;
+      for(const p of planes.slice()) step(p,sdt);
+      // spawn arrivals
+      lastSpawn+=sdt;
+      if(lastSpawn>4){
+        lastSpawn=0;
+        const g=freeGate();
+        if(g) spawnArrival(g);
+      }
+    }
+    draw();
+    drawRadar();
+    updateBoard();
+    updateStats();
+    updateClock();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Controls ----------
+  const bP=document.getElementById("btnPause");
+  bP.onclick=()=>{paused=!paused;bP.textContent=paused?"RESUME":"PAUSE";bP.classList.toggle("active",paused);};
+  function setSpeed(v,btn){speed=v;[ "btn1","btn2","btn4"].forEach(id=>document.getElementById(id).classList.remove("active"));btn.classList.add("active");}
+  document.getElementById("btn1").onclick=e=>setSpeed(1,e.target);
+  document.getElementById("btn2").onclick=e=>setSpeed(2,e.target);
+  document.getElementById("btn4").onclick=e=>setSpeed(4,e.target);
+  document.getElementById("btnAdd").onclick=()=>{const g=freeGate();if(g)spawnArrival(g);};
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>STRIDER-07 · Procedural Biped</title>
+<style>
+  :root{
+    --ink:#aeb8cb; --dim:#66718a; --accent:#ffa94d;
+    --panel:rgba(13,16,26,.72); --line:rgba(255,255,255,.09);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:#0c0f16;color:var(--ink);overflow:hidden;
+    font-family:ui-monospace,"Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased}
+  canvas{display:block}
+  #vignette{position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:radial-gradient(120% 90% at 50% 42%,transparent 55%,rgba(4,6,12,.55) 100%)}
+  #hud{position:fixed;inset:0;z-index:3;pointer-events:none;
+    display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto 1fr auto;
+    padding:18px;gap:12px}
+  .panel{pointer-events:auto;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    padding:10px 14px}
+  #title-panel{grid-column:1;grid-row:1;align-self:start;justify-self:start}
+  .title{font-size:14px;font-weight:700;letter-spacing:.34em;color:#e7ecf6}
+  .title em{color:var(--accent);font-style:normal}
+  .sub{margin-top:5px;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+  .hint{grid-column:3;grid-row:1;justify-self:end;font-size:9.5px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--dim)}
+  .transport{grid-column:1;grid-row:3;justify-self:start;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .btn{pointer-events:auto;cursor:pointer;background:transparent;border:1px solid var(--line);
+    border-radius:7px;color:var(--ink);font:inherit;font-size:10px;letter-spacing:.14em;
+    padding:7px 12px;transition:border-color .15s,color .15s,background .15s;user-select:none}
+  .btn:hover{border-color:rgba(255,255,255,.28);color:#fff}
+  .btn.on{color:var(--accent);border-color:rgba(255,169,77,.55);background:rgba(255,169,77,.07)}
+  .slider-wrap{display:flex;align-items:center;gap:10px;margin-left:6px}
+  .lbl{font-size:9.5px;letter-spacing:.18em;color:var(--dim)}
+  .val{font-size:10px;color:var(--accent);min-width:36px;text-align:right}
+  input[type=range]{pointer-events:auto;appearance:none;-webkit-appearance:none;width:150px;height:22px;
+    background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;border-radius:1px;
+    background:linear-gradient(90deg,rgba(255,169,77,.7),rgba(255,169,77,.15))}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--accent);margin-top:-5px;box-shadow:0 0 0 3px rgba(255,169,77,.15)}
+  input[type=range]::-moz-range-track{height:2px;background:rgba(255,169,77,.4)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border:none;border-radius:50%;background:var(--accent)}
+  .readout{grid-column:3;grid-row:3;justify-self:end;font-size:10px;letter-spacing:.1em;color:var(--dim);
+    display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .readout b{color:#dfe6f2;font-weight:600}
+  .sep{width:1px;height:12px;background:var(--line)}
+  #boot,#err{position:fixed;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;
+    background:#0c0f16;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--dim);
+    text-align:center;padding:0 24px;line-height:2}
+  @media (max-width:760px){
+    .hint{display:none}
+    #hud{grid-template-rows:auto 1fr auto auto}
+    .transport{grid-row:3;grid-column:1/-1;justify-self:stretch}
+    .readout{grid-row:4;grid-column:1/-1;justify-self:stretch;justify-content:center;flex-wrap:wrap;white-space:normal}
+  }
+</style>
+</head>
+<body>
+<div id="vignette"></div>
+
+<div id="hud">
+  <div class="panel" id="title-panel">
+    <div class="title">STRIDER<em>-07</em></div>
+    <div class="sub">procedural biped &middot; two-bone ik gait &middot; zero keyframes</div>
+  </div>
+  <div class="panel hint">drag to orbit &middot; scroll to zoom &middot; space to pause</div>
+
+  <div class="panel transport">
+    <button id="btn-run" class="btn">PAUSE</button>
+    <button id="btn-slow" class="btn">SLOW&nbsp;0.25&times;</button>
+    <button id="btn-orbit" class="btn on">ORBIT</button>
+    <div class="slider-wrap">
+      <span class="lbl">SPEED</span>
+      <input id="speed" type="range" min="0" max="1" step="0.01" value="0.55">
+      <span id="speed-val" class="val">55%</span>
+    </div>
+  </div>
+
+  <div class="panel readout">
+    <span><b id="ro-v">0.0</b> m/s</span><span class="sep"></span>
+    <span><b id="ro-spm">0</b> steps/min</span><span class="sep"></span>
+    <span>stride <b id="ro-stride">0.00</b> m</span><span class="sep"></span>
+    <span>duty <b>62%</b></span>
+  </div>
+</div>
+
+<div id="boot">assembling strider-07 &hellip;</div>
+<div id="err" hidden>could not load three.js from the cdn.<br>check your network connection and reload.</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+window.__ok = true; // signals the CDN modules loaded
+
+/* ------------------------------------------------------------------ */
+/* helpers + gait constants                                            */
+/* ------------------------------------------------------------------ */
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+const HIP_HALF = 0.17;      // half distance between hip joints (m)
+const THIGH = 0.55;         // thigh bone length
+const SHIN = 0.54;          // shin bone length
+const ANKLE_H = 0.09;       // ankle height above ground with foot flat
+const LEG_REACH = THIGH + SHIN;
+const DUTY = 0.62;          // fraction of the cycle each foot is planted
+
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+
+/* ------------------------------------------------------------------ */
+/* renderer / scene / camera                                           */
+/* ------------------------------------------------------------------ */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c0f16);
+scene.fog = new THREE.Fog(0x0c0f16, 9, 34);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(3.6, 1.65, 4.7);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.95, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 2.4;
+controls.maxDistance = 13;
+controls.maxPolarAngle = 1.52;
+controls.enablePan = false;
+controls.autoRotate = true;
+controls.autoRotateSpeed = -0.6;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.35;
+
+/* ------------------------------------------------------------------ */
+/* lights                                                              */
+/* ------------------------------------------------------------------ */
+scene.add(new THREE.HemisphereLight(0x39496b, 0x191310, 0.55));
+
+const key = new THREE.DirectionalLight(0xffd9b0, 3.0);   // warm dusk key
+key.position.set(4.5, 6.5, 3.5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -5;
+key.shadow.camera.right = 5;
+key.shadow.camera.top = 6;
+key.shadow.camera.bottom = -3;
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 18;
+key.shadow.bias = -0.0004;
+key.shadow.normalBias = 0.02;
+key.target.position.set(0, 0.8, 0);
+scene.add(key, key.target);
+
+const rim = new THREE.DirectionalLight(0x7fb2ff, 1.5);   // cool rim from behind
+rim.position.set(-3.5, 3.0, -4.5);
+scene.add(rim);
+
+/* ------------------------------------------------------------------ */
+/* ground — scrolling grid treadmill                                   */
+/* ------------------------------------------------------------------ */
+function makeGroundTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;                              // one tile = 1 metre
+  const g = c.getContext('2d');
+  g.fillStyle = '#151923';
+  g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 1200; i++) {                       // faint surface noise
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0.05)';
+    g.fillRect((Math.random() * 512) | 0, (Math.random() * 512) | 0, 2, 2);
+  }
+  g.strokeStyle = '#232b3c';                             // minor line, every 0.5 m
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(256.5, 0); g.lineTo(256.5, 512);
+  g.moveTo(0, 256.5); g.lineTo(512, 256.5);
+  g.stroke();
+  g.strokeStyle = '#2d3852';                             // major line, every 1 m
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(0.5, 0); g.lineTo(0.5, 512);
+  g.moveTo(0, 0.5); g.lineTo(512, 0.5);
+  g.stroke();
+  g.fillStyle = '#3d4a68';                               // intersection stud
+  g.fillRect(0, 0, 5, 5);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(160, 160);
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const groundTex = makeGroundTexture();
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(160, 160),
+  new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.92, metalness: 0.05 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ------------------------------------------------------------------ */
+/* materials + mesh helpers                                             */
+/* ------------------------------------------------------------------ */
+const MAT = {
+  body:  new THREE.MeshStandardMaterial({ color: 0x495062, metalness: 0.85, roughness: 0.38 }),
+  panel: new THREE.MeshStandardMaterial({ color: 0x8b95a8, metalness: 0.90, roughness: 0.30 }),
+  dark:  new THREE.MeshStandardMaterial({ color: 0x232732, metalness: 0.60, roughness: 0.60 }),
+  rubber:new THREE.MeshStandardMaterial({ color: 0x15171d, metalness: 0.20, roughness: 0.90 }),
+  accent:new THREE.MeshStandardMaterial({ color: 0x1a1410, emissive: 0xffa94d, emissiveIntensity: 2.4, roughness: 0.4 }),
+  core:  new THREE.MeshStandardMaterial({ color: 0x1a1410, emissive: 0xffa94d, emissiveIntensity: 1.6, roughness: 0.4 }),
+};
+
+function box(w, h, d, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+function capsule(r, len, mat) {
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 5, 14), mat);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+function ball(r, mat) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+
+/* ------------------------------------------------------------------ */
+/* the creature — "STRIDER-07", a courier raptor                       */
+/* forward = +Z, up = +Y                                               */
+/* ------------------------------------------------------------------ */
+const creature = new THREE.Group();
+scene.add(creature);
+
+const pelvis = new THREE.Group();
+creature.add(pelvis);
+
+pelvis.add(box(0.36, 0.17, 0.24, MAT.body));
+const guardL = ball(0.105, MAT.panel); guardL.position.set(HIP_HALF, 0, 0);
+const guardR = ball(0.105, MAT.panel); guardR.position.set(-HIP_HALF, 0, 0);
+const rump = box(0.30, 0.13, 0.10, MAT.panel); rump.position.set(0, 0.02, -0.16);
+pelvis.add(guardL, guardR, rump);
+
+function makeLeg(side) {                                  // side: +1 left, -1 right
+  const group = new THREE.Group();
+  group.position.set(side * HIP_HALF, 0, 0);
+  pelvis.add(group);
+
+  const thigh = capsule(0.075, THIGH - 0.15, MAT.body);
+  thigh.position.y = -THIGH / 2;
+  group.add(thigh);
+
+  const knee = new THREE.Group();
+  knee.position.y = -THIGH;
+  group.add(knee);
+  knee.add(ball(0.088, MAT.panel));
+
+  const shin = capsule(0.056, SHIN - 0.12, MAT.body);
+  shin.position.y = -SHIN / 2;
+  knee.add(shin);
+
+  const ankle = new THREE.Group();
+  ankle.position.y = -SHIN;
+  knee.add(ankle);
+  ankle.add(ball(0.06, MAT.dark));
+
+  const foot = new THREE.Group();                         // pitch set by the gait solver
+  ankle.add(foot);
+  const fBody = box(0.13, 0.075, 0.30, MAT.body); fBody.position.set(0, -0.05, 0.03);
+  const heel  = box(0.10, 0.060, 0.08, MAT.dark); heel.position.set(0, -0.055, -0.11);
+  const toeL  = box(0.045, 0.05, 0.10, MAT.rubber); toeL.position.set(0.033, -0.052, 0.20);
+  const toeR  = box(0.045, 0.05, 0.10, MAT.rubber); toeR.position.set(-0.033, -0.052, 0.20);
+  foot.add(fBody, heel, toeL, toeR);
+
+  return { group, knee, foot, ankle };
+}
+const legL = makeLeg(+1);
+const legR = makeLeg(-1);
+
+/* --- torso ------------------------------------------------------- */
+const torso = new THREE.Group();
+torso.position.set(0, 0.09, 0.02);
+pelvis.add(torso);
+
+const chest = capsule(0.155, 0.30, MAT.body);
+chest.position.set(0, 0.27, 0.03);
+const chestPlate = box(0.20, 0.16, 0.10, MAT.panel);
+chestPlate.position.set(0, 0.26, 0.11);
+const core = box(0.07, 0.07, 0.025, MAT.core);
+core.position.set(0, 0.30, 0.175);
+const finL = box(0.02, 0.16, 0.10, MAT.panel); finL.position.set(0.125, 0.36, -0.13); finL.rotation.z = 0.5;
+const finR = box(0.02, 0.16, 0.10, MAT.panel); finR.position.set(-0.125, 0.36, -0.13); finR.rotation.z = -0.5;
+torso.add(chest, chestPlate, core, finL, finR);
+
+const neck = new THREE.Group();
+neck.position.set(0, 0.47, 0.09);
+torso.add(neck);
+const neckMesh = capsule(0.05, 0.14, MAT.panel);
+neckMesh.position.set(0, 0.07, 0.02);
+neck.add(neckMesh);
+
+const head = new THREE.Group();
+head.position.set(0, 0.19, 0.03);
+neck.add(head);
+const skull  = box(0.17, 0.13, 0.19, MAT.body);   skull.position.set(0, 0.03, 0.01);
+const snout  = box(0.10, 0.055, 0.13, MAT.panel); snout.position.set(0, -0.005, 0.14);
+const jaw    = box(0.08, 0.03, 0.10, MAT.dark);   jaw.position.set(0, -0.048, 0.12);
+const visor  = box(0.13, 0.028, 0.02, MAT.accent);visor.position.set(0, 0.045, 0.095);
+const crest  = box(0.018, 0.09, 0.17, MAT.panel); crest.position.set(0, 0.115, -0.02);
+const antenna = box(0.012, 0.12, 0.012, MAT.dark);antenna.position.set(0.055, 0.13, -0.06); antenna.rotation.z = 0.25;
+const antTip = ball(0.015, MAT.accent);           antTip.position.set(0.07, 0.19, -0.06);
+head.add(skull, snout, jaw, visor, crest, antenna, antTip);
+
+function makeArm(side) {
+  const sh = new THREE.Group();
+  sh.position.set(side * 0.245, 0.42, 0.02);
+  torso.add(sh);
+  sh.add(ball(0.062, MAT.panel));
+  const upper = capsule(0.048, 0.15, MAT.body); upper.position.y = -0.12;
+  sh.add(upper);
+
+  const el = new THREE.Group();
+  el.position.y = -0.26;
+  sh.add(el);
+  const fore = capsule(0.037, 0.12, MAT.panel); fore.position.y = -0.10;
+  const claw = box(0.05, 0.09, 0.05, MAT.dark); claw.position.set(0, -0.19, 0.015);
+  el.add(fore, claw);
+  return { sh, el };
+}
+const armL = makeArm(+1);
+const armR = makeArm(-1);
+
+/* --- tail -------------------------------------------------------- */
+const tailSegs = [];
+{
+  const lens = [0.26, 0.24, 0.22, 0.20, 0.18];
+  const ws = [0.15, 0.12, 0.095, 0.07, 0.05];
+  const basePitches = [-0.22, -0.06, -0.02, 0.02, 0.18];
+  let node = new THREE.Group();
+  node.position.set(0, 0.04, -0.16);
+  pelvis.add(node);
+  for (let i = 0; i < 5; i++) {
+    const seg = new THREE.Group();
+    if (i > 0) seg.position.z = -lens[i - 1];
+    const mesh = box(ws[i], ws[i] * 0.8, lens[i], i < 2 ? MAT.body : MAT.dark);
+    mesh.position.z = -lens[i] / 2;
+    seg.add(mesh);
+    seg.userData.basePitch = basePitches[i];
+    if (i === 4) {
+      const tip = box(0.03, 0.03, 0.07, MAT.accent);
+      tip.position.z = -0.18;
+      seg.add(tip);
+    }
+    node.add(seg);
+    tailSegs.push(seg);
+    node = seg;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* scenery — runway lamps, monoliths, drifting dust                    */
+/* ------------------------------------------------------------------ */
+const runway = [];
+{
+  const postGeo = new THREE.CylinderGeometry(0.022, 0.03, 0.55, 8);
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x1c2029, roughness: 0.6, metalness: 0.4 });
+  const lampWarm = new THREE.MeshStandardMaterial({ color: 0x100c06, emissive: 0xff9d3f, emissiveIntensity: 2.2 });
+  const lampCool = new THREE.MeshStandardMaterial({ color: 0x061018, emissive: 0x59b7ff, emissiveIntensity: 2.0 });
+  for (let i = 0; i < 20; i++) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const g = new THREE.Group();
+    g.position.set(side * 3.15, 0, -35 + Math.floor(i / 2) * 7 + (side < 0 ? 3.5 : 0));
+    const pole = new THREE.Mesh(postGeo, postMat); pole.position.y = 0.28; pole.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), side > 0 ? lampWarm : lampCool);
+    cap.position.y = 0.58;
+    g.add(pole, cap);
+    scene.add(g);
+    runway.push(g);
+  }
+}
+
+const pillars = [];
+{
+  const pMat = new THREE.MeshStandardMaterial({ color: 0x272d3b, roughness: 0.75, metalness: 0.35 });
+  const pGlow = new THREE.MeshStandardMaterial({ color: 0x0a0f16, emissive: 0x2e4d8a, emissiveIntensity: 1.1 });
+  for (let i = 0; i < 16; i++) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const h = 2.5 + Math.random() * 4.5;
+    const w = 0.7 + Math.random() * 1.1;
+    const g = new THREE.Group();
+    g.position.set(side * (5.5 + Math.random() * 7), 0, -38 + (i / 16) * 76 + Math.random() * 3);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), pMat);
+    m.position.y = h / 2;
+    m.castShadow = m.receiveShadow = true;
+    g.add(m);
+    g.rotation.y = Math.random() * Math.PI;
+    if (Math.random() < 0.55) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(w * 1.02, 0.06, 0.06), pGlow);
+      strip.position.y = h * (0.55 + Math.random() * 0.3);
+      strip.position.z = w / 2 + 0.01;
+      g.add(strip);
+    }
+    scene.add(g);
+    pillars.push(g);
+  }
+}
+
+/* --- footstep dust rings ------------------------------------------ */
+function makePuffTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grd.addColorStop(0, 'rgba(185,196,218,0.55)');
+  grd.addColorStop(0.5, 'rgba(160,172,196,0.18)');
+  grd.addColorStop(1, 'rgba(160,172,196,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+const puffTex = makePuffTexture();
+const puffs = [];
+for (let i = 0; i < 24; i++) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.5, 0.5),
+    new THREE.MeshBasicMaterial({ map: puffTex, transparent: true, opacity: 0, depthWrite: false })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.visible = false;
+  m.renderOrder = 1;
+  scene.add(m);
+  puffs.push({ mesh: m, t: 1, life: 0.55 });
+}
+function spawnPuff(x, z) {
+  const p = puffs.find(p => p.t >= p.life);
+  if (!p) return;
+  p.t = 0;
+  p.mesh.visible = true;
+  p.mesh.position.set(x, 0.02, z);
+  p.mesh.rotation.z = Math.random() * Math.PI * 2;
+}
+function updatePuffs(dt) {
+  for (const p of puffs) {
+    if (p.t >= p.life) { p.mesh.visible = false; continue; }
+    p.t += dt;
+    const k = Math.min(1, p.t / p.life);
+    const s = 0.4 + 2.2 * k;
+    p.mesh.scale.set(s, s, 1);
+    p.mesh.material.opacity = 0.5 * (1 - k) * (1 - k);
+  }
+}
+
+/* --- ambient dust motes ------------------------------------------- */
+const DUST_N = 150;
+const dustGeo = new THREE.BufferGeometry();
+const dustPos = new Float32Array(DUST_N * 3);
+const dustVy = new Float32Array(DUST_N);
+for (let i = 0; i < DUST_N; i++) {
+  dustPos[i * 3]     = (Math.random() * 2 - 1) * 9;
+  dustPos[i * 3 + 1] = Math.random() * 3.4 + 0.05;
+  dustPos[i * 3 + 2] = -26 + Math.random() * 58;
+  dustVy[i] = 0.01 + Math.random() * 0.05;
+}
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+scene.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
+  color: 0x93a7c9, size: 0.03, transparent: true, opacity: 0.45, sizeAttenuation: true, depthWrite: false
+})));
+function updateDust(dt, v) {
+  for (let i = 0; i < DUST_N; i++) {
+    dustPos[i * 3 + 2] -= v * dt;
+    dustPos[i * 3 + 1] += dustVy[i] * dt;
+    if (dustPos[i * 3 + 2] < -27) {
+      dustPos[i * 3 + 2] += 58;
+      dustPos[i * 3] = (Math.random() * 2 - 1) * 9;
+      dustPos[i * 3 + 1] = Math.random() * 3.4 + 0.05;
+    }
+    if (dustPos[i * 3 + 1] > 3.6) dustPos[i * 3 + 1] = 0.1;
+  }
+  dustGeo.attributes.position.needsUpdate = true;
+}
+
+/* ------------------------------------------------------------------ */
+/* the gait — foot targets + two-bone IK, everything derived per frame  */
+/*                                                                     */
+/* stride S and cadence f come from the speed setting; the treadmill    */
+/* speed is v = S*f/DUTY so planted feet never slide.                   */
+/* ------------------------------------------------------------------ */
+const gait = { phase: 0, s: 0.55, target: 0.55, v: 0, f: 0, S: 0, scroll: 0, corePulse: 0 };
+const prevLP = { L: 0, R: 0 };
+
+function solveLeg(leg, side, lp, S, s) {
+  // foot (ankle) target path in creature space: z forward, y lift
+  let z, y, F;                                            // F = world foot pitch, toes-down positive
+  if (lp < DUTY) {                                        // ----- stance: planted, moves back with ground
+    const q = lp / DUTY;
+    z = S / 2 - S * q;
+    y = 0;
+    if (q < 0.12) F = -0.18 * (1 - q / 0.12);             // heel strike, settle flat
+    else if (q < 0.72) F = 0;                             // flat
+    else { const t = (q - 0.72) / 0.28; F = 0.6 * t * t; }// toe-off rise
+  } else {                                                // ----- swing: lift and carry forward
+    const r = (lp - DUTY) / (1 - DUTY);
+    z = -S / 2 + S * smoothstep(0, 1, r);
+    y = (0.05 + 0.10 * s) * Math.sin(Math.PI * r);
+    if (r < 0.35) F = 0.6 - 0.75 * smoothstep(0, 0.35, r);          // point down, then flex up
+    else F = -0.15 - 0.03 * smoothstep(0.8, 1, r);                  // held up for landing
+  }
+
+  // target into pelvis-local space (pelvis translates/rotates every frame)
+  _v.set(side * (HIP_HALF - 0.02), ANKLE_H + y, z).sub(pelvis.position).applyQuaternion(_q);
+  const vy = _v.y, vz = _v.z;
+  const d = clamp(Math.sqrt(vy * vy + vz * vz), 0.3, 0.995 * LEG_REACH);
+
+  // classic two-bone IK in the sagittal plane, knee pointing forward
+  const theta0 = Math.atan2(vz, -vy);
+  const alpha = Math.acos(clamp((THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d), -1, 1));
+  const beta  = Math.acos(clamp((THIGH * THIGH + SHIN * SHIN - d * d) / (2 * THIGH * SHIN), -1, 1));
+  const thighPitch = theta0 + alpha;
+  const flex = Math.PI - beta;
+
+  leg.group.rotation.x = -thighPitch;                     // rotation.x negative = swing forward
+  leg.knee.rotation.x = flex;                             // knee flexes backward
+  leg.foot.rotation.x = F + (thighPitch - flex);          // keeps world foot pitch at F
+}
+
+function updateGait(dt) {
+  gait.s += (gait.target - gait.s) * Math.min(1, dt * 2.5);
+  const s = gait.s;
+  const S = gait.S = 0.45 + 0.75 * s;
+  const f = gait.f = 0.6 + 1.1 * s;
+  const v = gait.v = S * f / DUTY;
+  gait.phase = (gait.phase + f * dt) % 1;
+  const phase = gait.phase;
+
+  // world scrolls backward under the stationary creature
+  gait.scroll -= v * dt;
+  groundTex.offset.y = gait.scroll % 1;
+  for (const p of runway)  { p.position.z -= v * dt; if (p.position.z < -35) p.position.z += 70; }
+  for (const p of pillars) { p.position.z -= v * dt; if (p.position.z < -38) p.position.z += 76; }
+
+  // pelvis: vault bob (2x frequency), lateral sway, yaw + roll (1x)
+  const yph = Math.cos(2 * Math.PI * (phase - 0.31));
+  const bobA = 0.05 + 0.065 * s;
+  pelvis.position.set(
+    (0.035 + 0.03 * s) * yph,
+    (1.075 + 0.025 * s) - bobA * (0.5 + 0.5 * Math.cos(4 * Math.PI * phase)),
+    0.015 * Math.sin(4 * Math.PI * phase)
+  );
+  const pelvisYaw = (0.10 + 0.08 * s) * yph;
+  const pelvisRoll = (0.05 + 0.03 * s) * yph;
+  pelvis.rotation.set(0.03 + 0.05 * s, pelvisYaw, pelvisRoll);
+
+  // legs
+  _q.copy(pelvis.quaternion).invert();
+  solveLeg(legL, +1, phase, S, s);
+  solveLeg(legR, -1, (phase + 0.5) % 1, S, s);
+
+  // torso counters the pelvis, head counters the torso (stable gaze)
+  torso.rotation.x = 0.16 + 0.20 * s + 0.02 * Math.sin(4 * Math.PI * phase);
+  torso.rotation.y = -1.35 * pelvisYaw;
+  torso.rotation.z = -0.35 * pelvisRoll + 0.03 * Math.sin(2 * Math.PI * (phase - 0.31));
+  neck.rotation.x = 0.18 - 0.5 * (torso.rotation.x - 0.16);
+  head.rotation.x = -0.05 + 0.04 * Math.cos(4 * Math.PI * phase);
+  head.rotation.y = 0.55 * pelvisYaw;
+  head.rotation.z = 0.2 * pelvisRoll;
+
+  // arms swing opposite the legs, elbows flex as the arm comes forward
+  const armAmp = 0.30 + 0.55 * s;
+  const cph = Math.cos(2 * Math.PI * phase);
+  armL.sh.rotation.x =  armAmp * cph + 0.05;
+  armR.sh.rotation.x = -armAmp * cph + 0.05;
+  armL.sh.rotation.z =  0.10;
+  armR.sh.rotation.z = -0.10;
+  armL.el.rotation.x = -(0.75 - 0.35 * cph);
+  armR.el.rotation.x = -(0.75 + 0.35 * cph);
+
+  // tail: delayed counter-sway plus a light 2x bounce
+  for (let i = 0; i < tailSegs.length; i++) {
+    const seg = tailSegs[i];
+    seg.rotation.y = -(0.10 + 0.10 * s) * Math.cos(2 * Math.PI * (phase - 0.31) - i * 0.45);
+    seg.rotation.x = seg.userData.basePitch + (0.02 + 0.03 * s) * Math.sin(4 * Math.PI * phase - i * 0.6);
+  }
+
+  // footstrike events: core pulse + dust ring under the landing foot
+  const strikes = [[legL, 0, 'L'], [legR, 0.5, 'R']];
+  for (const [leg, off, k] of strikes) {
+    const lp = (phase + off) % 1;
+    if (prevLP[k] > 0.8 && lp < 0.2) {
+      gait.corePulse = 1;
+      leg.ankle.getWorldPosition(_v);
+      spawnPuff(_v.x, _v.z);
+    }
+    prevLP[k] = lp;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* UI                                                                  */
+/* ------------------------------------------------------------------ */
+const $ = id => document.getElementById(id);
+const btnRun = $('btn-run'), btnSlow = $('btn-slow'), btnOrbit = $('btn-orbit');
+const slider = $('speed'), speedVal = $('speed-val');
+const roV = $('ro-v'), roSpm = $('ro-spm'), roStride = $('ro-stride');
+
+let running = true, slow = false, auto = true, timeScale = 1, timeTarget = 1;
+
+function setRunning(r)  { running = r;  btnRun.textContent = r ? 'PAUSE' : 'RESUME'; btnRun.classList.toggle('on', !r); }
+function setSlow(x)     { slow = x;     timeTarget = x ? 0.25 : 1; btnSlow.classList.toggle('on', x); }
+function setAuto(x)     { auto = x;     controls.autoRotate = x;   btnOrbit.classList.toggle('on', x); }
+
+btnRun.addEventListener('click',   () => { setRunning(!running); btnRun.blur(); });
+btnSlow.addEventListener('click',  () => { setSlow(!slow);       btnSlow.blur(); });
+btnOrbit.addEventListener('click', () => { setAuto(!auto);       btnOrbit.blur(); });
+slider.addEventListener('input',   () => { gait.target = parseFloat(slider.value); });
+controls.addEventListener('start', () => { if (auto) setAuto(false); });  // user grabs the camera
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space')      { e.preventDefault(); setRunning(!running); }
+  else if (e.code === 'KeyS')  setSlow(!slow);
+  else if (e.code === 'KeyO')  setAuto(!auto);
+});
+
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) setAuto(false);
+
+function updateHUD() {
+  roV.textContent = gait.v.toFixed(1);
+  roSpm.textContent = Math.round(gait.f * 120);
+  roStride.textContent = gait.S.toFixed(2);
+  speedVal.textContent = Math.round(gait.target * 100) + '%';
+}
+
+/* ------------------------------------------------------------------ */
+/* main loop                                                           */
+/* ------------------------------------------------------------------ */
+let bootEl = $('boot');
+const clock = new THREE.Clock();
+let hudAcc = 1;
+
+function tick() {
+  requestAnimationFrame(tick);
+  const raw = Math.min(clock.getDelta(), 0.05);
+  timeScale += (timeTarget - timeScale) * Math.min(1, raw * 8);
+
+  if (running) {
+    const dt = raw * timeScale;
+    updateGait(dt);
+    updatePuffs(dt);
+    updateDust(dt, gait.v);
+    gait.corePulse *= Math.exp(-6 * raw);
+    MAT.core.emissiveIntensity = 1.3 + 2.4 * gait.corePulse;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  hudAcc += raw;
+  if (hudAcc > 0.15) { hudAcc = 0; updateHUD(); }
+  if (bootEl) { bootEl.style.display = 'none'; bootEl = null; }
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* CDN failure fallback (module never runs if the import fails) */
+setTimeout(() => {
+  if (!window.__ok) { $('boot').hidden = true; $('err').hidden = false; }
+}, 6000);
+window.addEventListener('error', () => {
+  if (!window.__ok) { $('boot').hidden = true; $('err').hidden = false; }
+}, true);
+</script>
+</body>
+</html>

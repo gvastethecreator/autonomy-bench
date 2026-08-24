@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Procedural Biped — Walker</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: rgba(12, 18, 36, 0.72);
+      --line: rgba(160, 190, 255, 0.18);
+      --text: #e8eefc;
+      --muted: #9aa8c7;
+      --accent: #7fd0ff;
+      --accent-2: #c59bff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(120% 90% at 50% 0%, #182448 0%, var(--bg) 55%, #070a14 100%);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+    }
+
+    #canvas-wrap {
+      position: fixed;
+      inset: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .top-left, .bottom-left, .top-right {
+      position: absolute;
+      pointer-events: auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .top-left {
+      top: 20px;
+      left: 20px;
+      padding: 16px 18px;
+      max-width: min(360px, calc(100vw - 40px));
+    }
+
+    .top-left h1 {
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      margin-bottom: 4px;
+    }
+
+    .top-left p {
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(127, 208, 255, 0.16), rgba(197, 155, 255, 0.16));
+      border: 1px solid rgba(127, 208, 255, 0.28);
+      color: var(--accent);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .badge::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.55; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+
+    .top-right {
+      top: 20px;
+      right: 20px;
+      padding: 14px 16px;
+      width: min(260px, calc(100vw - 40px));
+    }
+
+    .control {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .control:last-child { margin-bottom: 0; }
+
+    .control label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .control label strong {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      pointer-events: auto;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    }
+
+    button:hover {
+      background: rgba(127, 208, 255, 0.12);
+      border-color: rgba(127, 208, 255, 0.35);
+    }
+
+    button:active { transform: translateY(1px); }
+
+    button.active {
+      background: linear-gradient(135deg, rgba(127, 208, 255, 0.22), rgba(197, 155, 255, 0.18));
+      border-color: rgba(127, 208, 255, 0.45);
+      color: #fff;
+    }
+
+    .bottom-left {
+      left: 20px;
+      bottom: 20px;
+      padding: 12px 14px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .bottom-left kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.7rem;
+    }
+
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.45) 100%),
+        linear-gradient(180deg, rgba(8, 12, 28, 0.15), transparent 18%, transparent 78%, rgba(8, 12, 28, 0.35));
+      z-index: 1;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: #070a14;
+      z-index: 10;
+      transition: opacity 0.45s ease, visibility 0.45s ease;
+    }
+
+    #loading.hide {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    #loading span {
+      color: var(--muted);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+    }
+
+    @media (max-width: 720px) {
+      .top-right {
+        top: auto;
+        bottom: 20px;
+        right: 20px;
+        left: 20px;
+        width: auto;
+      }
+
+      .bottom-left { display: none; }
+
+      .top-left {
+        max-width: calc(100vw - 40px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading"><span>Booting walker…</span></div>
+  <div id="canvas-wrap"></div>
+  <div class="vignette"></div>
+
+  <div class="hud">
+    <div class="top-left">
+      <div class="badge">Procedural gait</div>
+      <h1>Night Walker</h1>
+      <p>A lanky biped driven by phase-based joint math — hips, knees, ankles, arms, and spine all derived from one walk cycle clock.</p>
+    </div>
+
+    <div class="top-right">
+      <div class="control">
+        <label>Walk speed <strong id="speedVal">1.00×</strong></label>
+        <input id="speed" type="range" min="0.25" max="2.2" step="0.05" value="1" />
+      </div>
+      <div class="control">
+        <label>Stride <strong id="strideVal">1.00</strong></label>
+        <input id="stride" type="range" min="0.55" max="1.45" step="0.05" value="1" />
+      </div>
+      <div class="control">
+        <label>Camera</label>
+        <div class="row">
+          <button id="camOrbit" class="active" type="button">Orbit</button>
+          <button id="camFollow" type="button">Follow</button>
+          <button id="camSide" type="button">Side</button>
+        </div>
+      </div>
+      <div class="control">
+        <div class="row">
+          <button id="pauseBtn" type="button">Pause</button>
+          <button id="resetBtn" type="button">Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-left">
+      Drag to orbit · Scroll to zoom · <kbd>Space</kbd> pause · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> cameras
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const wrap = document.getElementById("canvas-wrap");
+    const loading = document.getElementById("loading");
+    const speedInput = document.getElementById("speed");
+    const strideInput = document.getElementById("stride");
+    const speedVal = document.getElementById("speedVal");
+    const strideVal = document.getElementById("strideVal");
+    const pauseBtn = document.getElementById("pauseBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const camOrbit = document.getElementById("camOrbit");
+    const camFollow = document.getElementById("camFollow");
+    const camSide = document.getElementById("camSide");
+
+    const params = {
+      speed: 1,
+      stride: 1,
+      paused: false,
+      cameraMode: "orbit",
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
+    scene.fog = new THREE.FogExp2(0x0b1020, 0.028);
+
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120);
+    camera.position.set(4.8, 2.6, 6.2);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: "high-performance",
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    wrap.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 2.5;
+    controls.maxDistance = 16;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.target.set(0, 1.25, 0);
+
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xb8d0ff, 0x1a1428, 0.75);
+    scene.add(hemi);
+
+    const key = new THREE.DirectionalLight(0xffe2c4, 1.35);
+    key.position.set(5.5, 8.5, 3.5);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.camera.near = 1;
+    key.shadow.camera.far = 30;
+    key.shadow.camera.left = -10;
+    key.shadow.camera.right = 10;
+    key.shadow.camera.top = 10;
+    key.shadow.camera.bottom = -10;
+    key.shadow.bias = -0.0002;
+    scene.add(key);
+
+    const rim = new THREE.DirectionalLight(0x7fd0ff, 0.55);
+    rim.position.set(-6, 3.5, -4);
+    scene.add(rim);
+
+    const fill = new THREE.PointLight(0xc59bff, 0.55, 18, 2);
+    fill.position.set(-2.5, 2.2, 3.5);
+    scene.add(fill);
+
+    // Ground
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x141c33,
+      roughness: 0.92,
+      metalness: 0.08,
+    });
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(28, 72), groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(28, 28, 0x3a4d7a, 0x1d2744);
+    grid.position.y = 0.002;
+    grid.material.transparent = true;
+    grid.material.opacity = 0.45;
+    scene.add(grid);
+
+    // Soft path ring
+    const path = new THREE.Mesh(
+      new THREE.RingGeometry(3.2, 4.55, 96),
+      new THREE.MeshStandardMaterial({
+        color: 0x1c2744,
+        roughness: 0.85,
+        metalness: 0.12,
+        side: THREE.DoubleSide,
+      })
+    );
+    path.rotation.x = -Math.PI / 2;
+    path.position.y = 0.01;
+    path.receiveShadow = true;
+    scene.add(path);
+
+    // Atmosphere particles
+    const dustCount = 180;
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      dustPos[i * 3] = (Math.random() - 0.5) * 18;
+      dustPos[i * 3 + 1] = Math.random() * 6 + 0.2;
+      dustPos[i * 3 + 2] = (Math.random() - 0.5) * 18;
+    }
+    dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+    const dust = new THREE.Points(
+      dustGeo,
+      new THREE.PointsMaterial({
+        color: 0xa8c8ff,
+        size: 0.035,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+      })
+    );
+    scene.add(dust);
+
+    // Materials for creature
+    const skin = new THREE.MeshStandardMaterial({
+      color: 0x8fd3c8,
+      roughness: 0.42,
+      metalness: 0.18,
+    });
+    const skinDark = new THREE.MeshStandardMaterial({
+      color: 0x4f7f78,
+      roughness: 0.55,
+      metalness: 0.2,
+    });
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: 0x7fd0ff,
+      roughness: 0.25,
+      metalness: 0.55,
+      emissive: 0x1a4a66,
+      emissiveIntensity: 0.55,
+    });
+    const eyeMat = new THREE.MeshStandardMaterial({
+      color: 0xfff2c8,
+      emissive: 0xffc978,
+      emissiveIntensity: 1.4,
+      roughness: 0.2,
+      metalness: 0.1,
+    });
+
+    function makeLimb(radiusTop, radiusBottom, height, material = skin) {
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 10),
+        material
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.geometry.translate(0, -height / 2, 0);
+      return mesh;
+    }
+
+    function makeBall(radius, material = skin) {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function makeBox(w, h, d, material = skin) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    // Hierarchy: root -> pelvis -> torso -> head / arms; pelvis -> legs
+    const biped = new THREE.Group();
+    biped.name = "biped";
+    scene.add(biped);
+
+    const pelvis = new THREE.Group();
+    pelvis.position.y = 1.18;
+    biped.add(pelvis);
+
+    const hips = makeBox(0.42, 0.18, 0.28, skinDark);
+    pelvis.add(hips);
+
+    const torsoPivot = new THREE.Group();
+    torsoPivot.position.y = 0.08;
+    pelvis.add(torsoPivot);
+
+    const chest = makeBox(0.46, 0.58, 0.32, skin);
+    chest.position.y = 0.34;
+    torsoPivot.add(chest);
+
+    const sternum = makeBox(0.12, 0.28, 0.08, accentMat);
+    sternum.position.set(0, 0.36, 0.14);
+    torsoPivot.add(sternum);
+
+    const neck = makeLimb(0.07, 0.09, 0.18, skinDark);
+    neck.position.y = 0.68;
+    torsoPivot.add(neck);
+
+    const head = makeBall(0.2, skin);
+    head.position.y = 0.9;
+    torsoPivot.add(head);
+
+    const crest = makeBox(0.08, 0.22, 0.16, accentMat);
+    crest.position.set(0, 1.05, -0.02);
+    crest.rotation.x = 0.25;
+    torsoPivot.add(crest);
+
+    const snout = makeBox(0.16, 0.1, 0.18, skinDark);
+    snout.position.set(0, 0.86, 0.16);
+    torsoPivot.add(snout);
+
+    for (const side of [-1, 1]) {
+      const eye = makeBall(0.045, eyeMat);
+      eye.position.set(0.08 * side, 0.93, 0.14);
+      torsoPivot.add(eye);
+    }
+
+    function createArm(side) {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(0.28 * side, 0.56, 0);
+      torsoPivot.add(shoulder);
+
+      const shoulderBall = makeBall(0.09, skinDark);
+      shoulder.add(shoulderBall);
+
+      const upper = makeLimb(0.07, 0.055, 0.42, skin);
+      shoulder.add(upper);
+
+      const elbow = new THREE.Group();
+      elbow.position.y = -0.42;
+      shoulder.add(elbow);
+      elbow.add(makeBall(0.06, skinDark));
+
+      const lower = makeLimb(0.05, 0.04, 0.38, skin);
+      elbow.add(lower);
+
+      const wrist = new THREE.Group();
+      wrist.position.y = -0.38;
+      elbow.add(wrist);
+
+      const hand = makeBox(0.1, 0.12, 0.08, accentMat);
+      hand.position.y = -0.05;
+      wrist.add(hand);
+
+      return { shoulder, elbow, wrist };
+    }
+
+    function createLeg(side) {
+      const hip = new THREE.Group();
+      hip.position.set(0.14 * side, -0.02, 0);
+      pelvis.add(hip);
+      hip.add(makeBall(0.1, skinDark));
+
+      const thigh = makeLimb(0.095, 0.075, 0.52, skin);
+      hip.add(thigh);
+
+      const knee = new THREE.Group();
+      knee.position.y = -0.52;
+      hip.add(knee);
+      knee.add(makeBall(0.075, skinDark));
+
+      const shin = makeLimb(0.07, 0.055, 0.5, skin);
+      knee.add(shin);
+
+      const ankle = new THREE.Group();
+      ankle.position.y = -0.5;
+      knee.add(ankle);
+
+      const foot = makeBox(0.14, 0.07, 0.28, accentMat);
+      foot.position.set(0, -0.02, 0.06);
+      ankle.add(foot);
+
+      const toe = makeBox(0.12, 0.05, 0.1, skinDark);
+      toe.position.set(0, -0.02, 0.2);
+      ankle.add(toe);
+
+      return { hip, knee, ankle };
+    }
+
+    const leftArm = createArm(-1);
+    const rightArm = createArm(1);
+    const leftLeg = createLeg(-1);
+    const rightLeg = createLeg(1);
+
+    // Soft contact shadow under biped
+    const contactShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.55, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+      })
+    );
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.y = 0.015;
+    biped.add(contactShadow);
+
+    // Walk circle path
+    const pathRadius = 3.85;
+    let phase = 0;
+    let pathAngle = 0;
+    let clock = new THREE.Clock();
+
+    function clamp(v, a, b) {
+      return Math.max(a, Math.min(b, v));
+    }
+
+    function smoothstep(edge0, edge1, x) {
+      const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+
+    // Procedural gait: one phase clock drives opposing limbs
+    function animateGait(p, strideScale, speedScale) {
+      const swing = Math.sin(p);
+      const swingOpp = Math.sin(p + Math.PI);
+      const lift = Math.max(0, Math.sin(p));
+      const liftOpp = Math.max(0, Math.sin(p + Math.PI));
+
+      // Ground contact hardness
+      const plant = 1 - smoothstep(0.05, 0.45, lift);
+      const plantOpp = 1 - smoothstep(0.05, 0.45, liftOpp);
+
+      const stride = 0.55 * strideScale;
+      const hipPitch = 0.72 * strideScale;
+      const kneeBend = 1.15 * strideScale;
+      const ankleBend = 0.55 * strideScale;
+
+      // Legs
+      leftLeg.hip.rotation.x = swing * hipPitch;
+      leftLeg.hip.rotation.z = 0.04;
+      leftLeg.knee.rotation.x = lift * kneeBend + 0.08;
+      leftLeg.ankle.rotation.x = -swing * ankleBend * 0.65 - lift * 0.25;
+
+      rightLeg.hip.rotation.x = swingOpp * hipPitch;
+      rightLeg.hip.rotation.z = -0.04;
+      rightLeg.knee.rotation.x = liftOpp * kneeBend + 0.08;
+      rightLeg.ankle.rotation.x = -swingOpp * ankleBend * 0.65 - liftOpp * 0.25;
+
+      // Arms counter-swing
+      leftArm.shoulder.rotation.x = -swing * 0.55 * strideScale;
+      leftArm.shoulder.rotation.z = 0.18;
+      leftArm.elbow.rotation.x = 0.35 + Math.max(0, -swing) * 0.55;
+
+      rightArm.shoulder.rotation.x = -swingOpp * 0.55 * strideScale;
+      rightArm.shoulder.rotation.z = -0.18;
+      rightArm.elbow.rotation.x = 0.35 + Math.max(0, -swingOpp) * 0.55;
+
+      // Spine / pelvis
+      pelvis.rotation.y = -swing * 0.12 * strideScale;
+      pelvis.rotation.z = swing * 0.06;
+      torsoPivot.rotation.y = swing * 0.18 * strideScale;
+      torsoPivot.rotation.x = 0.04 + Math.sin(p * 2) * 0.03;
+      torsoPivot.rotation.z = -swing * 0.05;
+
+      // Vertical bob + lateral sway from contact
+      const bob = Math.abs(Math.sin(p)) * 0.045 * strideScale;
+      const sway = Math.sin(p) * 0.03;
+      pelvis.position.y = 1.18 + bob;
+      pelvis.position.x = sway;
+
+      // Foot plant squash feel on contact shadow
+      const plantMix = Math.max(plant, plantOpp);
+      contactShadow.scale.setScalar(0.85 + plantMix * 0.35);
+      contactShadow.material.opacity = 0.18 + plantMix * 0.16;
+
+      // Head stabilization
+      head.rotation.x = -torsoPivot.rotation.x * 0.5;
+      head.rotation.y = -torsoPivot.rotation.y * 0.35;
+
+      return { bob, plantMix, stride };
+    }
+
+    function updateLocomotion(dt) {
+      if (params.paused) return;
+
+      const cadence = 3.1 * params.speed;
+      phase += dt * cadence;
+
+      // Arc length ≈ radius * dθ; match approximate step travel
+      const stepTravel = 1.55 * params.stride * params.speed;
+      pathAngle += (dt * stepTravel) / pathRadius;
+
+      const gait = animateGait(phase, params.stride, params.speed);
+
+      biped.position.x = Math.cos(pathAngle) * pathRadius;
+      biped.position.z = Math.sin(pathAngle) * pathRadius;
+      biped.position.y = 0;
+      biped.rotation.y = -pathAngle + Math.PI * 0.5;
+
+      // Subtle lean into path curvature
+      pelvis.rotation.z += 0.04;
+      void gait;
+    }
+
+    function setCameraMode(mode) {
+      params.cameraMode = mode;
+      camOrbit.classList.toggle("active", mode === "orbit");
+      camFollow.classList.toggle("active", mode === "follow");
+      camSide.classList.toggle("active", mode === "side");
+
+      if (mode === "orbit") {
+        controls.enabled = true;
+      } else {
+        controls.enabled = false;
+      }
+    }
+
+    function updateCamera(dt) {
+      const focus = new THREE.Vector3(
+        biped.position.x,
+        1.35 + pelvis.position.y - 1.18,
+        biped.position.z
+      );
+
+      if (params.cameraMode === "orbit") {
+        controls.target.lerp(focus, 1 - Math.pow(0.001, dt));
+        controls.update();
+        return;
+      }
+
+      if (params.cameraMode === "follow") {
+        const back = new THREE.Vector3(
+          Math.sin(biped.rotation.y),
+          0,
+          Math.cos(biped.rotation.y)
+        );
+        const desired = focus
+          .clone()
+          .add(back.multiplyScalar(5.2))
+          .add(new THREE.Vector3(0, 2.1, 0));
+        camera.position.lerp(desired, 1 - Math.pow(0.05, dt));
+        camera.lookAt(focus);
+        return;
+      }
+
+      // Side tracking shot
+      const side = new THREE.Vector3(
+        Math.cos(biped.rotation.y),
+        0,
+        -Math.sin(biped.rotation.y)
+      );
+      const desired = focus
+        .clone()
+        .add(side.multiplyScalar(5.8))
+        .add(new THREE.Vector3(0, 1.6, 0));
+      camera.position.lerp(desired, 1 - Math.pow(0.08, dt));
+      camera.lookAt(focus);
+    }
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+
+    window.addEventListener("resize", onResize);
+    onResize();
+
+    // UI wiring
+    function syncLabels() {
+      speedVal.textContent = `${Number(params.speed).toFixed(2)}×`;
+      strideVal.textContent = Number(params.stride).toFixed(2);
+    }
+
+    speedInput.addEventListener("input", () => {
+      params.speed = Number(speedInput.value);
+      syncLabels();
+    });
+
+    strideInput.addEventListener("input", () => {
+      params.stride = Number(strideInput.value);
+      syncLabels();
+    });
+
+    pauseBtn.addEventListener("click", () => {
+      params.paused = !params.paused;
+      pauseBtn.textContent = params.paused ? "Resume" : "Pause";
+      pauseBtn.classList.toggle("active", params.paused);
+    });
+
+    resetBtn.addEventListener("click", () => {
+      phase = 0;
+      pathAngle = 0;
+      params.speed = 1;
+      params.stride = 1;
+      speedInput.value = "1";
+      strideInput.value = "1";
+      params.paused = false;
+      pauseBtn.textContent = "Pause";
+      pauseBtn.classList.remove("active");
+      biped.position.set(pathRadius, 0, 0);
+      biped.rotation.y = Math.PI * 0.5;
+      animateGait(0, 1, 1);
+      setCameraMode("orbit");
+      camera.position.set(4.8, 2.6, 6.2);
+      controls.target.set(0, 1.25, 0);
+      controls.update();
+      syncLabels();
+    });
+
+    camOrbit.addEventListener("click", () => setCameraMode("orbit"));
+    camFollow.addEventListener("click", () => setCameraMode("follow"));
+    camSide.addEventListener("click", () => setCameraMode("side"));
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        e.preventDefault();
+        pauseBtn.click();
+      } else if (e.key === "1") setCameraMode("orbit");
+      else if (e.key === "2") setCameraMode("follow");
+      else if (e.key === "3") setCameraMode("side");
+    });
+
+    // Initial pose on circle
+    biped.position.set(pathRadius, 0, 0);
+    biped.rotation.y = Math.PI * 0.5;
+    animateGait(0, 1, 1);
+    syncLabels();
+
+    function frame() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      updateLocomotion(dt);
+      updateCamera(dt);
+
+      dust.rotation.y += dt * 0.02;
+      const positions = dust.geometry.attributes.position.array;
+      for (let i = 0; i < dustCount; i++) {
+        positions[i * 3 + 1] += Math.sin(phase * 0.35 + i) * 0.0008;
+        if (positions[i * 3 + 1] > 6.5) positions[i * 3 + 1] = 0.2;
+      }
+      dust.geometry.attributes.position.needsUpdate = true;
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+
+    // Warm first frame then reveal
+    renderer.compile(scene, camera);
+    renderer.render(scene, camera);
+    requestAnimationFrame(() => {
+      loading.classList.add("hide");
+      clock.start();
+      frame();
+    });
+
+    // Expose a tiny debug hook for verification
+    window.__walker = {
+      get phase() { return phase; },
+      get pathAngle() { return pathAngle; },
+      get speed() { return params.speed; },
+      get paused() { return params.paused; },
+      biped,
+    };
+  </script>
+</body>
+</html>
+

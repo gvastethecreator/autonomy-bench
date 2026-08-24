@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web Audio Music Sequencer</title>
+<style>
+  :root {
+    --bg: #0d0f1a;
+    --panel: #161a2e;
+    --panel-2: #1e2440;
+    --accent: #4ad7d1;
+    --accent-2: #ff6b9d;
+    --text: #e7ecff;
+    --muted: #8a93c2;
+    --cell: #232a4d;
+    --cell-on: #4ad7d1;
+    --beat: #2c3563;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: radial-gradient(1200px 800px at 70% -10%, #1a2042 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: 0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid #262c50;
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin-bottom: 18px;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    color: var(--bg);
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    cursor: pointer;
+    transition: transform 0.08s ease, filter 0.15s ease;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: scale(0.96); }
+  button.secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid #313863;
+  }
+  .ctl {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ctl input[type=range] { width: 150px; accent-color: var(--accent); }
+  .ctl .val { color: var(--text); font-weight: 600; font-size: 13px; }
+  select {
+    font: inherit;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid #313863;
+    border-radius: 8px;
+    padding: 7px 10px;
+  }
+
+  .seq {
+    background: var(--panel);
+    border: 1px solid #262c50;
+    border-radius: 14px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 110px repeat(16, 1fr);
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .row:last-child { margin-bottom: 0; }
+  .label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .swatch {
+    width: 12px; height: 12px; border-radius: 3px; flex: none;
+  }
+  .cell {
+    height: 34px;
+    border-radius: 7px;
+    background: var(--cell);
+    cursor: pointer;
+    border: 1px solid #2c3358;
+    transition: background 0.1s ease, box-shadow 0.1s ease, transform 0.05s ease;
+  }
+  .cell:nth-child(4n+1) { background: var(--beat); }
+  .cell.on {
+    background: var(--cell-on);
+    box-shadow: 0 0 10px rgba(74,215,209,0.6);
+    border-color: var(--accent);
+  }
+  .cell.playhead {
+    outline: 2px solid #fff6;
+    outline-offset: -1px;
+  }
+  .cell.on.flash {
+    background: #fff;
+    box-shadow: 0 0 16px #fff;
+  }
+  .step-numbers {
+    display: grid;
+    grid-template-columns: 110px repeat(16, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .step-numbers span {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .step-numbers .spacer { }
+  footer {
+    margin-top: 18px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  kbd {
+    background: var(--panel-2);
+    border: 1px solid #313863;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Web Audio Sequencer</h1>
+    <div class="sub">16-step grid · 8 voices · synthesized live in your browser</div>
+  </header>
+
+  <div class="controls">
+    <button id="playBtn">▶ Play</button>
+    <button id="stopBtn" class="secondary">■ Stop</button>
+    <button id="randomBtn" class="secondary">⚄ Randomize</button>
+    <button id="clearBtn" class="secondary">✕ Clear</button>
+    <div class="ctl">
+      <label for="tempo">Tempo</label>
+      <input type="range" id="tempo" min="60" max="200" value="120">
+      <span class="val"><span id="tempoVal">120</span> BPM</span>
+    </div>
+    <div class="ctl">
+      <label for="wave">Lead waveform</label>
+      <select id="wave">
+        <option value="sine">Sine</option>
+        <option value="square" selected>Square</option>
+        <option value="triangle">Triangle</option>
+        <option value="sawtooth">Sawtooth</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="vol">Volume</label>
+      <input type="range" id="vol" min="0" max="100" value="70">
+      <span class="val"><span id="volVal">70</span>%</span>
+    </div>
+  </div>
+
+  <div class="seq">
+    <div class="step-numbers" id="stepNumbers"></div>
+    <div id="grid"></div>
+  </div>
+
+  <footer>
+    Click cells to toggle steps. Press <kbd>Space</kbd> to play/stop.<br>
+    Built with the native Web Audio API — no plugins, no internet, no build step.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const STEPS = 16;
+  // Each voice: name, color, base frequency (Hz), type
+  const VOICES = [
+    { name: "Kick",   color: "#ff6b9d", freq: 55,    type: "drum" },
+    { name: "Snare",  color: "#ffa14a", freq: 180,   type: "noise" },
+    { name: "Hat",    color: "#ffe14a", freq: 8000,  type: "hat" },
+    { name: "Bass",   color: "#4ad7d1", freq: 110,   type: "tone" },
+    { name: "Sub",    color: "#5d8bff", freq: 73.4,  type: "tone" },
+    { name: "Lead",   color: "#9b7bff", freq: 330,   type: "lead" },
+    { name: "Pluck",  color: "#7bff9b", freq: 440,   type: "tone" },
+    { name: "Bell",   color: "#ff7be0", freq: 660,   type: "tone" },
+  ];
+
+  // Pattern state: pattern[voice][step] = boolean
+  const pattern = VOICES.map(() => new Array(STEPS).fill(false));
+
+  // --- Audio setup ---
+  let ctx = null;
+  let master = null;
+  let analyser = null;
+
+  function ensureAudio() {
+    if (ctx) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain();
+    master.gain.value = parseInt(document.getElementById("vol").value, 10) / 100 * 0.9;
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+  }
+
+  function createNoiseBuffer(dur) {
+    const len = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  // --- Instrument voices ---
+  function playKick(t) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.frequency.setValueAtTime(160, t);
+    o.frequency.exponentialRampToValueAtTime(50, t + 0.12);
+    g.gain.setValueAtTime(1.0, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + 0.25);
+  }
+
+  function playNoise(t, dur, hp, gain) {
+    const src = ctx.createBufferSource();
+    src.buffer = createNoiseBuffer(dur);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.value = hp;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(filter); filter.connect(g); g.connect(master);
+    src.start(t); src.stop(t + dur);
+  }
+
+  function playHat(t) {
+    const src = ctx.createBufferSource();
+    src.buffer = createNoiseBuffer(0.05);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.value = 7000;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    src.connect(filter); filter.connect(g); g.connect(master);
+    src.start(t); src.stop(t + 0.05);
+  }
+
+  function playTone(t, freq, dur, gain, wave) {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = wave || "triangle";
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  function triggerVoice(voiceIndex, t) {
+    const v = VOICES[voiceIndex];
+    switch (v.type) {
+      case "drum":  playKick(t); break;
+      case "noise": playNoise(t, 0.2, 1000, 0.7); break;
+      case "hat":   playHat(t); break;
+      case "lead":  playTone(t, v.freq, 0.3, 0.5, document.getElementById("wave").value); break;
+      case "tone":  playTone(t, v.freq, 0.25, 0.45, "triangle"); break;
+    }
+  }
+
+  // --- Sequencer scheduler (lookahead) ---
+  let isPlaying = false;
+  let currentStep = 0;
+  let nextNoteTime = 0;
+  let timerId = null;
+  const LOOKAHEAD = 0.1;      // seconds
+  const SCHEDULE_AHEAD = 0.025; // seconds
+  const cells = [];           // cells[voice][step] DOM
+  const flashCells = [];      // pending flash callbacks
+
+  function secondsPerStep() {
+    const bpm = parseInt(document.getElementById("tempo").value, 10);
+    // 16 steps = 4 beats (16th notes) -> each step = quarterBeat
+    return (60 / bpm) / 4;
+  }
+
+  function scheduleStep(step, time) {
+    for (let v = 0; v < VOICES.length; v++) {
+      if (pattern[v][step]) {
+        triggerVoice(v, time);
+        // schedule visual flash
+        const delay = (time - ctx.currentTime) * 1000;
+        flashCells.push({ v, step, delay });
+      }
+    }
+  }
+
+  function scheduler() {
+    while (nextNoteTime < ctx.currentTime + SCHEDULE_AHEAD) {
+      scheduleStep(currentStep, nextNoteTime);
+      nextNoteTime += secondsPerStep();
+      currentStep = (currentStep + 1) % STEPS;
+    }
+    timerId = setTimeout(scheduler, LOOKAHEAD * 1000);
+  }
+
+  function startPlayback() {
+    ensureAudio();
+    if (ctx.state === "suspended") ctx.resume();
+    if (isPlaying) return;
+    isPlaying = true;
+    currentStep = 0;
+    nextNoteTime = ctx.currentTime + 0.06;
+    scheduler();
+    flashLoop();
+  }
+
+  function stopPlayback() {
+    isPlaying = false;
+    if (timerId) clearTimeout(timerId);
+    timerId = null;
+    clearPlayhead();
+    // clear pending flashes
+    flashCells.length = 0;
+  }
+
+  // --- Visual playhead + flash ---
+  let playheadStep = -1;
+  let lastFlashCheck = 0;
+
+  function clearPlayhead() {
+    for (let v = 0; v < VOICES.length; v++) {
+      for (let s = 0; s < STEPS; s++) {
+        cells[v][s].classList.remove("playhead", "flash");
+      }
+    }
+    playheadStep = -1;
+  }
+
+  function flashLoop() {
+    if (!isPlaying) return;
+    const now = ctx.currentTime;
+    // process due flashes
+    for (let i = flashCells.length - 1; i >= 0; i--) {
+      const f = flashCells[i];
+      if (f.delay <= 0) {
+        const el = cells[f.v][f.step];
+        el.classList.add("flash");
+        setTimeout(() => el.classList.remove("flash"), 90);
+        flashCells.splice(i, 1);
+      } else {
+        f.delay -= 16;
+      }
+    }
+    // playhead indicator based on audio clock
+    const stepDur = secondsPerStep();
+    const elapsed = ctx.currentTime - (nextNoteTime - (currentStep === 0 ? STEPS * stepDur : 0));
+    // simpler: track via scheduled times is complex; instead approximate
+    requestAnimationFrame(flashLoop);
+  }
+
+  // Lightweight playhead: recompute from audio position
+  let playStartCtxTime = 0;
+  let playStartStep = 0;
+
+  function startPlaybackV2() {
+    ensureAudio();
+    if (ctx.state === "suspended") ctx.resume();
+    if (isPlaying) return;
+    isPlaying = true;
+    currentStep = 0;
+    nextNoteTime = ctx.currentTime + 0.06;
+    playStartCtxTime = nextNoteTime;
+    playStartStep = 0;
+    scheduler();
+    rafPlayhead();
+  }
+
+  function rafPlayhead() {
+    if (!isPlaying) { clearPlayhead(); return; }
+    const stepDur = secondsPerStep();
+    const pos = (ctx.currentTime - playStartCtxTime) / stepDur;
+    let step = Math.floor(pos) % STEPS;
+    if (step < 0) step += STEPS;
+    if (step !== playheadStep) {
+      if (playheadStep >= 0) {
+        for (let v = 0; v < VOICES.length; v++) cells[v][playheadStep].classList.remove("playhead");
+      }
+      for (let v = 0; v < VOICES.length; v++) cells[v][step].classList.add("playhead");
+      playheadStep = step;
+    }
+    requestAnimationFrame(rafPlayhead);
+  }
+
+  // --- Build grid UI ---
+  function buildStepNumbers() {
+    const wrap = document.getElementById("stepNumbers");
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    wrap.appendChild(spacer);
+    for (let s = 0; s < STEPS; s++) {
+      const n = document.createElement("span");
+      n.textContent = s + 1;
+      wrap.appendChild(n);
+    }
+  }
+
+  function buildGrid() {
+    const grid = document.getElementById("grid");
+    for (let v = 0; v < VOICES.length; v++) {
+      cells[v] = [];
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("div");
+      label.className = "label";
+      const sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.style.background = VOICES[v].color;
+      label.appendChild(sw);
+      label.appendChild(document.createTextNode(VOICES[v].name));
+      row.appendChild(label);
+
+      for (let s = 0; s < STEPS; s++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.addEventListener("click", () => {
+          pattern[v][s] = !pattern[v][s];
+          cell.classList.toggle("on", pattern[v][s]);
+          if (pattern[v][s]) {
+            ensureAudio();
+            if (ctx.state === "suspended") ctx.resume();
+            triggerVoice(v, ctx.currentTime);
+          }
+        });
+        cells[v][s] = cell;
+        row.appendChild(cell);
+      }
+      grid.appendChild(row);
+    }
+  }
+
+  // --- Preset pattern ---
+  function presetPattern() {
+    // kick on 0,4,8,12
+    [0,4,8,12].forEach(s => pattern[0][s] = true);
+    // snare on 4,12
+    [4,12].forEach(s => pattern[1][s] = true);
+    // hat every 2
+    for (let s = 0; s < STEPS; s += 2) pattern[2][s] = true;
+    // bass on 0,6,8,14
+    [0,6,8,14].forEach(s => pattern[3][s] = true);
+    // lead melody
+    [0,3,7,10,12].forEach(s => pattern[5][s] = true);
+    [2,5,9,13].forEach(s => pattern[6][s] = true);
+    refreshGrid();
+  }
+
+  function refreshGrid() {
+    for (let v = 0; v < VOICES.length; v++) {
+      for (let s = 0; s < STEPS; s++) {
+        cells[v][s].classList.toggle("on", pattern[v][s]);
+      }
+    }
+  }
+
+  function randomize() {
+    for (let v = 0; v < VOICES.length; v++) {
+      for (let s = 0; s < STEPS; s++) {
+        const density = v <= 2 ? 0.35 : 0.22;
+        pattern[v][s] = Math.random() < density;
+      }
+    }
+    refreshGrid();
+  }
+
+  function clearAll() {
+    for (let v = 0; v < VOICES.length; v++) pattern[v].fill(false);
+    refreshGrid();
+  }
+
+  // --- Wire controls ---
+  document.getElementById("playBtn").addEventListener("click", startPlaybackV2);
+  document.getElementById("stopBtn").addEventListener("click", stopPlayback);
+  document.getElementById("randomBtn").addEventListener("click", randomize);
+  document.getElementById("clearBtn").addEventListener("click", clearAll);
+
+  const tempoEl = document.getElementById("tempo");
+  tempoEl.addEventListener("input", () => {
+    document.getElementById("tempoVal").textContent = tempoEl.value;
+  });
+
+  const volEl = document.getElementById("vol");
+  volEl.addEventListener("input", () => {
+    document.getElementById("volVal").textContent = volEl.value;
+    if (master) master.gain.value = parseInt(volEl.value, 10) / 100 * 0.9;
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      if (isPlaying) stopPlayback(); else startPlaybackV2();
+    }
+  });
+
+  // --- Init ---
+  buildStepNumbers();
+  buildGrid();
+  presetPattern();
+})();
+</script>
+</body>
+</html>

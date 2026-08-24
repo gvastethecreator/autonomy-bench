@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Metro Flow — City Traffic Simulation</title>
+<style>
+  :root{
+    --bg:#0b0e16;
+    --panel:rgba(18,22,34,0.72);
+    --panel-brd:rgba(120,160,220,0.18);
+    --accent:#5ad1ff;
+    --accent2:#ffcf6b;
+    --txt:#e8eef7;
+    --muted:#8da0bd;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;background:var(--bg);overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--txt);-webkit-font-smoothing:antialiased;}
+  #scene{position:fixed;inset:0;display:block;}
+  .vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(120% 100% at 50% 38%,rgba(0,0,0,0) 55%,rgba(0,0,0,0.55) 100%);}
+
+  /* Header HUD */
+  #hud{position:fixed;top:18px;left:20px;pointer-events:none;z-index:5;
+    text-shadow:0 2px 14px rgba(0,0,0,.6);}
+  #hud h1{font-size:20px;font-weight:650;letter-spacing:.4px;
+    display:flex;align-items:center;gap:9px;}
+  #hud h1 .dot{width:9px;height:9px;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 12px var(--accent);}
+  #hud .sub{font-size:12.5px;color:var(--muted);margin-top:3px;font-weight:400;}
+  #stats{display:flex;gap:18px;margin-top:14px;}
+  .stat{background:var(--panel);border:1px solid var(--panel-brd);
+    border-radius:12px;padding:9px 14px;min-width:90px;
+    backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);}
+  .stat .k{font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);}
+  .stat .v{font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;}
+  .stat .v small{font-size:11px;color:var(--muted);font-weight:400;}
+
+  /* Controls */
+  #controls{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+    z-index:6;display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:center;
+    background:var(--panel);border:1px solid var(--panel-brd);border-radius:16px;
+    padding:12px 18px;backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px);
+    box-shadow:0 12px 40px rgba(0,0,0,.45);max-width:94vw;}
+  .ctl{display:flex;flex-direction:column;gap:5px;min-width:118px;}
+  .ctl label{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);
+    display:flex;justify-content:space-between;gap:8px;}
+  .ctl label b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums;}
+  input[type=range]{-webkit-appearance:none;appearance:none;height:5px;border-radius:5px;
+    background:linear-gradient(90deg,var(--accent),#3a6ea5);outline:none;cursor:pointer;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    border-radius:50%;background:#fff;border:2px solid var(--accent);cursor:pointer;
+    box-shadow:0 1px 6px rgba(0,0,0,.5);}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;
+    border:2px solid var(--accent);cursor:pointer;}
+  .btn{background:rgba(90,209,255,.14);border:1px solid rgba(90,209,255,.4);
+    color:var(--txt);border-radius:11px;padding:9px 14px;font-size:12.5px;font-weight:600;
+    cursor:pointer;transition:.15s;white-space:nowrap;letter-spacing:.3px;}
+  .btn:hover{background:rgba(90,209,255,.26);}
+  .btn.on{background:rgba(255,207,107,.18);border-color:rgba(255,207,107,.5);color:#ffe2a6;}
+  .sep{width:1px;height:40px;background:var(--panel-brd);}
+  .hint{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);
+    font-size:11.5px;color:var(--muted);z-index:5;pointer-events:none;opacity:.8;}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="vignette"></div>
+
+<div id="hud">
+  <h1><span class="dot"></span>Metro Flow</h1>
+  <div class="sub">A living city grid — signals, queues &amp; rush-hour flow</div>
+  <div id="stats">
+    <div class="stat"><div class="k">Vehicles</div><div class="v" id="s-veh">0</div></div>
+    <div class="stat"><div class="k">Avg Flow</div><div class="v" id="s-spd">0 <small>km/h</small></div></div>
+    <div class="stat"><div class="k">Clock</div><div class="v" id="s-clock">17:00</div></div>
+  </div>
+</div>
+
+<div class="hint">Drag the clock for day → night · adjust density &amp; flow</div>
+
+<div id="controls">
+  <button class="btn on" id="b-play">⏸ Pause</button>
+  <div class="sep"></div>
+  <div class="ctl">
+    <label>Clock <b id="l-clock">17:00</b></label>
+    <input type="range" id="r-clock" min="0" max="24" step="0.1" value="17">
+  </div>
+  <div class="ctl">
+    <label>Traffic <b id="l-dens">1.2×</b></label>
+    <input type="range" id="r-dens" min="0.2" max="3" step="0.1" value="1.2">
+  </div>
+  <div class="ctl">
+    <label>Flow Speed <b id="l-spd">1.0×</b></label>
+    <input type="range" id="r-spd" min="0.3" max="3" step="0.1" value="1">
+  </div>
+  <div class="ctl">
+    <label>Day Cycle <b id="l-auto">auto</b></label>
+    <input type="range" id="r-auto" min="0" max="2" step="1" value="1">
+  </div>
+  <div class="sep"></div>
+  <button class="btn" id="b-reset">↻ Reset</button>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---------- Canvas setup ----------
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  let cssW=0, cssH=0, dpr=1;
+
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio||1, 2);
+    cssW = window.innerWidth; cssH = window.innerHeight;
+    canvas.width = Math.round(cssW*dpr);
+    canvas.height = Math.round(cssH*dpr);
+    canvas.style.width = cssW+'px';
+    canvas.style.height = cssH+'px';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- City grid ----------
+  const COLS = 8, ROWS = 5;
+  const SPACING = 150, MARGIN = 72;
+  const ROAD_W = 26, LANE_OFF = 7;
+  const cityW = (COLS-1)*SPACING + MARGIN*2;
+  const cityH = (ROWS-1)*SPACING + MARGIN*2;
+  const nodeX = c => MARGIN + c*SPACING;
+  const nodeY = r => MARGIN + r*SPACING;
+
+  const nodes = [];
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    nodes.push({ id:r*COLS+c, c, r, x:nodeX(c), y:nodeY(r),
+      offset:((r*COLS+c)*1.37)%15, green:'NS' });
+  }
+  const nodeAt = (c,r)=> nodes[r*COLS+c];
+
+  const lanes = [];
+  function addLane(a,b){
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const lane={ a, b, start:{x:a.x,y:a.y}, end:{x:b.x,y:b.y},
+      length:Math.hypot(dx,dy), angle:Math.atan2(dy,dx),
+      axis:(dy===0?'h':'v'), reverse:null };
+    lanes.push(lane); return lane;
+  }
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    if(c<COLS-1){ const L=addLane(nodeAt(c,r),nodeAt(c+1,r)); const R=addLane(nodeAt(c+1,r),nodeAt(c,r)); L.reverse=R; R.reverse=L; }
+    if(r<ROWS-1){ const L=addLane(nodeAt(c,r),nodeAt(c,r+1)); const R=addLane(nodeAt(c,r+1),nodeAt(c,r)); L.reverse=R; R.reverse=L; }
+  }
+  const outgoing = {};
+  nodes.forEach(n=> outgoing[n.id]=[]);
+  lanes.forEach(l=> outgoing[l.a.id].push(l));
+
+  // Spawn lanes: boundary lanes heading inward
+  const spawnLanes = lanes.filter(l=>{
+    const a=l.a,b=l.b;
+    if(a.c===0 && l.axis==='h' && b.c>a.c) return true;
+    if(a.c===COLS-1 && l.axis==='h' && b.c<a.c) return true;
+    if(a.r===0 && l.axis==='v' && b.r>a.r) return true;
+    if(a.r===ROWS-1 && l.axis==='v' && b.r<a.r) return true;
+    return false;
+  });
+
+  // ---------- Signal timing ----------
+  const C=15, NS_GREEN=6, ALLRED1=1.5, EW_GREEN=6; // 15s cycle
+  function axisGreen(node, axis){
+    const tm=(simTime + node.offset) % C;
+    if(axis==='v') return tm < NS_GREEN;
+    return tm >= (NS_GREEN+ALLRED1) && tm < (NS_GREEN+ALLRED1+EW_GREEN);
+  }
+
+  // ---------- RNG ----------
+  function mulberry32(a){ return function(){ a|=0;a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+  // ---------- Buildings & parks ----------
+  const blocks=[];
+  (function buildBlocks(){
+    const rnd = mulberry32(20260824);
+    for(let r=0;r<ROWS-1;r++) for(let c=0;c<COLS-1;c++){
+      const x0=nodeX(c)+ROAD_W/2+8, x1=nodeX(c+1)-ROAD_W/2-8;
+      const y0=nodeY(r)+ROAD_W/2+8, y1=nodeY(r+1)-ROAD_W/2-8;
+      const seed = Math.floor(rnd()*1e6);
+      const br = mulberry32(seed);
+      const block={x0,y0,x1,y1,seed,park:false,trees:[],buildings:[]};
+      if(br()<0.18){ // park
+        block.park=true;
+        const n=5+Math.floor(br()*5);
+        for(let i=0;i<n;i++){
+          block.trees.push({x:x0+8+br()*(x1-x0-16), y:y0+8+br()*(y1-y0-16), s:6+br()*5});
+        }
+      } else {
+        const n=1+Math.floor(br()*3);
+        for(let i=0;i<n;i++){
+          const bw=(x1-x0-10)/n - 6 + br()*8;
+          const bh=(y1-y0-10) - br()*30;
+          const bx=x0+6 + i*((x1-x0-10)/n);
+          const by=y0+6 + br()*(y1-y0-bh-12);
+          const palette=['#3b4252','#454d60','#515a70','#3e4658','#5a6684'];
+          const col=palette[Math.floor(br()*palette.length)];
+          const b={x:bx,y:by,w:bw,h:bh,seed:Math.floor(br()*1e5),color:col,
+                   roof:shade(col,18), windows:[]};
+          const ww=9,wh=7,pad=5;
+          const cols=Math.max(1,Math.floor((b.w-pad*2)/ww));
+          const rows=Math.max(1,Math.floor((b.h-pad*2)/wh));
+          const ox=b.x+pad+(b.w-pad*2-cols*ww)/2;
+          const oy=b.y+pad+(b.h-pad*2-rows*wh)/2;
+          for(let ci=0;ci<cols;ci++) for(let cj=0;cj<rows;cj++){
+            b.windows.push({x:ox+ci*ww, y:oy+cj*wh, lit:br()<0.55});
+          }
+          block.buildings.push(b);
+        }
+      }
+      blocks.push(block);
+    }
+  })();
+
+  function shade(hex,amt){
+    const n=parseInt(hex.slice(1),16);
+    let r=(n>>16)+amt, g=((n>>8)&255)+amt, b=(n&255)+amt;
+    r=Math.max(0,Math.min(255,r));g=Math.max(0,Math.min(255,g));b=Math.max(0,Math.min(255,b));
+    return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  }
+
+  // ---------- Cars ----------
+  const CAR_COLORS=['#e74c3c','#3498db','#f1c40f','#2ecc71','#ecf0f1','#e67e22','#9b59b6','#1abc9c','#ff6b9d','#48dbfb'];
+  const cars=[];
+  const MAX_CARS=230;
+
+  function makeCar(lane){
+    const len=18+Math.random()*5, w=9+Math.random()*2.5;
+    const col=CAR_COLORS[(Math.random()*CAR_COLORS.length)|0];
+    return { lane, p:0, len, w,
+      color:col, roof:shade(col,-40),
+      maxSpeed:46+Math.random()*24, speed:30+Math.random()*15,
+      angle:lane.angle };
+  }
+
+  function nextLane(car){
+    const node=car.lane.b;
+    const opts=outgoing[node.id].filter(l=> l!==car.lane.reverse);
+    if(opts.length===0) return null;
+    const straight=opts.find(l=> l.axis===car.lane.axis);
+    if(straight && Math.random()<0.62) return straight;
+    return opts[(Math.random()*opts.length)|0];
+  }
+
+  // pre-populate
+  (function seed(){
+    for(let i=0;i<46;i++){
+      const lane=lanes[(Math.random()*lanes.length)|0];
+      const p=Math.random()*lane.length;
+      let blocked=false;
+      for(const c of cars) if(c.lane===lane && Math.abs(c.p-p)<26){blocked=true;break;}
+      if(blocked) continue;
+      const car=makeCar(lane); car.p=p; cars.push(car);
+    }
+  })();
+
+  // ---------- State / controls ----------
+  let simTime=0;            // for signals
+  let timeOfDay=17;         // hours
+  let playing=true;
+  let density=1.2, flowMul=1, autoCycle=1;
+  let spawnTimer=0;
+  const BASE_INTERVAL=0.55;
+
+  // ---------- Glow sprite ----------
+  const glow=document.createElement('canvas'); glow.width=glow.height=64;
+  (function(){ const g=glow.getContext('2d');
+    const grd=g.createRadialGradient(32,32,0,32,32,32);
+    grd.addColorStop(0,'rgba(255,232,170,0.95)');
+    grd.addColorStop(0.4,'rgba(255,220,140,0.35)');
+    grd.addColorStop(1,'rgba(255,220,140,0)');
+    g.fillStyle=grd; g.fillRect(0,0,64,64);
+  })();
+
+  // ---------- Simulation update ----------
+  function update(dt){
+    simTime += dt;
+    // spawn
+    spawnTimer -= dt;
+    if(spawnTimer<=0 && cars.length<MAX_CARS){
+      spawnTimer = (BASE_INTERVAL/density)*(0.55+Math.random()*0.9);
+      const lane=spawnLanes[(Math.random()*spawnLanes.length)|0];
+      let blocked=false;
+      for(const c of cars) if(c.lane===lane && c.p<30){blocked=true;break;}
+      if(!blocked) cars.push(makeCar(lane));
+    }
+
+    for(let i=cars.length-1;i>=0;i--){
+      const car=cars[i], lane=car.lane;
+      const node=lane.b;
+      const go = axisGreen(node, lane.axis);
+      const stopDist = LANE_OFF + car.len/2 + 5;
+      const stopP = go ? lane.length : lane.length - stopDist;
+
+      // leader (car ahead on same lane)
+      let leadT=-1, lead=null;
+      for(const o of cars){
+        if(o===car || o.lane!==lane) continue;
+        if(o.p > car.p && (leadT<0 || o.p<leadT)){ leadT=o.p; lead=o; }
+      }
+      const gapPx = lead ? (leadT - car.p) - (lead.len/2 + car.len/2) : Infinity;
+
+      // distance to stop line (front of car)
+      const frontStopP = stopP - car.len/2;
+      const gapStop = frontStopP - car.p;
+
+      const ef = Math.min(gapPx, gapStop);
+
+      let target = car.maxSpeed;
+      if(ef < 2) target = 0;
+      else if(ef < 34) target = car.maxSpeed * (ef-2)/32;
+
+      const accel=70, decel=130;
+      if(car.speed < target) car.speed = Math.min(target, car.speed+accel*dt);
+      else car.speed = Math.max(target, car.speed-decel*dt);
+      car.speed = Math.max(0, car.speed);
+
+      car.p += car.speed*dt;
+
+      // hold at stop line if red and not yet crossed
+      if(!go && car.p < frontStopP) car.p = frontStopP;
+
+      // transition at node
+      if(car.p >= lane.length){
+        const nxt=nextLane(car);
+        if(!nxt){ cars.splice(i,1); continue; }
+        car.lane=nxt; car.p=0; car.speed*=0.92;
+      }
+
+      // smooth heading through turns
+      const tgt=lane.angle;
+      let d=tgt-car.angle;
+      while(d>Math.PI) d-=Math.PI*2;
+      while(d<-Math.PI) d+=Math.PI*2;
+      const maxTurn=3.2*dt;
+      car.angle += Math.max(-maxTurn, Math.min(maxTurn, d));
+    }
+  }
+
+  // ---------- Rendering ----------
+  function daylightFactor(h){
+    // sun elevation: 0 at 6h & 18h, 1 at noon, negative at night
+    return Math.sin(((h-6)/12)*Math.PI);
+  }
+
+  function lanePoint(lane,t){
+    return { x:lane.start.x+(lane.end.x-lane.start.x)*t,
+             y:lane.start.y+(lane.end.y-lane.start.y)*t };
+  }
+
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function draw(){
+    const dl = Math.max(0, daylightFactor(timeOfDay)); // 0 night..1 noon
+    const night = 1-dl;
+
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    // backdrop
+    const bg=ctx.createLinearGradient(0,0,0,cssH);
+    bg.addColorStop(0,'#0a0d15'); bg.addColorStop(1,'#070910');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,cssW,cssH);
+
+    // world transform (fit & center)
+    const pad=40;
+    const scale=Math.min((cssW-pad)/cityW,(cssH-pad)/cityH);
+    const ox=(cssW-cityW*scale)/2, oy=(cssH-cityH*scale)/2;
+    ctx.translate(ox,oy); ctx.scale(scale,scale);
+
+    // ground
+    ctx.fillStyle='#1b2230';
+    roundRect(0,0,cityW,cityH,18); ctx.fill();
+    // subtle inner ground texture
+    ctx.fillStyle='rgba(255,255,255,0.012)';
+    roundRect(4,4,cityW-8,cityH-8,16); ctx.fill();
+
+    // blocks: parks + buildings
+    for(const blk of blocks){
+      if(blk.park){
+        ctx.fillStyle='#223a2c';
+        roundRect(blk.x0,blk.y0,blk.x1-blk.x0,blk.y1-blk.y0,8); ctx.fill();
+        for(const t of blk.trees){
+          ctx.fillStyle='rgba(0,0,0,0.25)';
+          ctx.beginPath(); ctx.ellipse(t.x+2,t.y+3,t.s,t.s*0.8,0,0,7); ctx.fill();
+          ctx.fillStyle='#2f6b46';
+          ctx.beginPath(); ctx.arc(t.x,t.y,t.s,0,7); ctx.fill();
+          ctx.fillStyle='#3c8a59';
+          ctx.beginPath(); ctx.arc(t.x-1.5,t.y-1.5,t.s*0.55,0,7); ctx.fill();
+        }
+      } else {
+        for(const b of blk.buildings){
+          // shadow
+          ctx.fillStyle='rgba(0,0,0,0.32)';
+          roundRect(b.x+3,b.y+5,b.w,b.h,5); ctx.fill();
+          // body
+          ctx.fillStyle=b.color;
+          roundRect(b.x,b.y,b.w,b.h,5); ctx.fill();
+          // roof highlight
+          ctx.fillStyle=b.roof;
+          roundRect(b.x+2.5,b.y+2.5,b.w-5,b.h-5,4); ctx.fill();
+          // windows
+          for(const w of b.windows){
+            if(night>0.45 && w.lit){
+              ctx.fillStyle='rgba(255,214,130,0.95)';
+              ctx.fillRect(w.x,w.y,5.5,4);
+              if(night>0.7){
+                ctx.globalAlpha=0.25; ctx.drawImage(glow,w.x-6,w.y-7,17,17);
+                ctx.globalAlpha=1;
+              }
+            } else {
+              ctx.fillStyle='rgba(20,28,42,0.55)';
+              ctx.fillRect(w.x,w.y,5.5,4);
+            }
+          }
+        }
+      }
+    }
+
+    // roads
+    const edgeDrawn=new Set();
+    ctx.lineCap='round';
+    for(const l of lanes){
+      const key=Math.min(l.a.id,l.b.id)+'-'+Math.max(l.a.id,l.b.id);
+      if(edgeDrawn.has(key)) continue; edgeDrawn.add(key);
+      ctx.strokeStyle='#2a2f3b';
+      ctx.lineWidth=ROAD_W;
+      ctx.beginPath(); ctx.moveTo(l.start.x,l.start.y); ctx.lineTo(l.end.x,l.end.y); ctx.stroke();
+    }
+    // center dashed yellow
+    ctx.strokeStyle='rgba(240,200,90,0.5)';
+    ctx.lineWidth=1.6; ctx.setLineDash([10,12]);
+    for(const l of lanes){
+      const key=Math.min(l.a.id,l.b.id)+'-'+Math.max(l.a.id,l.b.id);
+      if(edgeDrawn.has('y'+key)) continue; edgeDrawn.add('y'+key);
+      ctx.beginPath(); ctx.moveTo(l.start.x,l.start.y); ctx.lineTo(l.end.x,l.end.y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // white edge lines
+    ctx.strokeStyle='rgba(220,230,245,0.16)';
+    ctx.lineWidth=1.2;
+    for(const l of lanes){
+      const key=Math.min(l.a.id,l.b.id)+'-'+Math.max(l.a.id,l.b.id);
+      if(edgeDrawn.has('e'+key)) continue; edgeDrawn.add('e'+key);
+      const nx=-(l.end.y-l.start.y)/(l.length), ny=(l.end.x-l.start.x)/(l.length);
+      const o=ROAD_W/2-1.5;
+      ctx.beginPath();
+      ctx.moveTo(l.start.x+nx*o,l.start.y+ny*o); ctx.lineTo(l.end.x+nx*o,l.end.y+ny*o);
+      ctx.moveTo(l.start.x-nx*o,l.start.y-ny*o); ctx.lineTo(l.end.x-nx*o,l.end.y-ny*o);
+      ctx.stroke();
+    }
+
+    // crosswalks + signals at intersections
+    for(const n of nodes){
+      // crosswalk stripes
+      ctx.fillStyle='rgba(225,235,250,0.18)';
+      const cw=ROAD_W-4, sw=4, sg=4;
+      const sides=[[0,-1],[0,1],[-1,0],[1,0]];
+      for(const [sx,sy] of sides){
+        const horiz = sy!==0;
+        for(let k=-1;k<=1;k++){
+          if(horiz){
+            const yy=n.y + sy*(ROAD_W/2+1);
+            ctx.fillRect(n.x + k*7 - sw/2, yy - cw/2, sw, cw);
+          } else {
+            const xx=n.x + sx*(ROAD_W/2+1);
+            ctx.fillRect(xx - cw/2, n.y + k*7 - sw/2, cw, sw);
+          }
+        }
+      }
+      // signal heads (4 approaches)
+      const nsGo=axisGreen(n,'v'), ewGo=axisGreen(n,'h');
+      const drawDot=(dx,dy,on)=>{
+        ctx.beginPath(); ctx.arc(n.x+dx,n.y+dy,2.6,0,7);
+        ctx.fillStyle = on ? 'rgba(90,235,130,1)' : 'rgba(235,80,80,1)';
+        ctx.fill();
+        if(on){ ctx.globalAlpha=0.5; ctx.drawImage(glow,n.x+dx-7,n.y+dy-7,14,14); ctx.globalAlpha=1; }
+      };
+      const d=ROAD_W*0.92;
+      drawDot(0,-d,nsGo); drawDot(0,d,nsGo);
+      drawDot(-d,0,ewGo); drawDot(d,0,ewGo);
+
+      // street lamp glow at night
+      if(night>0.4){
+        ctx.globalAlpha=night*0.45; ctx.drawImage(glow,n.x-22,n.y-22,44,44); ctx.globalAlpha=1;
+      }
+    }
+
+    // cars
+    for(const car of cars){
+      const lane=car.lane;
+      const pt=lanePoint(lane, car.p/lane.length);
+      const ox=Math.cos(lane.angle+Math.PI/2)*LANE_OFF;
+      const oy=Math.sin(lane.angle+Math.PI/2)*LANE_OFF;
+      const x=pt.x+ox, y=pt.y+oy;
+      ctx.save();
+      ctx.translate(x,y); ctx.rotate(car.angle);
+      // shadow
+      ctx.fillStyle='rgba(0,0,0,0.30)';
+      roundRect(-car.len/2+1.5,-car.w/2+2.5,car.len,car.w,3); ctx.fill();
+      // body
+      ctx.fillStyle=car.color;
+      roundRect(-car.len/2,-car.w/2,car.len,car.w,3); ctx.fill();
+      // subtle top sheen
+      ctx.fillStyle='rgba(255,255,255,0.10)';
+      roundRect(-car.len/2,-car.w/2,car.len,car.w*0.4,3); ctx.fill();
+      // cabin
+      ctx.fillStyle=car.roof;
+      roundRect(-car.len/2+4,-car.w/2+2,car.len-13,car.w-4,2); ctx.fill();
+      // headlights
+      ctx.fillStyle = night>0.4 ? 'rgba(255,244,190,0.98)' : 'rgba(255,250,235,0.55)';
+      ctx.fillRect(car.len/2-2.5,-car.w/2+1,2,2.4);
+      ctx.fillRect(car.len/2-2.5,car.w/2-3.4,2,2.4);
+      // taillights
+      ctx.fillStyle='rgba(255,60,45,0.92)';
+      ctx.fillRect(-car.len/2+0.5,-car.w/2+1,1.6,2.2);
+      ctx.fillRect(-car.len/2+0.5,car.w/2-3.2,1.6,2.2);
+      ctx.restore();
+      // headlight beam glow at night
+      if(night>0.5){
+        ctx.globalAlpha=(night-0.5)*1.2;
+        const fx=x+Math.cos(car.angle)*car.len*0.6;
+        const fy=y+Math.sin(car.angle)*car.len*0.6;
+        ctx.drawImage(glow, fx-12, fy-12, 24,24);
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // night ambient overlay
+    if(night>0.02){
+      ctx.fillStyle='rgba(10,16,34,'+(night*0.46)+')';
+      ctx.fillRect(0,0,cityW,cityH);
+    }
+    // dusk warm tint
+    const elev=daylightFactor(timeOfDay);
+    if(elev>-0.15 && elev<0.35 && timeOfDay>4 && timeOfDay<21){
+      const warm=Math.max(0,(0.35-elev))/0.5;
+      ctx.fillStyle='rgba(255,140,60,'+(warm*0.10)+')';
+      ctx.fillRect(0,0,cityW,cityH);
+    }
+  }
+
+  // ---------- HUD update ----------
+  const sVeh=document.getElementById('s-veh');
+  const sSpd=document.getElementById('s-spd');
+  const sClock=document.getElementById('s-clock');
+  const lClock=document.getElementById('l-clock');
+  const lDens=document.getElementById('l-dens');
+  const lSpd=document.getElementById('l-spd');
+  const lAuto=document.getElementById('l-auto');
+
+  function fmtClock(h){
+    const hh=Math.floor(h)%24, mm=Math.floor((h-Math.floor(h))*60);
+    return String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+  }
+  function updateHUD(){
+    sVeh.textContent=cars.length;
+    let avg=0; if(cars.length) for(const c of cars) avg+=c.speed; avg/=Math.max(1,cars.length);
+    sSpd.innerHTML=Math.round(avg*1.9)+' <small>km/h</small>';
+    sClock.textContent=fmtClock(timeOfDay);
+    lClock.textContent=fmtClock(timeOfDay);
+  }
+
+  // ---------- Controls wiring ----------
+  const bPlay=document.getElementById('b-play');
+  bPlay.onclick=()=>{ playing=!playing; bPlay.textContent=playing?'⏸ Pause':'▶ Play'; bPlay.classList.toggle('on',playing); };
+  const rClock=document.getElementById('r-clock');
+  rClock.oninput=()=>{ timeOfDay=parseFloat(rClock.value); if(autoCycle===1){rClock.value=timeOfDay;} };
+  const rDens=document.getElementById('r-dens');
+  rDens.oninput=()=>{ density=parseFloat(rDens.value); lDens.textContent=density.toFixed(1)+'×'; };
+  const rSpd=document.getElementById('r-spd');
+  rSpd.oninput=()=>{ flowMul=parseFloat(rSpd.value); lSpd.textContent=flowMul.toFixed(1)+'×'; };
+  const rAuto=document.getElementById('r-auto');
+  const autoLabels=['off','auto','fast'];
+  rAuto.oninput=()=>{ autoCycle=parseInt(rAuto.value); lAuto.textContent=autoLabels[autoCycle]; };
+  document.getElementById('b-reset').onclick=()=>{
+    cars.length=0;
+    for(let i=0;i<46;i++){
+      const lane=lanes[(Math.random()*lanes.length)|0];
+      const p=Math.random()*lane.length;
+      let blocked=false; for(const c of cars) if(c.lane===lane && Math.abs(c.p-p)<26){blocked=true;break;}
+      if(blocked) continue; const car=makeCar(lane); car.p=p; cars.push(car);
+    }
+  };
+
+  // ---------- Main loop ----------
+  let last=performance.now();
+  let hudT=0;
+  function frame(now){
+    let dt=(now-last)/1000; last=now;
+    if(dt>0.05) dt=0.05; // clamp
+    const sdt=dt*flowMul;
+    if(playing){
+      update(sdt);
+      if(autoCycle===1) timeOfDay=(timeOfDay + dt*0.18)%24;
+      else if(autoCycle===2) timeOfDay=(timeOfDay + dt*0.9)%24;
+      if(autoCycle>0) rClock.value=timeOfDay.toFixed(1);
+    }
+    draw();
+    hudT+=dt; if(hudT>0.2){ updateHUD(); hudT=0; }
+    requestAnimationFrame(frame);
+  }
+  updateHUD();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

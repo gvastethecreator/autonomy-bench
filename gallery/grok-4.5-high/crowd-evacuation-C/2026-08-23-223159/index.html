@@ -1,0 +1,1790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Egress — Crowd Evacuation Simulation</title>
+<style>
+  :root {
+    --bg: #07090d;
+    --bg-elev: #0e131b;
+    --panel: rgba(14, 19, 27, 0.82);
+    --panel-border: rgba(148, 163, 184, 0.14);
+    --text: #e8eef7;
+    --muted: #8b9bb4;
+    --accent: #f59e0b;
+    --accent-soft: rgba(245, 158, 11, 0.16);
+    --cyan: #38bdf8;
+    --danger: #ef4444;
+    --safe: #34d399;
+    --exit: #22d3ee;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    --radius: 14px;
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    overflow: hidden;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+  }
+
+  .app {
+    position: relative;
+    width: min(100vw, 1440px);
+    height: min(100vh, 920px);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    background:
+      radial-gradient(1200px 600px at 20% -10%, rgba(245, 158, 11, 0.08), transparent 55%),
+      radial-gradient(900px 500px at 90% 110%, rgba(56, 189, 248, 0.07), transparent 50%),
+      linear-gradient(180deg, #0a0e14 0%, #07090d 100%);
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  @media (max-width: 900px) {
+    .app {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+      border: none;
+    }
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid var(--panel-border);
+    background: linear-gradient(180deg, rgba(14, 19, 27, 0.95), rgba(14, 19, 27, 0.55));
+    backdrop-filter: blur(12px);
+    z-index: 5;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background:
+      linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(239, 68, 68, 0.85));
+    box-shadow: 0 0 24px rgba(245, 158, 11, 0.35);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .brand-mark svg { width: 20px; height: 20px; }
+
+  .brand h1 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .brand p {
+    font-size: 0.72rem;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 11px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--panel-border);
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pill strong {
+    color: var(--text);
+    font-weight: 650;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+
+  .pill .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+
+  .pill.alarm .dot {
+    background: var(--danger);
+    box-shadow: 0 0 10px var(--danger);
+    animation: pulse-dot 1s ease-in-out infinite;
+  }
+
+  .pill.safe strong { color: var(--safe); }
+  .pill.warn strong { color: var(--accent); }
+  .pill.live strong { color: var(--cyan); }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(0.75); }
+  }
+
+  .stage-wrap {
+    position: relative;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .canvas-shell {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    background: #05070b;
+  }
+
+  canvas#world {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  .overlay-vignette {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.55) 100%),
+      linear-gradient(180deg, rgba(7, 9, 13, 0.18), transparent 18%, transparent 82%, rgba(7, 9, 13, 0.35));
+    z-index: 2;
+  }
+
+  .alarm-flash {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    background: radial-gradient(circle at 50% 20%, rgba(239, 68, 68, 0.18), transparent 55%);
+    z-index: 3;
+    transition: opacity 0.3s ease;
+  }
+
+  .alarm-flash.on {
+    opacity: 1;
+    animation: alarm-wash 1.4s ease-in-out infinite;
+  }
+
+  @keyframes alarm-wash {
+    0%, 100% { opacity: 0.15; }
+    50% { opacity: 0.55; }
+  }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    transform: translateX(-50%) translateY(-8px);
+    z-index: 6;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: rgba(14, 19, 27, 0.9);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: var(--accent);
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .side-hint {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    z-index: 4;
+    max-width: 240px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.45;
+    backdrop-filter: blur(10px);
+  }
+
+  .side-hint kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text);
+  }
+
+  .dock {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 12px;
+    padding: 12px 14px 14px;
+    border-top: 1px solid var(--panel-border);
+    background: linear-gradient(0deg, rgba(14, 19, 27, 0.98), rgba(14, 19, 27, 0.72));
+    backdrop-filter: blur(14px);
+    z-index: 5;
+  }
+
+  @media (max-width: 980px) {
+    .dock { grid-template-columns: 1fr; }
+    .side-hint { display: none; }
+    .brand p { display: none; }
+  }
+
+  .panel {
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 12px;
+    min-width: 0;
+  }
+
+  .panel h2 {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  button, select {
+    appearance: none;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+  }
+
+  button:hover, select:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(148, 163, 184, 0.28);
+  }
+
+  button:active { transform: translateY(1px); }
+
+  button:focus-visible, select:focus-visible, input:focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+  }
+
+  button.primary {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(234, 88, 12, 0.92));
+    border-color: transparent;
+    color: #1a0f00;
+    font-weight: 700;
+    box-shadow: 0 8px 22px rgba(245, 158, 11, 0.25);
+  }
+
+  button.primary:hover {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  }
+
+  button.danger {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fecaca;
+  }
+
+  button.ghost.active {
+    background: var(--accent-soft);
+    border-color: rgba(245, 158, 11, 0.45);
+    color: var(--accent);
+  }
+
+  .sliders {
+    display: grid;
+    gap: 10px;
+  }
+
+  .slider-row {
+    display: grid;
+    grid-template-columns: 92px 1fr 42px;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.74rem;
+    color: var(--muted);
+  }
+
+  .slider-row output {
+    font-family: var(--mono);
+    color: var(--text);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .metric {
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .metric .label {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .metric .value {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metric .bar {
+    margin-top: 8px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    overflow: hidden;
+  }
+
+  .metric .bar > span {
+    display: block;
+    height: 100%;
+    width: 0%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--cyan), var(--safe));
+    transition: width 0.25s ease;
+  }
+
+  .intro {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(800px 400px at 50% 30%, rgba(245, 158, 11, 0.12), transparent 60%),
+      rgba(5, 7, 11, 0.88);
+    backdrop-filter: blur(8px);
+    transition: opacity 0.55s ease, visibility 0.55s ease;
+  }
+
+  .intro.hide {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .intro-card {
+    width: min(520px, calc(100% - 32px));
+    padding: 28px 26px 24px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(18, 24, 34, 0.96), rgba(10, 14, 20, 0.96));
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+    text-align: center;
+  }
+
+  .intro-card .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .intro-card h2 {
+    font-size: clamp(1.5rem, 4vw, 2rem);
+    margin-bottom: 10px;
+    letter-spacing: -0.02em;
+  }
+
+  .intro-card p {
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-bottom: 18px;
+  }
+
+  .intro-card .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    text-align: left;
+    margin-bottom: 20px;
+  }
+
+  .intro-card .features div {
+    padding: 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--panel-border);
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .intro-card .features strong {
+    display: block;
+    color: var(--text);
+    margin-bottom: 3px;
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 520px) {
+    .intro-card .features { grid-template-columns: 1fr; }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pill.alarm .dot,
+    .alarm-flash.on { animation: none; }
+    .toast { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#1a0f00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20V8l8-4 8 4v12"/>
+            <path d="M9 20v-6h6v6"/>
+            <path d="M12 4v4"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Egress</h1>
+          <p>Interactive crowd evacuation laboratory</p>
+        </div>
+      </div>
+      <div class="status-pills" aria-live="polite">
+        <div class="pill" id="pillState"><span class="dot"></span> Status <strong>Standby</strong></div>
+        <div class="pill live">Elapsed <strong id="statTime">0.0s</strong></div>
+        <div class="pill warn">Inside <strong id="statInside">0</strong></div>
+        <div class="pill safe">Safe <strong id="statSafe">0</strong></div>
+      </div>
+    </header>
+
+    <div class="stage-wrap">
+      <div class="canvas-shell">
+        <canvas id="world" aria-label="Evacuation floor plan simulation"></canvas>
+        <div class="overlay-vignette" aria-hidden="true"></div>
+        <div class="alarm-flash" id="alarmFlash" aria-hidden="true"></div>
+        <div class="toast" id="toast" role="status"></div>
+        <div class="side-hint">
+          Click floor to place a temporary barrier · <kbd>Space</kbd> alarm · <kbd>R</kbd> reset · Drag to pan lightly with feel
+        </div>
+      </div>
+    </div>
+
+    <footer class="dock">
+      <section class="panel" aria-labelledby="ctrl-title">
+        <h2 id="ctrl-title">Controls</h2>
+        <div class="controls">
+          <button type="button" class="primary" id="btnAlarm">Sound Alarm</button>
+          <button type="button" id="btnPause">Pause</button>
+          <button type="button" id="btnReset">Reset</button>
+          <select id="scenario" aria-label="Scenario">
+            <option value="office">Office Floor</option>
+            <option value="lobby">Transit Lobby</option>
+            <option value="gallery">Museum Gallery</option>
+          </select>
+          <button type="button" class="ghost" id="btnBlock" title="Toggle barrier tool">Barrier Tool</button>
+          <button type="button" class="danger" id="btnClearBlocks">Clear Barriers</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="param-title">
+        <h2 id="param-title">Parameters</h2>
+        <div class="sliders">
+          <label class="slider-row">
+            <span>Crowd</span>
+            <input type="range" id="crowd" min="40" max="320" step="10" value="140" />
+            <output id="crowdOut">140</output>
+          </label>
+          <label class="slider-row">
+            <span>Speed</span>
+            <input type="range" id="speed" min="0.4" max="2.4" step="0.1" value="1.0" />
+            <output id="speedOut">1.0×</output>
+          </label>
+          <label class="slider-row">
+            <span>Panic</span>
+            <input type="range" id="panic" min="0" max="100" step="5" value="35" />
+            <output id="panicOut">35%</output>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="metrics-title">
+        <h2 id="metrics-title">Live Metrics</h2>
+        <div class="metrics">
+          <div class="metric">
+            <div class="label">Evacuation</div>
+            <div class="value" id="statPct">0%</div>
+            <div class="bar"><span id="barPct"></span></div>
+          </div>
+          <div class="metric">
+            <div class="label">Flow / 5s</div>
+            <div class="value" id="statFlow">0</div>
+            <div class="bar"><span id="barFlow"></span></div>
+          </div>
+          <div class="metric">
+            <div class="label">Congestion</div>
+            <div class="value" id="statCong">Low</div>
+            <div class="bar"><span id="barCong" style="background:linear-gradient(90deg,#34d399,#f59e0b,#ef4444)"></span></div>
+          </div>
+          <div class="metric">
+            <div class="label">Exits Open</div>
+            <div class="value" id="statExits">2</div>
+            <div class="bar"><span id="barExits"></span></div>
+          </div>
+        </div>
+      </section>
+    </footer>
+
+    <div class="intro" id="intro">
+      <div class="intro-card">
+        <div class="badge"><span aria-hidden="true">●</span> Simulation Ready</div>
+        <h2>When the alarm sounds, every second counts.</h2>
+        <p>
+          Watch hundreds of people navigate corridors, bottlenecks, and blocked routes toward glowing exits.
+          Tune density and panic, drop barriers mid-evacuation, and study how layout shapes survival time.
+        </p>
+        <div class="features">
+          <div><strong>Flow fields</strong> Agents follow a live distance field to the nearest exit.</div>
+          <div><strong>Crowd pressure</strong> Separation and congestion slow movement in chokepoints.</div>
+          <div><strong>Live hazards</strong> Amber emergency lighting and spreading danger zones.</div>
+          <div><strong>What-if tools</strong> Barriers, scenarios, and panic dials reshape the outcome.</div>
+        </div>
+        <button type="button" class="primary" id="btnBegin">Enter Floor Plan</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" id="a11yAnn" aria-live="assertive"></p>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("world");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const ui = {
+    pillState: document.getElementById("pillState"),
+    alarmFlash: document.getElementById("alarmFlash"),
+    toast: document.getElementById("toast"),
+    intro: document.getElementById("intro"),
+    btnBegin: document.getElementById("btnBegin"),
+    btnAlarm: document.getElementById("btnAlarm"),
+    btnPause: document.getElementById("btnPause"),
+    btnReset: document.getElementById("btnReset"),
+    btnBlock: document.getElementById("btnBlock"),
+    btnClearBlocks: document.getElementById("btnClearBlocks"),
+    scenario: document.getElementById("scenario"),
+    crowd: document.getElementById("crowd"),
+    speed: document.getElementById("speed"),
+    panic: document.getElementById("panic"),
+    crowdOut: document.getElementById("crowdOut"),
+    speedOut: document.getElementById("speedOut"),
+    panicOut: document.getElementById("panicOut"),
+    statTime: document.getElementById("statTime"),
+    statInside: document.getElementById("statInside"),
+    statSafe: document.getElementById("statSafe"),
+    statPct: document.getElementById("statPct"),
+    statFlow: document.getElementById("statFlow"),
+    statCong: document.getElementById("statCong"),
+    statExits: document.getElementById("statExits"),
+    barPct: document.getElementById("barPct"),
+    barFlow: document.getElementById("barFlow"),
+    barCong: document.getElementById("barCong"),
+    barExits: document.getElementById("barExits"),
+    a11y: document.getElementById("a11yAnn"),
+  };
+
+  const CELL = 16;
+  const AGENT_R = 4.2;
+
+  const state = {
+    running: true,
+    alarmed: false,
+    toolBlock: false,
+    elapsed: 0,
+    safeCount: 0,
+    totalSpawned: 0,
+    flowWindow: [],
+    congestion: 0,
+    scenario: "office",
+    crowdTarget: 140,
+    simSpeed: 1,
+    panic: 0.35,
+    cols: 0,
+    rows: 0,
+    worldW: 0,
+    worldH: 0,
+    walls: null,
+    field: null,
+    fieldValid: false,
+    exits: [],
+    hazards: [],
+    agents: [],
+    particles: [],
+    barriers: [],
+    lights: [],
+    decor: [],
+    dpr: 1,
+    cssW: 0,
+    cssH: 0,
+    cameraShake: 0,
+    alarmPulse: 0,
+    complete: false,
+    pointer: { x: 0, y: 0, down: false },
+  };
+
+  const SCENARIOS = {
+    office: {
+      name: "Office Floor",
+      exits: [
+        { x: 2, y: 14, w: 2, h: 4 },
+        { x: 46, y: 14, w: 2, h: 4 },
+      ],
+      walls: (set) => {
+        // Outer frame handled separately; interior desks & rooms
+        rect(set, 8, 4, 10, 1);
+        rect(set, 8, 4, 1, 8);
+        rect(set, 18, 4, 1, 8);
+        rect(set, 8, 12, 5, 1);
+        rect(set, 14, 12, 5, 1);
+
+        rect(set, 24, 3, 12, 1);
+        rect(set, 24, 3, 1, 10);
+        rect(set, 35, 3, 1, 10);
+        rect(set, 24, 13, 5, 1);
+        rect(set, 31, 13, 5, 1);
+
+        rect(set, 10, 18, 14, 1);
+        rect(set, 10, 18, 1, 7);
+        rect(set, 23, 18, 1, 7);
+        rect(set, 10, 25, 6, 1);
+        rect(set, 18, 25, 6, 1);
+
+        rect(set, 28, 18, 12, 1);
+        rect(set, 28, 18, 1, 7);
+        rect(set, 39, 18, 1, 7);
+        rect(set, 28, 25, 5, 1);
+        rect(set, 35, 25, 5, 1);
+
+        // Cubicle islands
+        for (let i = 0; i < 4; i++) {
+          rect(set, 12 + i * 6, 8, 3, 2);
+          rect(set, 14 + i * 5, 20, 2, 3);
+        }
+      },
+      hazards: [{ x: 22, y: 10, r: 28, grow: 0.015 }],
+      spawnZones: [
+        [9, 5, 8, 6],
+        [25, 4, 9, 8],
+        [11, 19, 11, 5],
+        [29, 19, 9, 5],
+        [4, 8, 3, 10],
+        [42, 8, 3, 10],
+      ],
+      lights: [
+        [12, 8], [30, 8], [16, 22], [34, 22], [25, 15],
+      ],
+    },
+    lobby: {
+      name: "Transit Lobby",
+      exits: [
+        { x: 22, y: 1, w: 6, h: 2 },
+        { x: 1, y: 20, w: 2, h: 4 },
+        { x: 47, y: 20, w: 2, h: 4 },
+      ],
+      walls: (set) => {
+        rect(set, 8, 6, 8, 2);
+        rect(set, 34, 6, 8, 2);
+        rect(set, 18, 10, 14, 3);
+        rect(set, 10, 16, 4, 8);
+        rect(set, 36, 16, 4, 8);
+        rect(set, 20, 22, 10, 2);
+        // Ticket pillars
+        for (let i = 0; i < 5; i++) {
+          rect(set, 14 + i * 5, 14, 2, 2);
+        }
+      },
+      hazards: [
+        { x: 25, y: 18, r: 22, grow: 0.02 },
+        { x: 12, y: 10, r: 18, grow: 0.01 },
+      ],
+      spawnZones: [
+        [9, 9, 8, 4],
+        [33, 9, 8, 4],
+        [15, 17, 20, 4],
+        [4, 6, 4, 10],
+        [42, 6, 4, 10],
+        [20, 4, 10, 4],
+      ],
+      lights: [[12, 12], [38, 12], [25, 8], [25, 20], [8, 22], [42, 22]],
+    },
+    gallery: {
+      name: "Museum Gallery",
+      exits: [
+        { x: 23, y: 28, w: 4, h: 2 },
+        { x: 1, y: 8, w: 2, h: 3 },
+        { x: 47, y: 8, w: 2, h: 3 },
+      ],
+      walls: (set) => {
+        // Gallery rooms / exhibits
+        rect(set, 6, 4, 12, 1);
+        rect(set, 6, 4, 1, 10);
+        rect(set, 17, 4, 1, 6);
+        rect(set, 6, 14, 8, 1);
+
+        rect(set, 32, 4, 12, 1);
+        rect(set, 32, 4, 1, 6);
+        rect(set, 43, 4, 1, 10);
+        rect(set, 36, 14, 8, 1);
+
+        rect(set, 16, 10, 18, 1);
+        rect(set, 16, 10, 1, 8);
+        rect(set, 33, 10, 1, 8);
+        rect(set, 20, 18, 10, 1);
+
+        // Pedestals
+        for (let i = 0; i < 3; i++) {
+          rect(set, 10 + i * 4, 20, 2, 2);
+          rect(set, 30 + i * 4, 20, 2, 2);
+        }
+        rect(set, 22, 22, 6, 3);
+      },
+      hazards: [{ x: 25, y: 14, r: 26, grow: 0.012 }],
+      spawnZones: [
+        [7, 5, 9, 8],
+        [33, 5, 9, 8],
+        [18, 12, 14, 5],
+        [8, 18, 8, 6],
+        [34, 18, 8, 6],
+        [20, 6, 10, 3],
+      ],
+      lights: [[12, 8], [38, 8], [25, 14], [12, 22], [38, 22], [25, 24]],
+    },
+  };
+
+  function rect(set, x, y, w, h) {
+    for (let j = y; j < y + h; j++) {
+      for (let i = x; i < x + w; i++) {
+        if (i >= 0 && j >= 0 && i < state.cols && j < state.rows) {
+          set[j * state.cols + i] = 1;
+        }
+      }
+    }
+  }
+
+  function idx(x, y) {
+    return y * state.cols + x;
+  }
+
+  function inBounds(x, y) {
+    return x >= 0 && y >= 0 && x < state.cols && y < state.rows;
+  }
+
+  function isBlocked(gx, gy) {
+    if (!inBounds(gx, gy)) return true;
+    return state.walls[idx(gx, gy)] === 1;
+  }
+
+  function worldToGrid(x, y) {
+    return [Math.floor(x / CELL), Math.floor(y / CELL)];
+  }
+
+  function toast(msg) {
+    ui.toast.textContent = msg;
+    ui.toast.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => ui.toast.classList.remove("show"), 2200);
+  }
+
+  function announce(msg) {
+    if (ui.a11y) ui.a11y.textContent = msg;
+  }
+
+  function setStatus(label, alarmed) {
+    const strong = ui.pillState.querySelector("strong");
+    strong.textContent = label;
+    ui.pillState.classList.toggle("alarm", !!alarmed);
+  }
+
+  function resize() {
+    const shell = canvas.parentElement;
+    const rect = shell.getBoundingClientRect();
+    state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.cssW = rect.width;
+    state.cssH = rect.height;
+    canvas.width = Math.max(1, Math.floor(rect.width * state.dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * state.dpr));
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+
+    // Fit grid into view with letterboxing feel
+    const targetCols = 50;
+    const targetRows = 32;
+    state.cols = targetCols;
+    state.rows = targetRows;
+    state.worldW = targetCols * CELL;
+    state.worldH = targetRows * CELL;
+  }
+
+  function buildMap() {
+    const sc = SCENARIOS[state.scenario];
+    state.walls = new Uint8Array(state.cols * state.rows);
+    // Border walls
+    for (let x = 0; x < state.cols; x++) {
+      state.walls[idx(x, 0)] = 1;
+      state.walls[idx(x, state.rows - 1)] = 1;
+    }
+    for (let y = 0; y < state.rows; y++) {
+      state.walls[idx(0, y)] = 1;
+      state.walls[idx(state.cols - 1, y)] = 1;
+    }
+    sc.walls(state.walls);
+
+    // Punch exits through border
+    state.exits = sc.exits.map((e) => ({ ...e }));
+    for (const e of state.exits) {
+      for (let j = e.y; j < e.y + e.h; j++) {
+        for (let i = e.x; i < e.x + e.w; i++) {
+          if (inBounds(i, j)) state.walls[idx(i, j)] = 0;
+        }
+      }
+    }
+
+    // Apply barriers
+    for (const b of state.barriers) {
+      if (inBounds(b.x, b.y)) state.walls[idx(b.x, b.y)] = 1;
+    }
+
+    state.hazards = sc.hazards.map((h) => ({
+      x: h.x * CELL + CELL / 2,
+      y: h.y * CELL + CELL / 2,
+      r: h.r,
+      baseR: h.r,
+      grow: h.grow,
+    }));
+    state.lights = sc.lights.map(([x, y]) => ({
+      x: x * CELL + CELL / 2,
+      y: y * CELL + CELL / 2,
+    }));
+
+    state.fieldValid = false;
+    computeField();
+  }
+
+  function computeField() {
+    const n = state.cols * state.rows;
+    const dist = new Float32Array(n);
+    dist.fill(1e9);
+    const qx = new Int16Array(n);
+    const qy = new Int16Array(n);
+    let qh = 0, qt = 0;
+
+    for (const e of state.exits) {
+      for (let j = e.y; j < e.y + e.h; j++) {
+        for (let i = e.x; i < e.x + e.w; i++) {
+          if (!inBounds(i, j) || state.walls[idx(i, j)]) continue;
+          const id = idx(i, j);
+          dist[id] = 0;
+          qx[qt] = i;
+          qy[qt] = j;
+          qt++;
+        }
+      }
+    }
+
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    const costs = [1, 1, 1, 1, 1.414, 1.414, 1.414, 1.414];
+
+    while (qh < qt) {
+      const cx = qx[qh];
+      const cy = qy[qh];
+      qh++;
+      const cd = dist[idx(cx, cy)];
+      for (let d = 0; d < 8; d++) {
+        const nx = cx + dirs[d][0];
+        const ny = cy + dirs[d][1];
+        if (!inBounds(nx, ny) || state.walls[idx(nx, ny)]) continue;
+        // Prevent corner cutting through walls
+        if (d >= 4) {
+          if (state.walls[idx(cx + dirs[d][0], cy)] || state.walls[idx(cx, cy + dirs[d][1])]) continue;
+        }
+        const nid = idx(nx, ny);
+        const nd = cd + costs[d];
+        if (nd < dist[nid]) {
+          dist[nid] = nd;
+          qx[qt] = nx;
+          qy[qt] = ny;
+          qt++;
+        }
+      }
+    }
+
+    state.field = dist;
+    state.fieldValid = true;
+  }
+
+  function randomInZone(zone) {
+    const [x, y, w, h] = zone;
+    for (let tries = 0; tries < 40; tries++) {
+      const gx = x + Math.floor(Math.random() * w);
+      const gy = y + Math.floor(Math.random() * h);
+      if (!isBlocked(gx, gy) && state.field[idx(gx, gy)] < 1e8) {
+        return {
+          x: gx * CELL + CELL * (0.25 + Math.random() * 0.5),
+          y: gy * CELL + CELL * (0.25 + Math.random() * 0.5),
+        };
+      }
+    }
+    return null;
+  }
+
+  function spawnAgents(count) {
+    const sc = SCENARIOS[state.scenario];
+    const zones = sc.spawnZones;
+    let created = 0;
+    let guard = 0;
+    while (created < count && guard < count * 20) {
+      guard++;
+      const zone = zones[Math.floor(Math.random() * zones.length)];
+      const p = randomInZone(zone);
+      if (!p) continue;
+      // Avoid stacking on existing agents
+      let ok = true;
+      for (const a of state.agents) {
+        if (a.alive && (a.x - p.x) ** 2 + (a.y - p.y) ** 2 < (AGENT_R * 2.2) ** 2) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      const hue = 195 + Math.random() * 40;
+      state.agents.push({
+        x: p.x,
+        y: p.y,
+        vx: 0,
+        vy: 0,
+        facing: Math.random() * Math.PI * 2,
+        speed: 38 + Math.random() * 28,
+        radius: AGENT_R * (0.85 + Math.random() * 0.3),
+        panic: state.panic * (0.6 + Math.random() * 0.8),
+        delay: Math.random() * 1.8,
+        alive: true,
+        escaped: false,
+        hue,
+        trail: [],
+      });
+      created++;
+    }
+    state.totalSpawned = state.agents.length;
+  }
+
+  function resetSim(keepBarriers = true) {
+    if (!keepBarriers) state.barriers = [];
+    state.elapsed = 0;
+    state.safeCount = 0;
+    state.flowWindow = [];
+    state.congestion = 0;
+    state.alarmed = false;
+    state.complete = false;
+    state.cameraShake = 0;
+    state.alarmPulse = 0;
+    state.agents = [];
+    state.particles = [];
+    state.running = true;
+    ui.btnPause.textContent = "Pause";
+    ui.alarmFlash.classList.remove("on");
+    setStatus("Standby", false);
+    ui.btnAlarm.textContent = "Sound Alarm";
+    buildMap();
+    spawnAgents(state.crowdTarget);
+    updateMetrics(0);
+    toast(`${SCENARIOS[state.scenario].name} ready`);
+    announce(`Scenario ${SCENARIOS[state.scenario].name} loaded with ${state.agents.length} people.`);
+  }
+
+  function soundAlarm() {
+    if (state.complete) return;
+    state.alarmed = true;
+    state.cameraShake = reducedMotion ? 0 : 6;
+    ui.alarmFlash.classList.add("on");
+    setStatus("EVACUATING", true);
+    ui.btnAlarm.textContent = "Alarm Active";
+    toast("Emergency alarm — evacuate now");
+    announce("Alarm sounded. Evacuation in progress.");
+    // Burst of particles at hazards
+    for (const h of state.hazards) {
+      for (let i = 0; i < 24; i++) spawnParticle(h.x, h.y, "ember");
+    }
+  }
+
+  function spawnParticle(x, y, kind) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = kind === "ember" ? 20 + Math.random() * 50 : 8 + Math.random() * 25;
+    state.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - (kind === "smoke" ? 15 : 0),
+      life: 0.6 + Math.random() * 1.2,
+      max: 0.6 + Math.random() * 1.2,
+      kind,
+      size: kind === "smoke" ? 6 + Math.random() * 10 : 2 + Math.random() * 3,
+    });
+  }
+
+  function sampleFieldGrad(x, y) {
+    const gx = x / CELL;
+    const gy = y / CELL;
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const get = (ix, iy) => {
+      if (!inBounds(ix, iy) || state.walls[idx(ix, iy)]) return 1e6;
+      return state.field[idx(ix, iy)];
+    };
+    // Finite difference on neighboring cells
+    const dx = get(x0 + 1, y0) - get(x0 - 1, y0);
+    const dy = get(x0, y0 + 1) - get(x0, y0 - 1);
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: -dx / len, y: -dy / len, d: get(x0, y0) };
+  }
+
+  function nearestExitCenter(agent) {
+    let best = null, bestD = Infinity;
+    for (const e of state.exits) {
+      const ex = (e.x + e.w / 2) * CELL;
+      const ey = (e.y + e.h / 2) * CELL;
+      const d = (ex - agent.x) ** 2 + (ey - agent.y) ** 2;
+      if (d < bestD) { bestD = d; best = { x: ex, y: ey }; }
+    }
+    return best;
+  }
+
+  function updateAgents(dt) {
+    if (!state.alarmed) {
+      // Idle milling
+      for (const a of state.agents) {
+        if (!a.alive) continue;
+        a.vx += (Math.random() - 0.5) * 20 * dt;
+        a.vy += (Math.random() - 0.5) * 20 * dt;
+        a.vx *= 0.92;
+        a.vy *= 0.92;
+        integrateAgent(a, dt * 0.35);
+      }
+      return;
+    }
+
+    let pressureSamples = 0;
+    let pressureSum = 0;
+    const neighbors = buildSpatialHash();
+
+    for (const a of state.agents) {
+      if (!a.alive || a.escaped) continue;
+      if (a.delay > 0) {
+        a.delay -= dt;
+        continue;
+      }
+
+      const grad = sampleFieldGrad(a.x, a.y);
+      if (grad.d > 1e8) {
+        // Stuck — drift toward nearest exit
+        const ex = nearestExitCenter(a);
+        if (ex) {
+          const dx = ex.x - a.x, dy = ex.y - a.y;
+          const L = Math.hypot(dx, dy) || 1;
+          a.vx += (dx / L) * a.speed * 0.5 * dt;
+          a.vy += (dy / L) * a.speed * 0.5 * dt;
+        }
+      } else {
+        const panicBoost = 1 + a.panic * 0.85;
+        const jitter = a.panic * 35;
+        a.vx += (grad.x * a.speed * panicBoost + (Math.random() - 0.5) * jitter) * dt * 3.2;
+        a.vy += (grad.y * a.speed * panicBoost + (Math.random() - 0.5) * jitter) * dt * 3.2;
+      }
+
+      // Separation
+      const cellKey = `${Math.floor(a.x / 28)},${Math.floor(a.y / 28)}`;
+      const bucket = neighbors.get(cellKey) || [];
+      let nearby = 0;
+      for (const b of bucket) {
+        if (b === a || !b.alive) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist2 = dx * dx + dy * dy;
+        const minD = a.radius + b.radius + 1.5;
+        if (dist2 < minD * minD && dist2 > 0.01) {
+          nearby++;
+          const dist = Math.sqrt(dist2);
+          const push = (minD - dist) / minD;
+          a.vx += (dx / dist) * push * 90 * dt;
+          a.vy += (dy / dist) * push * 90 * dt;
+        }
+      }
+      pressureSum += nearby;
+      pressureSamples++;
+
+      // Hazard repulsion
+      for (const h of state.hazards) {
+        const dx = a.x - h.x;
+        const dy = a.y - h.y;
+        const d = Math.hypot(dx, dy);
+        if (d < h.r + 40) {
+          const force = (1 - d / (h.r + 40)) * 120;
+          a.vx += (dx / (d || 1)) * force * dt;
+          a.vy += (dy / (d || 1)) * force * dt;
+          if (d < h.r * 0.55) {
+            a.panic = Math.min(1, a.panic + dt * 0.4);
+            a.speed *= 0.997;
+          }
+        }
+      }
+
+      // Speed clamp with congestion drag
+      const drag = 1 / (1 + nearby * 0.18);
+      const maxSp = a.speed * (1 + a.panic * 0.5) * drag;
+      const sp = Math.hypot(a.vx, a.vy);
+      if (sp > maxSp) {
+        a.vx = (a.vx / sp) * maxSp;
+        a.vy = (a.vy / sp) * maxSp;
+      }
+
+      integrateAgent(a, dt);
+
+      if (sp > 8) {
+        a.facing = Math.atan2(a.vy, a.vx);
+      }
+
+      // Trails
+      if (!reducedMotion && Math.random() < 0.3) {
+        a.trail.push({ x: a.x, y: a.y, life: 0.35 });
+        if (a.trail.length > 6) a.trail.shift();
+      }
+      for (let t = a.trail.length - 1; t >= 0; t--) {
+        a.trail[t].life -= dt;
+        if (a.trail[t].life <= 0) a.trail.splice(t, 1);
+      }
+
+      // Escape check
+      for (const e of state.exits) {
+        const x0 = e.x * CELL, y0 = e.y * CELL;
+        const x1 = (e.x + e.w) * CELL, y1 = (e.y + e.h) * CELL;
+        if (a.x > x0 && a.x < x1 && a.y > y0 && a.y < y1) {
+          a.escaped = true;
+          a.alive = false;
+          state.safeCount++;
+          state.flowWindow.push(state.elapsed);
+          for (let i = 0; i < 8; i++) spawnParticle(a.x, a.y, "spark");
+          break;
+        }
+      }
+    }
+
+    state.congestion = pressureSamples ? pressureSum / pressureSamples : 0;
+
+    // Completion
+    const inside = state.agents.filter((a) => a.alive).length;
+    if (state.alarmed && inside === 0 && !state.complete) {
+      state.complete = true;
+      ui.alarmFlash.classList.remove("on");
+      setStatus("Clear", false);
+      toast(`Floor clear in ${state.elapsed.toFixed(1)}s`);
+      announce(`Evacuation complete in ${state.elapsed.toFixed(1)} seconds.`);
+    }
+  }
+
+  function buildSpatialHash() {
+    const map = new Map();
+    for (const a of state.agents) {
+      if (!a.alive) continue;
+      const cx = Math.floor(a.x / 28);
+      const cy = Math.floor(a.y / 28);
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const key = `${cx + ox},${cy + oy}`;
+          if (!map.has(key)) map.set(key, []);
+          map.get(key).push(a);
+        }
+      }
+    }
+    return map;
+  }
+
+  function integrateAgent(a, dt) {
+    let nx = a.x + a.vx * dt;
+    let ny = a.y + a.vy * dt;
+
+    // Collision with walls via grid
+    const tryMove = (x, y) => {
+      const [gx, gy] = worldToGrid(x, y);
+      if (!isBlocked(gx, gy)) {
+        // Also check radius samples
+        const r = a.radius;
+        const samples = [[r, 0], [-r, 0], [0, r], [0, -r]];
+        for (const [sx, sy] of samples) {
+          const [sgx, sgy] = worldToGrid(x + sx, y + sy);
+          if (isBlocked(sgx, sgy)) return false;
+        }
+        return true;
+      }
+      return false;
+    };
+
+    if (tryMove(nx, ny)) {
+      a.x = nx;
+      a.y = ny;
+    } else if (tryMove(nx, a.y)) {
+      a.x = nx;
+      a.vy *= -0.3;
+    } else if (tryMove(a.x, ny)) {
+      a.y = ny;
+      a.vx *= -0.3;
+    } else {
+      a.vx *= -0.4;
+      a.vy *= -0.4;
+    }
+
+    a.vx *= 0.96;
+    a.vy *= 0.96;
+  }
+
+  function updateHazards(dt) {
+    if (!state.alarmed) return;
+    for (const h of state.hazards) {
+      h.r = Math.min(h.baseR * 2.4, h.r + h.grow * h.baseR * dt);
+      if (!reducedMotion && Math.random() < 0.5) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = Math.random() * h.r;
+        spawnParticle(h.x + Math.cos(a) * rr, h.y + Math.sin(a) * rr, Math.random() < 0.4 ? "ember" : "smoke");
+      }
+    }
+  }
+
+  function updateParticles(dt) {
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const p = state.particles[i];
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.kind === "smoke") {
+        p.vx *= 0.98;
+        p.vy -= 8 * dt;
+        p.size += 6 * dt;
+      } else {
+        p.vx *= 0.96;
+        p.vy *= 0.96;
+      }
+      if (p.life <= 0) state.particles.splice(i, 1);
+    }
+    if (state.particles.length > 400) state.particles.splice(0, state.particles.length - 400);
+  }
+
+  function updateMetrics(dt) {
+    const inside = state.agents.filter((a) => a.alive).length;
+    const total = Math.max(1, state.totalSpawned);
+    const pct = Math.round((state.safeCount / total) * 100);
+    ui.statInside.textContent = String(inside);
+    ui.statSafe.textContent = String(state.safeCount);
+    ui.statTime.textContent = state.elapsed.toFixed(1) + "s";
+    ui.statPct.textContent = pct + "%";
+    ui.barPct.style.width = pct + "%";
+
+    // Flow in last 5s
+    const t = state.elapsed;
+    state.flowWindow = state.flowWindow.filter((ft) => t - ft <= 5);
+    const flow = state.flowWindow.length;
+    ui.statFlow.textContent = String(flow);
+    ui.barFlow.style.width = Math.min(100, flow * 4) + "%";
+
+    const cong = state.congestion;
+    ui.statCong.textContent = cong < 1.2 ? "Low" : cong < 2.4 ? "Medium" : "High";
+    ui.barCong.style.width = Math.min(100, cong * 22) + "%";
+
+    ui.statExits.textContent = String(state.exits.length);
+    ui.barExits.style.width = (state.exits.length / 3) * 100 + "%";
+  }
+
+  function mapOffset() {
+    const scale = Math.min(state.cssW / state.worldW, state.cssH / state.worldH) * 0.94;
+    const ox = (state.cssW - state.worldW * scale) / 2;
+    const oy = (state.cssH - state.worldH * scale) / 2;
+    let shakeX = 0, shakeY = 0;
+    if (state.cameraShake > 0 && !reducedMotion) {
+      shakeX = (Math.random() - 0.5) * state.cameraShake;
+      shakeY = (Math.random() - 0.5) * state.cameraShake;
+    }
+    return { scale, ox: ox + shakeX, oy: oy + shakeY };
+  }
+
+  function screenToWorld(sx, sy) {
+    const { scale, ox, oy } = mapOffset();
+    return {
+      x: (sx - ox) / scale,
+      y: (sy - oy) / scale,
+    };
+  }
+
+  function draw() {
+    const w = state.cssW;
+    const h = state.cssH;
+    ctx.fillStyle = "#05070b";
+    ctx.fillRect(0, 0, w, h);
+
+    const { scale, ox, oy } = mapOffset();
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(scale, scale);
+
+    // Floor
+    const floorGrad = ctx.createLinearGradient(0, 0, state.worldW, state.worldH);
+    floorGrad.addColorStop(0, "#121822");
+    floorGrad.addColorStop(0.5, "#0e141d");
+    floorGrad.addColorStop(1, "#101820");
+    ctx.fillStyle = floorGrad;
+    ctx.fillRect(0, 0, state.worldW, state.worldH);
+
+    // Subtle grid
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.045)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= state.cols; x++) {
+      ctx.moveTo(x * CELL, 0);
+      ctx.lineTo(x * CELL, state.worldH);
+    }
+    for (let y = 0; y <= state.rows; y++) {
+      ctx.moveTo(0, y * CELL);
+      ctx.lineTo(state.worldW, y * CELL);
+    }
+    ctx.stroke();
+
+    // Distance field wash (subtle)
+    if (state.field && state.alarmed) {
+      for (let y = 1; y < state.rows - 1; y += 2) {
+        for (let x = 1; x < state.cols - 1; x += 2) {
+          if (state.walls[idx(x, y)]) continue;
+          const d = state.field[idx(x, y)];
+          if (d > 1e8) continue;
+          const t = Math.min(1, d / 45);
+          ctx.fillStyle = `rgba(56, 189, 248, ${0.03 * (1 - t)})`;
+          ctx.fillRect(x * CELL, y * CELL, CELL * 2, CELL * 2);
+        }
+      }
+    }
+
+    // Walls with depth
+    drawWalls();
+
+    // Ambient lights
+    for (const L of state.lights) {
+      const pulse = state.alarmed
+        ? 0.55 + Math.sin(state.alarmPulse * 6 + L.x * 0.01) * 0.25
+        : 0.35;
+      const g = ctx.createRadialGradient(L.x, L.y, 4, L.x, L.y, 70);
+      const col = state.alarmed ? `rgba(245, 158, 11, ${0.14 * pulse})` : `rgba(125, 160, 200, ${0.1 * pulse})`;
+      g.addColorStop(0, col);
+      g.addColorStop(1, "transparent");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(L.x, L.y, 70, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Hazards
+    for (const hz of state.hazards) {
+      const g = ctx.createRadialGradient(hz.x, hz.y, 0, hz.x, hz.y, hz.r);
+      g.addColorStop(0, "rgba(239, 68, 68, 0.45)");
+      g.addColorStop(0.45, "rgba(245, 158, 11, 0.18)");
+      g.addColorStop(1, "transparent");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(hz.x, hz.y, hz.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(239, 68, 68, ${0.25 + Math.sin(state.alarmPulse * 5) * 0.15})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(hz.x, hz.y, hz.r * 0.72, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Exits
+    for (const e of state.exits) {
+      const x = e.x * CELL, y = e.y * CELL;
+      const bw = e.w * CELL, bh = e.h * CELL;
+      const glow = ctx.createRadialGradient(x + bw / 2, y + bh / 2, 2, x + bw / 2, y + bh / 2, Math.max(bw, bh) * 1.8);
+      glow.addColorStop(0, "rgba(34, 211, 238, 0.55)");
+      glow.addColorStop(0.5, "rgba(34, 211, 238, 0.12)");
+      glow.addColorStop(1, "transparent");
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 20, y - 20, bw + 40, bh + 40);
+
+      ctx.fillStyle = "rgba(34, 211, 238, 0.35)";
+      ctx.fillRect(x, y, bw, bh);
+      ctx.strokeStyle = "rgba(165, 243, 252, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+
+      ctx.fillStyle = "rgba(224, 255, 255, 0.9)";
+      ctx.font = "bold 9px Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("EXIT", x + bw / 2, y + bh / 2);
+    }
+
+    // Particles under agents
+    for (const p of state.particles) {
+      const alpha = Math.max(0, p.life / p.max);
+      if (p.kind === "smoke") {
+        ctx.fillStyle = `rgba(120, 130, 145, ${alpha * 0.22})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === "ember") {
+        ctx.fillStyle = `rgba(251, 146, 60, ${alpha * 0.9})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = `rgba(34, 211, 238, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Agents
+    for (const a of state.agents) {
+      if (!a.alive) continue;
+
+      // Trail
+      for (const t of a.trail) {
+        ctx.fillStyle = `hsla(${a.hue}, 70%, 65%, ${t.life * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, a.radius * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const body = `hsl(${a.hue}, ${state.alarmed ? 75 : 35}%, ${state.alarmed ? 62 : 55}%)`;
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, a.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Facing notch
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(a.x + Math.cos(a.facing) * a.radius * 1.35, a.y + Math.sin(a.facing) * a.radius * 1.35);
+      ctx.stroke();
+
+      if (a.panic > 0.55 && state.alarmed) {
+        ctx.strokeStyle = `rgba(239, 68, 68, ${0.25 + a.panic * 0.4})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, a.radius + 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // Barrier ghost under cursor
+    if (state.toolBlock && state.pointer.inside) {
+      const [gx, gy] = worldToGrid(state.pointer.wx, state.pointer.wy);
+      if (inBounds(gx, gy)) {
+        ctx.fillStyle = "rgba(245, 158, 11, 0.35)";
+        ctx.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+      }
+    }
+
+    ctx.restore();
+
+    // Frame border accent
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.08)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, w - 2, h - 2);
+  }
+
+  function drawWalls() {
+    // Soft shadow pass
+    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    for (let y = 0; y < state.rows; y++) {
+      for (let x = 0; x < state.cols; x++) {
+        if (!state.walls[idx(x, y)]) continue;
+        ctx.fillRect(x * CELL + 2, y * CELL + 3, CELL, CELL);
+      }
+    }
+
+    for (let y = 0; y < state.rows; y++) {
+      for (let x = 0; x < state.cols; x++) {
+        if (!state.walls[idx(x, y)]) continue;
+        const isBarrier = state.barriers.some((b) => b.x === x && b.y === y);
+        if (isBarrier) {
+          ctx.fillStyle = "#3a2a14";
+          ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+          ctx.strokeStyle = "rgba(245, 158, 11, 0.55)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x * CELL + 1.5, y * CELL + 1.5, CELL - 3, CELL - 3);
+        } else {
+          const edge = x === 0 || y === 0 || x === state.cols - 1 || y === state.rows - 1;
+          ctx.fillStyle = edge ? "#1c2433" : "#252e3f";
+          ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+          ctx.fillStyle = "rgba(255,255,255,0.04)";
+          ctx.fillRect(x * CELL, y * CELL, CELL, 2);
+        }
+      }
+    }
+  }
+
+  function toggleBarrierAt(wx, wy) {
+    const [gx, gy] = worldToGrid(wx, wy);
+    if (!inBounds(gx, gy)) return;
+    // Don't block exits
+    for (const e of state.exits) {
+      if (gx >= e.x && gx < e.x + e.w && gy >= e.y && gy < e.y + e.h) {
+        toast("Cannot block an exit");
+        return;
+      }
+    }
+    // Don't toggle outer border
+    if (gx === 0 || gy === 0 || gx === state.cols - 1 || gy === state.rows - 1) return;
+
+    const i = state.barriers.findIndex((b) => b.x === gx && b.y === gy);
+    if (i >= 0) {
+      state.barriers.splice(i, 1);
+    } else {
+      // Only place on open floor (or replace furniture? allow open cells)
+      if (state.walls[idx(gx, gy)] && !state.barriers.some((b) => b.x === gx && b.y === gy)) {
+        toast("Cell occupied");
+        return;
+      }
+      state.barriers.push({ x: gx, y: gy });
+    }
+    buildMap();
+    // Keep agents; just refresh field/walls
+  }
+
+  // Loop
+  let last = performance.now();
+  function frame(now) {
+    const raw = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const dt = raw * state.simSpeed;
+
+    if (state.running) {
+      if (state.alarmed && !state.complete) state.elapsed += dt;
+      state.alarmPulse += dt;
+      if (state.cameraShake > 0) state.cameraShake = Math.max(0, state.cameraShake - dt * 10);
+      updateAgents(dt);
+      updateHazards(dt);
+      updateParticles(dt);
+      updateMetrics(dt);
+    }
+
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // Events
+  ui.btnBegin.addEventListener("click", () => {
+    ui.intro.classList.add("hide");
+    announce("Simulation floor plan open.");
+  });
+
+  ui.btnAlarm.addEventListener("click", () => {
+    if (!state.alarmed) soundAlarm();
+  });
+
+  ui.btnPause.addEventListener("click", () => {
+    state.running = !state.running;
+    ui.btnPause.textContent = state.running ? "Pause" : "Resume";
+  });
+
+  ui.btnReset.addEventListener("click", () => resetSim(true));
+
+  ui.btnBlock.addEventListener("click", () => {
+    state.toolBlock = !state.toolBlock;
+    ui.btnBlock.classList.toggle("active", state.toolBlock);
+    toast(state.toolBlock ? "Barrier tool on — click floor" : "Barrier tool off");
+  });
+
+  ui.btnClearBlocks.addEventListener("click", () => {
+    state.barriers = [];
+    buildMap();
+    toast("Barriers cleared");
+  });
+
+  ui.scenario.addEventListener("change", () => {
+    state.scenario = ui.scenario.value;
+    resetSim(false);
+  });
+
+  function syncSliders() {
+    state.crowdTarget = Number(ui.crowd.value);
+    state.simSpeed = Number(ui.speed.value);
+    state.panic = Number(ui.panic.value) / 100;
+    ui.crowdOut.textContent = String(state.crowdTarget);
+    ui.speedOut.textContent = state.simSpeed.toFixed(1) + "×";
+    ui.panicOut.textContent = Math.round(state.panic * 100) + "%";
+  }
+
+  ui.crowd.addEventListener("input", syncSliders);
+  ui.speed.addEventListener("input", syncSliders);
+  ui.panic.addEventListener("input", () => {
+    syncSliders();
+    for (const a of state.agents) {
+      if (a.alive) a.panic = state.panic * (0.6 + Math.random() * 0.8);
+    }
+  });
+
+  canvas.addEventListener("pointermove", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = ev.clientX - rect.left;
+    const sy = ev.clientY - rect.top;
+    const w = screenToWorld(sx, sy);
+    state.pointer.x = sx;
+    state.pointer.y = sy;
+    state.pointer.wx = w.x;
+    state.pointer.wy = w.y;
+    state.pointer.inside = true;
+  });
+
+  canvas.addEventListener("pointerleave", () => {
+    state.pointer.inside = false;
+  });
+
+  canvas.addEventListener("pointerdown", (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const w = screenToWorld(ev.clientX - rect.left, ev.clientY - rect.top);
+    if (state.toolBlock) {
+      toggleBarrierAt(w.x, w.y);
+    } else if (!state.alarmed) {
+      soundAlarm();
+    }
+  });
+
+  window.addEventListener("keydown", (ev) => {
+    if (ev.target && /INPUT|SELECT|TEXTAREA/.test(ev.target.tagName)) return;
+    if (ev.code === "Space") {
+      ev.preventDefault();
+      if (!state.alarmed) soundAlarm();
+      else {
+        state.running = !state.running;
+        ui.btnPause.textContent = state.running ? "Pause" : "Resume";
+      }
+    } else if (ev.key === "r" || ev.key === "R") {
+      resetSim(true);
+    } else if (ev.key === "b" || ev.key === "B") {
+      state.toolBlock = !state.toolBlock;
+      ui.btnBlock.classList.toggle("active", state.toolBlock);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    resize();
+    // Rebuild keeps barriers & agents positions roughly valid
+    buildMap();
+  });
+
+  // Boot
+  resize();
+  syncSliders();
+  resetSim(false);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
