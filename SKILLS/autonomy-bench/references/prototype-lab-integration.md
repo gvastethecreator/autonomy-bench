@@ -17,7 +17,7 @@ Generate one Prototype Lab spec for each **benchmark + prompt level**. Model and
 
 ## Provenance
 
-Prototype Lab's canonical worker receipt remains authoritative for its execution. Store its path/hash in the Autonomy Bench cell receipt under `externalReceipts`; do not silently translate missing fields.
+Prototype Lab's canonical worker receipt remains authoritative for its execution. Store its path/hash in the Autonomy Bench cell receipt under `externalReceipts`; do not silently translate missing fields. Copy generation time and token spend onto the Autonomy Bench receipt when Prototype Lab recorded them.
 
 ## Isolation
 

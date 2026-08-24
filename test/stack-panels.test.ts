@@ -47,11 +47,27 @@ describe('shouldReuseSource', () => {
 describe('receiptBindKey', () => {
   it('changes when the cell receipt changes', () => {
     const a = receiptBindKey(
-      { receipt: { status: 'complete', completedAt: 't1', durationMs: 10, effectiveModel: 'g', requestedModel: 'g' } },
+      {
+        receipt: {
+          status: 'complete',
+          completedAt: 't1',
+          durationMs: 10,
+          effectiveModel: 'g',
+          requestedModel: 'g',
+        },
+      },
       'grok-4.6 A',
     );
     const b = receiptBindKey(
-      { receipt: { status: 'complete', completedAt: 't2', durationMs: 10, effectiveModel: 'g', requestedModel: 'g' } },
+      {
+        receipt: {
+          status: 'complete',
+          completedAt: 't2',
+          durationMs: 10,
+          effectiveModel: 'g',
+          requestedModel: 'g',
+        },
+      },
       'grok-4.6 A',
     );
     expect(a).not.toBe(b);

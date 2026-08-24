@@ -1,5 +1,7 @@
 function pickKey(experiment, level) {
-  return `${String(experiment || '').trim()}-${String(level || '').trim().toUpperCase()}`;
+  return `${String(experiment || '').trim()}-${String(level || '')
+    .trim()
+    .toUpperCase()}`;
 }
 
 /** Preferred model when several takes exist. Rollercoaster A stays on grok-4.6. */
@@ -52,7 +54,8 @@ export function staffPicksFromCells(cells) {
   for (const cell of cells || []) {
     if (!cell || !cell.src || !cell.experiment || !cell.level) continue;
     const key = pickKey(cell.experiment, cell.level);
-    if (!groups.has(key)) groups.set(key, { experiment: cell.experiment, level: cell.level, ids: [] });
+    if (!groups.has(key))
+      groups.set(key, { experiment: cell.experiment, level: cell.level, ids: [] });
     const model = cell.modelKey || cell.model;
     if (model && !groups.get(key).ids.includes(model)) groups.get(key).ids.push(model);
   }

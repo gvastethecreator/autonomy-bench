@@ -14,6 +14,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fallbackGithubForReceipt, stampContributor } from './contributor.mjs';
 import { buildCatalogFromCells, galleryRelPath, parsePromptVersion } from './layout.mjs';
+import { outputSizeFromHtml } from './output-tokens.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GALLERY = join(ROOT, 'gallery');
@@ -170,6 +171,7 @@ function indexPublishedCells(galleryDir, suite) {
         if (titles.size && experiment && !titles.has(experiment)) continue;
         const attemptMatch = String(date).match(/-a(\d+)$/);
         const promptSha = receipt?.promptSha256 || '';
+        const size = hasHtml ? outputSizeFromHtml(readFileSync(htmlPath, 'utf8')) : outputSizeFromHtml('');
         cells.push({
           cellId:
             receipt?.cellId ||
@@ -188,6 +190,9 @@ function indexPublishedCells(galleryDir, suite) {
           promptSrc: existsSync(promptPath) ? `${rel}/prompt.md` : null,
           prompt: existsSync(promptPath) ? readFileSync(promptPath, 'utf8') : '',
           receipt,
+          outputChars: size.outputChars,
+          outputTokensApprox: size.outputTokensApprox,
+          outputTokensMethod: size.outputTokensMethod,
         });
       }
     }
@@ -212,6 +217,7 @@ function writeGalleryViewer() {
   }
   let template = readFileSync(join(here, 'gallery-viewer.html'), 'utf8');
   template = injectSnippet(template, '/* __HIGHLIGHT_HTML__ */', join(here, 'highlight-html.mjs'));
+  template = injectSnippet(template, '/* __BRANDS__ */', join(here, 'brands.mjs'));
   template = injectSnippet(template, '/* __SCRAMBLE_SPAN__ */', join(here, 'scramble-span.mjs'));
   template = injectSnippet(template, '/* __STACK_PANELS__ */', join(here, 'stack-panels.mjs'));
   template = injectSnippet(template, '/* __IFRAME_QUEUE__ */', join(here, 'iframe-queue.mjs'));

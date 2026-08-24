@@ -1,10 +1,25 @@
 # Changelog
 
+## 0.7.3 — 2026-08-24
+
+- Show vendor brand marks for models and harnesses in the gallery (Gemini, DeepSeek, GLM/Z.ai, Kimi, Qwen, Hunyuan, Meta, OpenCode, Antigravity). Fallback stays the generic brain when no mark exists.
+
+## 0.7.2 — 2026-08-24
+
+- Estimate output size for each published take as HTML `chars ÷ 4`. Show `≈` tokens on the take status bar and in the receipt panel. Do not write the estimate into `receipt.tokenUsage`.
+- Require cell receipts to record generation time (`startedAt`, `completedAt`, `durationMs`) and token spend (`tokenUsage`) from observable harness or CLI output.
+- Add **Open full size** on multi-take cards so a take can open in Single.
+- Add previous and next arrows on the View dropdown.
+- Show the experiment emoji, desaturated, beside the gallery title.
+
 ## 0.7.1 — 2026-08-24
 
 - Add a Table view: every benchmark against every published model, with present and missing cells for the current A/B/C level.
 - Show the public vote crown on unique leaders in Table as well as on the model list.
-- Add **Open pick** for the staff-chosen take on each benchmark. Rollercoaster A stays on `grok-4.6`. Other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`. B and C prefer `grok-4.6-high`.
+- Mark a staff-chosen take on each benchmark in Table with a gold star. Rollercoaster A stays on `grok-4.6`. Other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`. B and C prefer `grok-4.6-high`. Click the bench name to open that take.
+- Models view shows every playable take. Click a model to hide or show it.
+- Compact model cards use a two-row toolbar (actions, then prompt) and a receipt status bar for duration, tokens, contributor, and harness.
+- Group the gallery chrome into Filters, View, and Fit dropdowns.
 
 ## 0.7.0 — 2026-08-23
 

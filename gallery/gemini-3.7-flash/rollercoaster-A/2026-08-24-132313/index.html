@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Three.js First-Person Rollercoaster</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #87ceeb;
+      font-family: sans-serif;
+      user-select: none;
+    }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+    #hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 15px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="hud">SPEED: <span id="speedVal">0</span> MPH</div>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.0025);
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2000);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const ambLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfffaed, 0.9);
+    dirLight.position.set(100, 300, 100);
+    scene.add(dirLight);
+
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x3d7e35 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+
+    // Track Spline Definition
+    const controlPoints = [
+      new THREE.Vector3(0, 15, 0),
+      new THREE.Vector3(30, 45, 100),
+      new THREE.Vector3(60, 90, 220),
+      new THREE.Vector3(90, 140, 340), // Crest (140m)
+      new THREE.Vector3(120, 95, 420),
+      new THREE.Vector3(140, 20, 480), // Deep Drop
+      new THREE.Vector3(180, 65, 520), // Camelback
+      new THREE.Vector3(230, 85, 480),
+      new THREE.Vector3(270, 25, 400),
+      new THREE.Vector3(290, 60, 300), // High Banked Turn
+      new THREE.Vector3(280, 75, 180),
+      new THREE.Vector3(220, 40, 80),
+      new THREE.Vector3(150, 18, 20),
+      new THREE.Vector3(80, 22, -40),
+      new THREE.Vector3(20, 15, -20)
+    ];
+
+    const trackCurve = new THREE.CatmullRomCurve3(controlPoints, true, 'centripetal', 0.5);
+
+    // Build Track Rails
+    const NUM_POINTS = 800;
+    const points = trackCurve.getSpacedPoints(NUM_POINTS);
+    const trackGroup = new THREE.Group();
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, metalness: 0.8, roughness: 0.3 });
+    const spineMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.7, roughness: 0.5 });
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.5, roughness: 0.6 });
+
+    // Build Rails using TubeGeometry
+    const leftRailPts = [], rightRailPts = [], spinePts = [];
+    const railOffset = 1.0;
+
+    for (let i = 0; i <= NUM_POINTS; i++) {
+      const t = i / NUM_POINTS;
+      const pt = trackCurve.getPointAt(t);
+      const tangent = trackCurve.getTangentAt(t).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      const binormal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+      const normal = new THREE.Vector3().crossVectors(binormal, tangent).normalize();
+
+      leftRailPts.push(pt.clone().addScaledVector(binormal, -railOffset));
+      rightRailPts.push(pt.clone().addScaledVector(binormal, railOffset));
+      spinePts.push(pt.clone().addScaledVector(normal, -0.4));
+
+      // Support pillars every few segments
+      if (i % 16 === 0 && pt.y > 2) {
+        const pillarGeo = new THREE.CylinderGeometry(0.3, 0.4, pt.y, 8);
+        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+        pillar.position.set(pt.x, pt.y / 2, pt.z);
+        trackGroup.add(pillar);
+      }
+    }
+
+    const leftCurve = new THREE.CatmullRomCurve3(leftRailPts, true);
+    const rightCurve = new THREE.CatmullRomCurve3(rightRailPts, true);
+    const spineCurve = new THREE.CatmullRomCurve3(spinePts, true);
+
+    const railGeoL = new THREE.TubeGeometry(leftCurve, 600, 0.15, 6, true);
+    const railGeoR = new THREE.TubeGeometry(rightCurve, 600, 0.15, 6, true);
+    const spineGeo = new THREE.TubeGeometry(spineCurve, 600, 0.25, 6, true);
+
+    trackGroup.add(new THREE.Mesh(railGeoL, railMat));
+    trackGroup.add(new THREE.Mesh(railGeoR, railMat));
+    trackGroup.add(new THREE.Mesh(spineGeo, spineMat));
+    scene.add(trackGroup);
+
+    // Continuous Playback Animation
+    let progress = 0.0;
+    const speedVal = document.getElementById('speedVal');
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      const pt = trackCurve.getPointAt(progress);
+      const tangent = trackCurve.getTangentAt(progress).normalize();
+
+      // Energy-based physics (faster downhill, slower on lift hill)
+      const height = pt.y;
+      const speed = Math.max(Math.sqrt(Math.max(140 - height, 4)) * 7.5, 18);
+      const progressDelta = (speed * 0.447) / trackCurve.getLength() * dt;
+      progress = (progress + progressDelta) % 1.0;
+
+      // Position First-Person Camera
+      const up = new THREE.Vector3(0, 1, 0);
+      const binormal = new THREE.Vector3().crossVectors(tangent, up).normalize();
+      const normal = new THREE.Vector3().crossVectors(binormal, tangent).normalize();
+
+      const eye = pt.clone().addScaledVector(normal, 1.2);
+      camera.position.copy(eye);
+      camera.up.copy(normal);
+      camera.lookAt(eye.clone().addScaledVector(tangent, 15));
+
+      speedVal.textContent = Math.round(speed);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

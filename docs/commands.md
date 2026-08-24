@@ -46,8 +46,8 @@ Run modes:
 
 Adapters:
 
-- `manual`: copy packets into model UIs by hand. Fill receipts from visible facts.
-- `agent`: give each cell to a fresh worker or CLI process. Record isolation evidence.
+- `manual`: copy packets into model UIs by hand. Fill receipts from visible facts, including generation time and token spend.
+- `agent`: give each cell to a fresh worker or CLI process. Record isolation evidence, generation time, and token usage.
 - `prototype-lab`: export specs and use Prototype Lab `experiment --direct-build`.
 
 ## Gallery publish
@@ -69,7 +69,7 @@ npx wrangler d1 migrations apply benchmark-votes --local
 
 Production votes need the same command with `--remote` after the first deploy that binds `benchmark-votes`.
 
-`--viewer` rebuilds only the viewer and the Anime.js bundle.
+`--viewer` rebuilds `catalog.json` from the published gallery tree, then rewrites the viewer and the Anime.js bundle.
 
 The viewer fetches `catalog.json`. It does not inline the catalog. Prompt revisions come from each cell's frozen `promptSha256`. Cells without a hash are not a separate revision. Dates are folder stamps. Defaults are the latest revision and the latest month.
 

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Night Drive: Interstate 95</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { background: #000; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+    
+    #dashboard {
+      position: absolute; bottom: 20px; left: 20px; right: 20px;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      pointer-events: none;
+    }
+    .panel {
+      background: rgba(10, 15, 25, 0.85); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px;
+      padding: 12px 18px; pointer-events: auto;
+    }
+    .gauge { display: flex; align-items: baseline; gap: 6px; }
+    .speed-val { font-size: 32px; font-weight: 700; font-family: monospace; color: #38bdf8; }
+    .radio-box { display: flex; align-items: center; gap: 12px; }
+    .radio-btn {
+      background: #1e293b; border: 1px solid #475569; color: #e2e8f0;
+      padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+    }
+    .radio-btn:hover { background: #334155; }
+    .station-name { font-size: 13px; font-weight: 600; color: #a855f7; }
+    
+    #overlay-start {
+      position: absolute; inset: 0; background: rgba(0, 0, 0, 0.7);
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 100; cursor: pointer;
+    }
+    #overlay-start h1 { font-size: 28px; margin-bottom: 12px; color: #38bdf8; letter-spacing: 2px; }
+    #overlay-start p { color: #94a3b8; font-size: 14px; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="overlay-start" onclick="startExperience()">
+    <h1>INTERSTATE NIGHT DRIVE</h1>
+    <p>Click to start engine & radio stream</p>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <div id="dashboard">
+    <div class="panel gauge">
+      <span class="speed-val" id="speedText">0</span>
+      <span style="font-size: 12px; color: #64748b;">MPH</span>
+    </div>
+
+    <div class="panel radio-box">
+      <button class="radio-btn" onclick="cycleRadio()">📻 CH</button>
+      <div>
+        <div style="font-size: 10px; color: #64748b;">RADIO STATION</div>
+        <div class="station-name" id="stationText">FM 94.2 · Midnight Lo-Fi</div>
+      </div>
+      <button class="radio-btn" onclick="toggleCam()">📷 View: <span id="camText">Chase</span></button>
+    </div>
+  </div>
+
+  <script>
+    /* Procedural Web Audio Radio & Engine */
+    let actx = null, started = false;
+    let engineOsc = null, engineGain = null, musicInterval = null;
+    let currentStation = 0;
+    const STATIONS = ["FM 94.2 · Midnight Lo-Fi", "FM 101.8 · Synthwave Drive", "OFF"];
+    const chordProgressions = [
+      [220, 261.63, 329.63, 392], // Am7
+      [174.61, 220, 261.63, 329.63], // Fmaj7
+      [196, 246.94, 293.66, 392], // G
+      [164.81, 196, 246.94, 293.66] // Em7
+    ];
+    let chordIdx = 0;
+
+    function startExperience() {
+      if (started) return;
+      started = true;
+      document.getElementById('overlay-start').style.display = 'none';
+
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        actx = new AC();
+
+        engineOsc = actx.createOscillator();
+        engineOsc.type = 'sawtooth';
+        engineOsc.frequency.value = 45;
+        const eFilter = actx.createBiquadFilter();
+        eFilter.type = 'lowpass'; eFilter.frequency.value = 160;
+        engineGain = actx.createGain(); engineGain.gain.value = 0.04;
+        engineOsc.connect(eFilter); eFilter.connect(engineGain); engineGain.connect(actx.destination);
+        engineOsc.start();
+
+        musicInterval = setInterval(() => {
+          if (!actx || currentStation === 2) return;
+          const chord = chordProgressions[chordIdx % chordProgressions.length];
+          chordIdx++;
+          chord.forEach((freq, i) => {
+            const osc = actx.createOscillator();
+            const g = actx.createGain();
+            osc.type = currentStation === 0 ? 'sine' : 'sawtooth';
+            osc.frequency.setValueAtTime(freq * (currentStation === 0 ? 1 : 0.5), actx.currentTime);
+            g.gain.setValueAtTime(0.015, actx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 2.8);
+            osc.connect(g); g.connect(actx.destination);
+            osc.start(); osc.stop(actx.currentTime + 3.0);
+          });
+        }, 3000);
+      } catch (e) {}
+    }
+
+    function cycleRadio() {
+      currentStation = (currentStation + 1) % STATIONS.length;
+      document.getElementById('stationText').textContent = STATIONS[currentStation];
+    }
+
+    /* Three.js Environment */
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x02040a, 0.003);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1200);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    scene.add(new THREE.AmbientLight(0x1e293b, 0.7));
+
+    // Sky dome stars
+    const starGeom = new THREE.BufferGeometry();
+    const starPos = [];
+    for (let i = 0; i < 700; i++) {
+      starPos.push((Math.random() - 0.5) * 1800, Math.random() * 500 + 40, (Math.random() - 0.5) * 1800);
+    }
+    starGeom.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+    scene.add(new THREE.Points(starGeom, new THREE.PointsMaterial({ color: 0xffffff, size: 1.1 })));
+
+    // 4-Lane Highway
+    const ROAD_W = 20, ROAD_L = 1000, NUM_SEGMENTS = 50, SEG_L = 20;
+    const roadGroup = new THREE.Group();
+    const roadSegments = [];
+
+    const asphaltGeo = new THREE.PlaneGeometry(ROAD_W, SEG_L).rotateX(-Math.PI / 2);
+    const asphaltMat = new THREE.MeshStandardMaterial({ color: 0x11141c, roughness: 0.8 });
+
+    const lineGeo = new THREE.PlaneGeometry(0.25, SEG_L * 0.4).rotateX(-Math.PI / 2);
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
+
+    for (let i = 0; i < NUM_SEGMENTS; i++) {
+      const seg = new THREE.Group();
+      seg.add(new THREE.Mesh(asphaltGeo, asphaltMat));
+
+      // 3 dashed lane dividers
+      for (const lx of [-5, 0, 5]) {
+        const line = new THREE.Mesh(lineGeo, lineMat);
+        line.position.set(lx, 0.02, 0);
+        seg.add(line);
+      }
+
+      seg.position.z = i * SEG_L;
+      roadGroup.add(seg);
+      roadSegments.push(seg);
+    }
+    scene.add(roadGroup);
+
+    // Player Car
+    const playerCar = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.3, metalness: 0.7 });
+    const carBody = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.75, 4.6), bodyMat);
+    carBody.position.y = 0.55;
+    playerCar.add(carBody);
+
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.9, 0.6, 2.4),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.9 })
+    );
+    cabin.position.set(0, 1.1, -0.2);
+    playerCar.add(cabin);
+
+    // Headlights
+    const hlL = new THREE.SpotLight(0xfff1d0, 4.0, 160, Math.PI / 6, 0.3);
+    hlL.position.set(-0.7, 0.6, 2.4);
+    const tL = new THREE.Object3D(); tL.position.set(-0.7, 0.2, 35);
+    playerCar.add(hlL); playerCar.add(tL); hlL.target = tL;
+
+    const hlR = new THREE.SpotLight(0xfff1d0, 4.0, 160, Math.PI / 6, 0.3);
+    hlR.position.set(0.7, 0.6, 2.4);
+    const tR = new THREE.Object3D(); tR.position.set(0.7, 0.2, 35);
+    playerCar.add(hlR); playerCar.add(tR); hlR.target = tR;
+
+    // Taillights
+    const tailMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    const tailL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.1), tailMat);
+    tailL.position.set(-0.75, 0.6, -2.35);
+    const tailR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.1), tailMat);
+    tailR.position.set(0.75, 0.6, -2.35);
+    playerCar.add(tailL); playerCar.add(tailR);
+
+    playerCar.position.set(2.5, 0, 0);
+    scene.add(playerCar);
+
+    // Dynamic Traffic Entities
+    const traffic = [];
+    const trafficCols = [0xd97706, 0x059669, 0x64748b, 0xdc2626];
+    for (let i = 0; i < 6; i++) {
+      const tc = new THREE.Group();
+      const col = trafficCols[i % trafficCols.length];
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.7, 4.4), new THREE.MeshStandardMaterial({ color: col }));
+      mesh.position.y = 0.5;
+      tc.add(mesh);
+
+      const redLight = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.15, 0.1), tailMat);
+      redLight.position.set(0, 0.55, -2.25);
+      tc.add(redLight);
+
+      const lanes = [-7.5, -2.5, 2.5, 7.5];
+      tc.position.set(lanes[i % lanes.length], 0, 80 + i * 140);
+      tc.userData = { speed: 50 + Math.random() * 25, lane: lanes[i % lanes.length] };
+      scene.add(tc);
+      traffic.push(tc);
+    }
+
+    // Input Handling
+    const keys = { w: false, s: false, a: false, d: false };
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') keys.w = true;
+      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') keys.s = true;
+      if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') keys.a = true;
+      if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.d = true;
+      if (e.key === 'c' || e.key === 'C') toggleCam();
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') keys.w = false;
+      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') keys.s = false;
+      if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') keys.a = false;
+      if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.d = false;
+    });
+
+    let currentSpeed = 65; // MPH
+    let carX = 2.5, steer = 0, camMode = 0;
+
+    function toggleCam() {
+      camMode = (camMode + 1) % 2;
+      document.getElementById('camText').textContent = camMode === 0 ? "Chase" : "Hood";
+    }
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      // Acceleration & Braking
+      if (keys.w) currentSpeed = Math.min(currentSpeed + 25 * dt, 115);
+      else if (keys.s) currentSpeed = Math.max(currentSpeed - 35 * dt, 20);
+      else currentSpeed = Math.max(currentSpeed - 5 * dt, 60);
+
+      // Steering
+      if (keys.a) steer = Math.max(steer - 3.5 * dt, -0.05);
+      else if (keys.d) steer = Math.min(steer + 3.5 * dt, 0.05);
+      else steer *= 0.84;
+
+      carX += steer * (currentSpeed * 0.08);
+      carX = THREE.MathUtils.clamp(carX, -ROAD_W / 2 + 1.8, ROAD_W / 2 - 1.8);
+
+      playerCar.position.x = carX;
+      playerCar.rotation.y = -steer * 3.5;
+
+      // Move Road Segments
+      const moveDelta = (currentSpeed * 0.447) * dt * 4.5;
+      for (let i = 0; i < NUM_SEGMENTS; i++) {
+        const seg = roadSegments[i];
+        seg.position.z -= moveDelta;
+        if (seg.position.z < -SEG_L) {
+          seg.position.z += NUM_SEGMENTS * SEG_L;
+        }
+      }
+
+      // Update Traffic
+      traffic.forEach(tc => {
+        tc.position.z -= (moveDelta - (tc.userData.speed * 0.447) * dt * 4.5);
+        if (tc.position.z < -40) {
+          tc.position.z += 800;
+          const lanes = [-7.5, -2.5, 2.5, 7.5];
+          tc.position.x = lanes[Math.floor(Math.random() * lanes.length)];
+        }
+      });
+
+      // Update Audio Pitch
+      if (engineOsc && actx) {
+        engineOsc.frequency.setTargetAtTime(35 + (currentSpeed / 115) * 80, actx.currentTime, 0.05);
+      }
+
+      // Camera
+      if (camMode === 0) {
+        camera.position.set(carX * 0.6, 3.2, playerCar.position.z - 8.5);
+        camera.lookAt(carX * 0.9, 1.2, playerCar.position.z + 20);
+      } else {
+        camera.position.set(carX, 1.2, playerCar.position.z + 0.3);
+        camera.lookAt(carX, 1.0, playerCar.position.z + 30);
+      }
+
+      document.getElementById('speedText').textContent = Math.round(currentSpeed);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>

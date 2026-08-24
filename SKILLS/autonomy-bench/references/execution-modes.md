@@ -12,15 +12,15 @@
 
 ### manual
 
-Copy `prompt.md` into a clean model conversation. Save the returned code/files exactly as produced. Fill only facts visible in the UI. If the UI does not expose the effective route, tokens, or tools, record `not captured`.
+Copy `prompt.md` into a clean model conversation. Save the returned code/files exactly as produced. Start the generation clock when you send the prompt. Stop it when you save the HTML. Copy token counts from the UI. If the UI does not expose the effective route, tokens, tools, or a clock, record `not captured`.
 
 ### agent
 
-One new worker or CLI process per cell. Packet-only context is preferred. Record the isolation adapter and evidence. Record `harness` as the program that ran the worker. Do not pass this coordinator skill unless it is itself under test.
+One new worker or CLI process per cell. Packet-only context is preferred. Record the isolation adapter and evidence. Record `harness` as the program that ran the worker. Record `startedAt`, `completedAt`, `durationMs`, and `tokenUsage` from the process clock and the CLI usage report. Do not pass this coordinator skill unless it is itself under test.
 
 ### prototype-lab
 
-Use when browser evidence, comparison hubs, proof loops, or portable packs justify the extra machinery. Export one spec per benchmark + prompt level so model/attempt variants share one invariant prompt.
+Use when browser evidence, comparison hubs, proof loops, or portable packs justify the extra machinery. Export one spec per benchmark + prompt level so model/attempt variants share one invariant prompt. Copy generation time and token spend from the Prototype Lab receipt into the Autonomy Bench cell when those facts exist.
 
 ## Repetition
 

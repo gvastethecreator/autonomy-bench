@@ -11,7 +11,7 @@ Published takes live under `gallery/<model>/<benchmark>-<A|B|C>/<fecha>/` as `in
 1. Name the file `<benchmark>-<model>.html` (example: `rollercoaster-qwen-3.8-27b.html`).
 2. Plan a cell with the frozen prompt level for that benchmark. Do not rewrite, improve, summarize, or expand the generated `prompt.md`.
 3. Copy the HTML to the cell `output/index.html`.
-4. Fill `receipt.json` from the template. Record what is known. Use `not captured` for the rest. Never invent timings or token counts.
+4. Fill `receipt.json` from the template. Record generation time (`startedAt`, `completedAt`, `durationMs`) and token spend (`tokenUsage`) from the harness or CLI. Use `not captured` only when those values were not exposed. Never invent timings or token counts.
 5. Set `contributor.github` to the submitter's GitHub login. The avatar URL is `https://github.com/<login>.png`.
 6. Publish with `vp run bench -- gallery --run <run-id>`. That copies the cell into `gallery/` and rebuilds `catalog.json`.
 

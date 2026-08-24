@@ -6,15 +6,26 @@ Receipts separate what **happened** from what an evaluator later **thought about
 
 Required identity: run id, cell id, benchmark id, prompt level, attempt, requested model, prompt SHA-256.
 
-Execution facts: status, timestamps, duration, adapter, harness (the program that ran the cell: Cursor, Codex, Claude Code, ChatGPT, and similar), contributor GitHub login and avatar, effective model when independently visible, reasoning setting when visible, isolation evidence, tools/tokens when visible, output paths and hashes, limitations, errors, external receipt links.
+Execution facts: status, timestamps, generation duration, token spend, adapter, harness (the program that ran the cell: Cursor, Codex, Claude Code, ChatGPT, and similar), contributor GitHub login and avatar, effective model when independently visible, reasoning setting when visible, isolation evidence, tool visibility, output paths and hashes, limitations, errors, external receipt links.
 
 `contributor` is the person who submitted the take, not the model. Record `contributor.github` and `contributor.avatarUrl` (`https://github.com/<login>.png`). If the login is unknown, use the planned default. Do not invent a name.
 
 `harness` is not `adapter`. Adapter is how the coordinator dispatched the cell (`manual`, `agent`, `prototype-lab`). Harness is the program the worker used.
 
-Copy wall-clock times and token counts from the harness UI when they are visible. If they are not visible, use `not captured`. Never invent usage numbers.
+## Generation time and tokens
 
-Never infer hidden routing or usage. Use `not captured`.
+Every cell must record generation cost. Fill these fields from observable harness or CLI output:
+
+- `startedAt`: clock time when generation starts (prompt sent, or worker process start).
+- `completedAt`: clock time when generation ends (HTML saved, or worker process exit).
+- `durationMs`: wall-clock generation time in milliseconds (`completedAt` minus `startedAt`). Use a number, not a string.
+- `tokenUsage`: copy the harness usage report. Prefer the object the CLI or UI prints (`input_tokens`, `output_tokens`, `total_tokens`, cache and reasoning counts when present). A single total number is allowed when that is all the harness shows.
+
+Prefer the harness-reported generation duration when it is visible. Otherwise use wall-clock times you observed.
+
+Do not leave these fields blank. Use `not captured` only when the harness did not expose the value and you could not observe a clock. Never invent timings or token counts. Never infer hidden routing or usage.
+
+HTML length estimates (`chars ÷ 4`) are gallery display only. Do not write them into `tokenUsage`.
 
 ## Completion receipt
 

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>First-Person Rollercoaster 3.1</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #70b0ff;
+      font-family: monospace;
+      color: #fff;
+    }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+    #hud {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="hud">SPEED: <span id="speed">0</span> MPH</div>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x70b0ff);
+    scene.fog = new THREE.Fog(0x70b0ff, 100, 1000);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+    sun.position.set(100, 200, 100);
+    scene.add(sun);
+
+    // Ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
+      new THREE.MeshLambertMaterial({ color: 0x448833 })
+    );
+    scene.add(ground);
+
+    // Spline Track
+    const points = [
+      new THREE.Vector3(0, 10, 0),
+      new THREE.Vector3(20, 30, 80),
+      new THREE.Vector3(50, 80, 180),
+      new THREE.Vector3(80, 120, 280), // Peak
+      new THREE.Vector3(100, 90, 340),
+      new THREE.Vector3(120, 15, 400), // Drop
+      new THREE.Vector3(160, 60, 440),
+      new THREE.Vector3(200, 70, 380),
+      new THREE.Vector3(220, 20, 280),
+      new THREE.Vector3(180, 40, 180),
+      new THREE.Vector3(120, 25, 80),
+      new THREE.Vector3(40, 12, 10)
+    ];
+
+    const curve = new THREE.CatmullRomCurve3(points, true);
+
+    const SEGS = 600;
+    const lPts = [], rPts = [];
+    const rOff = 0.8;
+    const trackGroup = new THREE.Group();
+
+    for (let i = 0; i <= SEGS; i++) {
+      const t = i / SEGS;
+      const pt = curve.getPointAt(t);
+      const tang = curve.getTangentAt(t).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      const binorm = new THREE.Vector3().crossVectors(tang, up).normalize();
+
+      lPts.push(pt.clone().addScaledVector(binorm, -rOff));
+      rPts.push(pt.clone().addScaledVector(binorm, rOff));
+
+      if (i % 20 === 0 && pt.y > 2) {
+        const pillar = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.2, 0.3, pt.y, 8),
+          new THREE.MeshLambertMaterial({ color: 0x777777 })
+        );
+        pillar.position.set(pt.x, pt.y / 2, pt.z);
+        trackGroup.add(pillar);
+      }
+    }
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xdd2222, metalness: 0.8, roughness: 0.3 });
+    trackGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lPts, true), 400, 0.12, 6, true), railMat));
+    trackGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rPts, true), 400, 0.12, 6, true), railMat));
+    scene.add(trackGroup);
+
+    let progress = 0.0;
+    const speedEl = document.getElementById('speed');
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      const pt = curve.getPointAt(progress);
+      const tang = curve.getTangentAt(progress).normalize();
+
+      const speed = Math.max(Math.sqrt(Math.max(120 - pt.y, 2)) * 7.0, 15);
+      progress = (progress + (speed * 0.447) / curve.getLength() * dt) % 1.0;
+
+      const up = new THREE.Vector3(0, 1, 0);
+      const binorm = new THREE.Vector3().crossVectors(tang, up).normalize();
+      const norm = new THREE.Vector3().crossVectors(binorm, tang).normalize();
+
+      const eye = pt.clone().addScaledVector(norm, 1.1);
+      camera.position.copy(eye);
+      camera.up.copy(norm);
+      camera.lookAt(eye.clone().addScaledVector(tang, 15));
+
+      speedEl.textContent = Math.round(speed);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
