@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Neon Overdrive Rollercoaster</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050011;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #vignette {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            box-shadow: inset 0 0 200px rgba(0, 0, 0, 0.9);
+            pointer-events: none;
+            z-index: 5;
+        }
+        #scanlines {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #ui {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            color: #00ffff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 14px;
+            font-weight: bold;
+            text-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff;
+            pointer-events: none;
+            z-index: 20;
+        }
+        .ui-line {
+            margin-bottom: 8px;
+        }
+        .highlight {
+            color: #ff00aa;
+            text-shadow: 0 0 10px #ff00aa;
+        }
+    </style>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="vignette"></div>
+    <div id="scanlines"></div>
+    <div id="ui">
+        <div class="ui-line">System: <span class="highlight">ONLINE</span></div>
+        <div class="ui-line">Sector: <span class="highlight">SYNTH-PRIME</span></div>
+        <div class="ui-line">Velocity: <span id="vel-display">0</span> KPH</div>
+        <div class="ui-line">G-Force: <span id="g-display">1.0</span> G</div>
+    </div>
+
+    <script>
+        // --- 1. Core Setup ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050011, 0.0025);
+
+        const camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.1, 2000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for performance
+        document.body.appendChild(renderer.domElement);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 2. Track Design ---
+        const points = [
+            new THREE.Vector3(0, 10, 0),
+            new THREE.Vector3(0, 10, -50),
+            new THREE.Vector3(0, 25, -100),
+            new THREE.Vector3(0, 60, -150),
+            new THREE.Vector3(0, 150, -250),     // Lift Hill Apex
+            new THREE.Vector3(20, 145, -280),
+            new THREE.Vector3(50, 110, -320),
+            new THREE.Vector3(120, 15, -380),    // Mega Drop Bottom
+            new THREE.Vector3(180, 80, -380),    // Vertical Loop Start
+            new THREE.Vector3(180, 140, -340),   // Loop Inverted Top
+            new THREE.Vector3(180, 80, -300),    // Loop Down
+            new THREE.Vector3(180, 15, -260),    // Loop Bottom Out
+            new THREE.Vector3(120, 20, -200),
+            new THREE.Vector3(0, 50, -150),      // Helix Start
+            new THREE.Vector3(-80, 90, -120),
+            new THREE.Vector3(-120, 60, -60),
+            new THREE.Vector3(-80, 20, 0),       // Helix End
+            new THREE.Vector3(-40, 10, 20),
+            new THREE.Vector3(-20, 10, 10)       // Connects smoothly back to origin
+        ];
+        
+        const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5);
+        
+        // Track Geometry
+        const tubeSegments = 2500;
+        const tubeRadius = 2.5;
+        const tubeGeo = new THREE.TubeGeometry(curve, tubeSegments, tubeRadius, 6, true);
+        
+        // Glowing Wireframe Outer Tube
+        const trackMat = new THREE.MeshBasicMaterial({
+            color: 0xff00aa,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.7
+        });
+        const track = new THREE.Mesh(tubeGeo, trackMat);
+        scene.add(track);
+
+        // Solid Dark Inner Core (gives depth and hides far-side wireframe clipping)
+        const coreGeo = new THREE.TubeGeometry(curve, tubeSegments, tubeRadius * 0.9, 6, true);
+        const coreMat = new THREE.MeshBasicMaterial({ color: 0x030008 });
+        const coreTrack = new THREE.Mesh(coreGeo, coreMat);
+        scene.add(coreTrack);
+
+        // Precompute Frenet Frames for stable camera orientation
+        const frames = curve.computeFrenetFrames(tubeSegments, true);
+
+        // --- 3. Environment & Scenery ---
+        // Retrowave Sun
+        const sunGeo = new THREE.SphereGeometry(150, 64, 64);
+        const sunMat = new THREE.MeshBasicMaterial({ color: 0xff3300, fog: false });
+        const sun = new THREE.Mesh(sunGeo, sunMat);
+        sun.position.set(0, 150, -900);
+        scene.add(sun);
+
+        // Ground Grid
+        const gridGeo = new THREE.PlaneGeometry(3000, 3000, 60, 60);
+        const gridPos = gridGeo.attributes.position;
+        // Displace grid for distant mountains
+        for (let i = 0; i < gridPos.count; i++) {
+            const x = gridPos.getX(i);
+            const y = gridPos.getY(i);
+            const dist = Math.sqrt(x*x + y*y);
+            if (dist > 300) {
+                const z = (Math.random() * 30) + (dist - 300) * 0.3;
+                gridPos.setZ(i, z);
+            }
+        }
+        gridGeo.computeVertexNormals();
+        const gridMat = new THREE.MeshBasicMaterial({ color: 0x002255, wireframe: true, transparent: true, opacity: 0.3 });
+        const grid = new THREE.Mesh(gridGeo, gridMat);
+        grid.rotation.x = -Math.PI / 2;
+        grid.position.y = -5;
+        scene.add(grid);
+
+        // Floating Neon Rings
+        const rings = new THREE.Group();
+        const ringGeo = new THREE.TorusGeometry(18, 0.3, 8, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 });
+        
+        for (let i = 0; i < 150; i++) {
+            const ringProg = i / 150;
+            const ringPos = curve.getPointAt(ringProg);
+            const ringTangent = curve.getTangentAt(ringProg);
+            
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.position.copy(ringPos);
+            ring.lookAt(ringPos.clone().add(ringTangent));
+            rings.add(ring);
+        }
+        scene.add(rings);
+
+        // Starfield / Particles
+        const starsGeo = new THREE.BufferGeometry();
+        const starsPos = [];
+        for (let i = 0; i < 3000; i++) {
+            starsPos.push(
+                (Math.random() - 0.5) * 2000,
+                (Math.random() - 0.5) * 1000 + 300,
+                (Math.random() - 0.5) * 2000
+            );
+        }
+        starsGeo.setAttribute('position', new THREE.Float32BufferAttribute(starsPos, 3));
+        const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, transparent: true, opacity: 0.8 });
+        const stars = new THREE.Points(starsGeo, starsMat);
+        scene.add(stars);
+
+        // --- 4. Animation & Physics Logic ---
+        let progress = 0.0;
+        let velocity = 0.0003; 
+        
+        const clock = new THREE.Clock();
+        const velDisplay = document.getElementById('vel-display');
+        const gDisplay = document.getElementById('g-display');
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // Animate Rings
+            rings.children.forEach((ring, index) => {
+                ring.rotation.z += delta * 0.5 * (index % 2 === 0 ? 1 : -1);
+                const scale = 1.0 + Math.sin(time * 3 + index) * 0.15;
+                ring.scale.set(scale, scale, scale);
+            });
+
+            // Physics calculation (Gravity simulation based on height)
+            const currentPoint = curve.getPoint(progress);
+            // Track height maxes around 150. Normalize to 0-1 range.
+            const heightFactor = Math.max(0, Math.min(1, currentPoint.y / 150)); 
+            
+            // Speed curve: Slowest at apex (1.0), fastest at bottom (0.0)
+            const targetSpeed = 0.0003 + (1 - heightFactor) * 0.0018; 
+            
+            // Smoothly interpolate current velocity towards target physics speed
+            velocity += (targetSpeed - velocity) * delta * 1.5;
+            progress += velocity;
+            if (progress >= 1.0) progress -= 1.0;
+
+            // Camera Positioning based on curve parameter
+            const t = progress;
+            const pos = curve.getPoint(t);
+            
+            // Fetch the corresponding normal from our precomputed Frenet frames
+            const frameIndex = Math.floor(t * tubeSegments);
+            const normal = frames.normals[frameIndex];
+            
+            // Offset camera slightly above the track center
+            const cameraOffset = normal.clone().multiplyScalar(3.5); 
+            camera.position.copy(pos).add(cameraOffset);
+
+            // Look slightly ahead on the track
+            const tAhead = (t + 0.005) % 1.0;
+            const lookAheadPoint = curve.getPoint(tAhead);
+            const lookAheadNormal = frames.normals[Math.floor(tAhead * tubeSegments)];
+            lookAheadPoint.add(lookAheadNormal.clone().multiplyScalar(3.5)); // Apply same offset
+
+            // Apply banking and orientation
+            camera.up.copy(normal);
+            camera.lookAt(lookAheadPoint);
+
+            // UI Updates
+            velDisplay.innerText = Math.floor(velocity * 120000).toString().padStart(3, '0');
+            // Faux G-Force calculation based on speed changes and curvature
+            const gForce = 1.0 + (velocity * 3000) * (1 - heightFactor);
+            gDisplay.innerText = gForce.toFixed(1);
+
+            // Dynamic environment coloring
+            trackMat.color.setHSL((time * 0.05) % 1.0, 1.0, 0.5);
+
+            renderer.render(scene, camera);
+        }
+
+        // Start Loop
+        animate();
+    </script>
+</body>
+</html>

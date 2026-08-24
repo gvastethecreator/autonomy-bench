@@ -1,6 +1,6 @@
 # Gallery viewer
 
-The public stage is `gallery/index.html`. Preview it with `vp run dev`. Deploy with `vp run deploy` after you regenerate `gallery/`.
+The public stage is `gallery/index.html`. Preview it with `vp run dev`. After you regenerate `gallery/`, commit and push to `main` so CI deploys it. Local `vp run deploy` still works.
 
 ## Layout
 
