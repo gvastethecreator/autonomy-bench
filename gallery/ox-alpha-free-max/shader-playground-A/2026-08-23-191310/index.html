@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Shader Playground — WebGL</title>
+<link rel="icon" href="data:,"/>
+<style>
+:root{
+  --bg:#0b0e14; --panel:#10141d; --panel2:#0d1119; --border:#1d2433;
+  --text:#dbe2ef; --dim:#8b94a7; --accent:#4da3ff; --ok:#7ee787;
+  --err:#ff6b6b; --warn:#e5c07b;
+  --mono:ui-monospace,'Cascadia Mono',Consolas,'JetBrains Mono',Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; display:flex; flex-direction:column; overflow:hidden;
+  background:var(--bg); color:var(--text);
+  font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;
+}
+body.dragging{cursor:col-resize; user-select:none}
+body.dragging-h{cursor:row-resize}
+
+/* ---------- top bar ---------- */
+#topbar{
+  display:flex; align-items:center; flex-wrap:wrap; gap:8px;
+  padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--border);
+}
+#logo{font-weight:600; letter-spacing:.3px; color:var(--accent); margin-right:6px}
+.btn{
+  appearance:none; background:#161c29; border:1px solid var(--border); color:var(--text);
+  padding:5px 11px; border-radius:6px; font:inherit; cursor:pointer; transition:border-color .15s, background .15s;
+}
+.btn:hover{border-color:#2e3952; background:#1b2334}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible, select:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+select{
+  appearance:none; background:#161c29; border:1px solid var(--border); color:var(--text);
+  padding:5px 26px 5px 10px; border-radius:6px; font:inherit; cursor:pointer;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b94a7' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 9px center;
+}
+.ctl{display:inline-flex; align-items:center; gap:6px; color:var(--dim)}
+.ctl.chk input{accent-color:var(--accent)}
+.spacer{flex:1}
+#fps{font-variant-numeric:tabular-nums; color:var(--dim); min-width:58px; text-align:right}
+
+/* ---------- split ---------- */
+#split{flex:1; display:flex; min-height:0}
+#left{flex:0 0 46%; min-width:220px; display:flex; flex-direction:column; background:var(--panel2)}
+#divider{
+  flex:0 0 6px; cursor:col-resize; background:var(--bg);
+  border-left:1px solid var(--border); border-right:1px solid var(--border);
+}
+#divider:hover, #divider.active{background:var(--accent)}
+#right{flex:1; position:relative; background:#04060a; min-width:200px}
+#glc{position:absolute; inset:0; width:100%; height:100%; display:block}
+#glfail{
+  position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
+  padding:24px; text-align:center; color:var(--err); background:rgba(4,6,10,.92);
+}
+
+/* ---------- editor ---------- */
+#editorWrap{flex:1; display:flex; min-height:0; border-bottom:1px solid var(--border)}
+#editorWrap:focus-within{box-shadow:inset 0 0 0 1px rgba(77,163,255,.45)}
+#gutter{
+  flex:none; width:46px; overflow:hidden; user-select:none; text-align:right;
+  padding:10px 8px 10px 0; color:#3d4a63; background:transparent;
+  font:13px/1.55 var(--mono); white-space:pre;
+}
+#gutter span{display:block}
+#scrollLayer{position:relative; flex:1; min-width:0}
+#hl, #src{
+  position:absolute; inset:0; margin:0; padding:10px 14px;
+  font:13px/1.55 var(--mono); white-space:pre; tab-size:2; letter-spacing:normal;
+}
+#hl{overflow:hidden; pointer-events:none; color:#c9d4e8; z-index:0}
+#src{
+  z-index:1; background:transparent; color:transparent; caret-color:#fff;
+  border:0; outline:0; resize:none; overflow:auto;
+}
+#src::selection{background:rgba(77,163,255,.28); color:transparent}
+.tk-kw{color:#c792ea}
+.tk-fn{color:#82aaff}
+.tk-num{color:#f79b6c}
+.tk-cm{color:#59637a; font-style:italic}
+.tk-pp{color:#e5c07b}
+
+/* ---------- error bar ---------- */
+#errbar{
+  max-height:132px; overflow:auto; flex:none;
+  background:#190e13; border-top:1px solid #3a1d26;
+  padding:6px 10px; font:12px/1.5 var(--mono);
+}
+#errList{margin:0; padding:0; list-style:none}
+#errList li{cursor:pointer; color:#ffb3b3; padding:2px 0}
+#errList li:hover{text-decoration:underline}
+.lnum{color:var(--warn); margin-right:8px}
+
+/* ---------- status bar ---------- */
+#statusbar{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:6px 12px; background:var(--panel); border-top:1px solid var(--border);
+  font-size:12px; color:var(--dim);
+}
+#status.ok{color:var(--ok)}
+#status.err{color:var(--err)}
+.grow{flex:1}
+#meta{font-variant-numeric:tabular-nums}
+.hint{opacity:.65}
+
+::-webkit-scrollbar{width:10px; height:10px}
+::-webkit-scrollbar-thumb{background:#232b3d; border-radius:5px; border:2px solid var(--panel2)}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-corner{background:transparent}
+
+@media (max-width:900px){
+  #split{flex-direction:column}
+  #left{flex:none; width:100%; height:44%}
+  #divider{cursor:row-resize; border:none; border-top:1px solid var(--border); border-bottom:1px solid var(--border)}
+  body.dragging{cursor:row-resize}
+}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <span id="logo">&#9670; Shader Playground</span>
+  <label class="ctl">preset
+    <select id="presetSel" aria-label="Shader preset"></select>
+  </label>
+  <button id="btnPlay" class="btn" title="Pause / resume animation (Space)">&#9208; Pause</button>
+  <button id="btnReset" class="btn" title="Restart time from zero">&#8634; Reset</button>
+  <button id="btnShot" class="btn" title="Save the current frame as PNG">&#128247; PNG</button>
+  <button id="btnFull" class="btn" title="Toggle fullscreen canvas">&#9974; Fullscreen</button>
+  <label class="ctl chk"><input type="checkbox" id="autoChk" checked/>auto-compile</label>
+  <button id="btnCompile" class="btn primary" title="Compile shader (Ctrl+Enter)">&#9889; Compile</button>
+  <span class="spacer"></span>
+  <span id="fps">&ndash; fps</span>
+</header>
+
+<main id="split">
+  <section id="left">
+    <div id="editorWrap">
+      <div id="gutter" aria-hidden="true"></div>
+      <div id="scrollLayer">
+        <pre id="hl" aria-hidden="true"></pre>
+        <textarea id="src" spellcheck="false" wrap="off" autocomplete="off"
+                  autocorrect="off" autocapitalize="off"
+                  aria-label="Fragment shader source (GLSL ES)"></textarea>
+      </div>
+    </div>
+    <div id="errbar" hidden><ol id="errList"></ol></div>
+  </section>
+  <div id="divider" title="Drag to resize &middot; double-click to reset"></div>
+  <section id="right">
+    <canvas id="glc"></canvas>
+    <div id="glfail" hidden>WebGL is not available in this browser.<br/>The editor still works, but nothing can be rendered.</div>
+  </section>
+</main>
+
+<footer id="statusbar">
+  <span id="status" class="ok">ready</span>
+  <span id="meta">&ndash;</span>
+  <span class="grow"></span>
+  <span class="hint">ctrl+enter compile &middot; space pause &middot; drag divider &middot; uniforms: u_time, u_resolution, u_mouse</span>
+</footer>
+
+<noscript><div style="padding:20px;color:#ff6b6b">JavaScript is required.</div></noscript>
+
+<script>
+'use strict';
+(function(){
+
+/* ================= presets ================= */
+
+var HEAD =
+'precision highp float;\n' +
+'\n' +
+'uniform vec2  u_resolution; // canvas size in pixels\n' +
+'uniform float u_time;       // seconds since start (pauses with playback)\n' +
+'uniform vec2  u_mouse;      // pointer over canvas, roughly [-1 .. 1]\n';
+
+var PRES = {};
+
+PRES['Plasma'] = HEAD + '''
+''';
+/* placeholder replaced below */
+
+})();
+</script>
+</body>
+</html>

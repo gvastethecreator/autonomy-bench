@@ -1,0 +1,2721 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="studio">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Rubylith — plate compositor</title>
+  <meta name="description" content="Rubylith is a visual plate compositor. Patch inks, masks, and type on a light table.">
+  <style>
+    :root {
+      --font-display: "Sitka Heading", "Palatino Linotype", Palatino, "Iowan Old Style", Georgia, serif;
+      --font-ui: "Segoe UI", system-ui, sans-serif;
+      --font-mono: "Cascadia Mono", "Segoe UI Mono", Consolas, ui-monospace, monospace;
+      --bg: oklch(0.175 0.018 72);
+      --bg-raised: oklch(0.205 0.018 70);
+      --stage: oklch(0.145 0.016 72);
+      --surface: oklch(0.22 0.02 70);
+      --surface-2: oklch(0.255 0.022 68);
+      --node: oklch(0.268 0.022 68);
+      --node-edge: oklch(0.38 0.02 70);
+      --ink: oklch(0.93 0.016 85);
+      --ink-muted: oklch(0.72 0.02 75);
+      --ink-subtle: oklch(0.56 0.018 70);
+      --line: oklch(0.34 0.018 70);
+      --ruby: oklch(0.58 0.185 18);
+      --ruby-deep: oklch(0.44 0.16 18);
+      --brass: oklch(0.78 0.12 85);
+      --zinc: oklch(0.74 0.03 230);
+      --mask: oklch(0.62 0.2 12);
+      --ok: oklch(0.74 0.12 150);
+      --warn: oklch(0.8 0.12 75);
+      --crit: oklch(0.66 0.18 25);
+      --table: oklch(0.2 0.028 240);
+      --table-glow: oklch(0.72 0.06 230 / 0.16);
+      --grid: oklch(0.42 0.05 240 / 0.22);
+      --focus: oklch(0.7 0.16 18);
+      --shadow: 0 1px 0 oklch(1 0 0 / 0.04), 0 12px 28px oklch(0.08 0.02 72 / 0.35);
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --header-h: 52px;
+      --status-h: 32px;
+      --dock-h: 0px;
+      --lib-w: 228px;
+      --ins-w: 300px;
+      --ease: cubic-bezier(0.2, 0, 0, 1);
+      color-scheme: dark;
+    }
+
+    [data-theme="day"] {
+      --bg: oklch(0.9 0.02 85);
+      --bg-raised: oklch(0.94 0.016 85);
+      --stage: oklch(0.84 0.028 85);
+      --surface: oklch(0.96 0.012 85);
+      --surface-2: oklch(0.99 0.008 85);
+      --node: oklch(0.975 0.01 85);
+      --node-edge: oklch(0.78 0.02 80);
+      --ink: oklch(0.24 0.02 70);
+      --ink-muted: oklch(0.42 0.02 70);
+      --ink-subtle: oklch(0.52 0.016 70);
+      --line: oklch(0.82 0.016 80);
+      --ruby: oklch(0.52 0.19 18);
+      --ruby-deep: oklch(0.42 0.17 18);
+      --brass: oklch(0.55 0.11 80);
+      --zinc: oklch(0.45 0.04 230);
+      --mask: oklch(0.5 0.19 12);
+      --table: oklch(0.78 0.03 240);
+      --table-glow: oklch(0.5 0.04 230 / 0.12);
+      --grid: oklch(0.55 0.04 80 / 0.28);
+      --focus: oklch(0.48 0.18 18);
+      --shadow: 0 1px 0 oklch(1 0 0 / 0.6), 0 10px 24px oklch(0.5 0.04 70 / 0.18);
+      color-scheme: light;
+    }
+
+    @media (prefers-contrast: more) {
+      :root {
+        --ink-muted: oklch(0.82 0.02 75);
+        --line: oklch(0.5 0.02 70);
+        --node-edge: oklch(0.55 0.02 70);
+      }
+      [data-theme="day"] {
+        --ink-muted: oklch(0.32 0.02 70);
+        --line: oklch(0.55 0.02 70);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    body { min-height: 100dvh; }
+    img, svg, canvas { display: block; max-width: 100%; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button {
+      background: none;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+    kbd {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 0.1em 0.4em;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface-2);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .skip {
+      position: absolute;
+      left: 12px;
+      top: 8px;
+      z-index: 40;
+      padding: 8px 12px;
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: var(--radius-sm);
+      transform: translateY(-120%);
+    }
+    .skip:focus { transform: none; }
+
+    .app {
+      height: 100dvh;
+      height: 100svh;
+      display: grid;
+      grid-template-rows: var(--header-h) 1fr var(--status-h) var(--dock-h);
+      min-width: 0;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 12px 0 16px;
+      background: var(--bg-raised);
+      border-bottom: 1px solid var(--line);
+      min-width: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .mark {
+      width: 10px;
+      height: 10px;
+      background: var(--ruby);
+      border-radius: 1px;
+      transform: translateY(1px);
+      flex: none;
+    }
+    .brand h1 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+    .brand .eyebrow {
+      color: var(--ink-subtle);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .graph-name {
+      width: min(240px, 28vw);
+      min-width: 120px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      padding: 6px 8px;
+      color: var(--ink);
+    }
+    .graph-name:hover { border-color: var(--line); }
+    .graph-name:focus {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+    .top-spacer { flex: 1; min-width: 8px; }
+    .tool-cluster, .icon-btn {
+      display: flex;
+      align-items: center;
+    }
+    .tool-cluster { gap: 4px; }
+    .icon-btn {
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm);
+      color: var(--ink-muted);
+    }
+    .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+    .icon-btn:active { scale: 0.96; }
+    .icon-btn[aria-pressed="true"] {
+      color: var(--ruby);
+      background: oklch(0.58 0.185 18 / 0.12);
+    }
+    .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .icon-btn svg { width: 16px; height: 16px; }
+    .add-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: var(--radius-sm);
+      background: var(--ruby);
+      color: oklch(0.98 0.01 85);
+      font-weight: 600;
+    }
+    .add-btn:hover { background: var(--ruby-deep); }
+    .add-btn:active { scale: 0.96; }
+    .add-btn svg { width: 16px; height: 16px; }
+    .zoom-read {
+      min-width: 3.5rem;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink-muted);
+      font-size: 12px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: var(--lib-w) minmax(0, 1fr) var(--ins-w);
+      min-height: 0;
+      min-width: 0;
+      position: relative;
+    }
+
+    .library, .inspector {
+      background: var(--bg-raised);
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .library { border-inline-end: 1px solid var(--line); }
+    .inspector { border-inline-start: 1px solid var(--line); }
+
+    .pane-h {
+      margin: 0;
+      padding: 14px 14px 8px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-subtle);
+      font-weight: 600;
+    }
+    .lib-search, .field input, .field select, .field textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+    }
+    .lib-search { margin: 0 12px 10px; }
+    .lib-search:focus, .field input:focus, .field select:focus, .field textarea:focus {
+      outline: 2px solid var(--focus);
+      outline-offset: 1px;
+    }
+    .lib-scroll, .ins-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 0 8px 16px;
+      scrollbar-color: var(--line) transparent;
+      scrollbar-gutter: stable;
+    }
+    .cat {
+      margin: 12px 6px 6px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-subtle);
+      font-weight: 650;
+    }
+    .lib-item {
+      display: grid;
+      grid-template-columns: 10px 1fr;
+      column-gap: 10px;
+      row-gap: 1px;
+      width: 100%;
+      text-align: start;
+      padding: 8px 8px;
+      border-radius: var(--radius-sm);
+      color: var(--ink);
+    }
+    .lib-item:hover { background: var(--surface-2); }
+    .lib-item:active { scale: 0.96; }
+    .lib-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 1px;
+      margin-top: 5px;
+      background: var(--swatch, var(--ruby));
+    }
+    .lib-name { font-weight: 600; font-size: 13px; }
+    .lib-desc {
+      grid-column: 2;
+      color: var(--ink-subtle);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .stage-wrap { position: relative; min-width: 0; min-height: 0; }
+    #stage {
+      position: relative;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(1200px 700px at 70% 0%, oklch(0.22 0.02 230 / 0.18), transparent 60%),
+        var(--stage);
+      touch-action: none;
+      cursor: default;
+    }
+    #stage:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: -2px;
+    }
+    #stage.is-panning { cursor: grabbing; }
+    #stage.is-wiring { cursor: crosshair; }
+    #stage.is-boxing { cursor: crosshair; }
+    .world {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 0;
+      height: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+    .grid-bg {
+      position: absolute;
+      inset: -4000px;
+      width: 8000px;
+      height: 8000px;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 24px 24px;
+      pointer-events: none;
+    }
+    #cables {
+      position: absolute;
+      left: -4000px;
+      top: -4000px;
+      width: 8000px;
+      height: 8000px;
+      overflow: visible;
+      pointer-events: none;
+    }
+    #nodes { position: absolute; left: 0; top: 0; }
+
+    .node {
+      position: absolute;
+      width: 196px;
+      background: var(--node);
+      border: 1px solid var(--node-edge);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow);
+      user-select: none;
+      color: var(--ink);
+    }
+    .node.is-dim { opacity: 0.34; }
+    .node.is-selected {
+      outline: 2px solid var(--ruby);
+      outline-offset: 2px;
+      opacity: 1;
+    }
+    .node.is-viewed .view-pip { opacity: 1; }
+    .node.is-error { outline: 2px solid var(--crit); outline-offset: 2px; }
+    .node.is-spawned { animation: spawn 180ms var(--ease) both; }
+    @keyframes spawn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+    .node-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 6px;
+      cursor: grab;
+    }
+    .node-head:active { cursor: grabbing; }
+    .node-kind {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-subtle);
+      font-weight: 650;
+    }
+    .node-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.2;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .view-pip {
+      margin-inline-start: auto;
+      width: 7px;
+      height: 7px;
+      border-radius: 1px;
+      background: var(--ruby);
+      opacity: 0;
+      flex: none;
+    }
+    .node-sub {
+      padding: 0 10px 8px;
+      color: var(--ink-muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-height: 1.2em;
+    }
+    .node-thumb-wrap {
+      margin: 0 10px 8px;
+      background: oklch(0.12 0.02 230);
+      border-radius: 3px;
+      overflow: hidden;
+      aspect-ratio: 4 / 5;
+      outline: 1px solid oklch(1 0 0 / 0.08);
+      outline-offset: -1px;
+    }
+    [data-theme="day"] .node-thumb-wrap { background: oklch(0.88 0.02 85); }
+    .node-thumb { width: 100%; height: 100%; object-fit: cover; }
+    .swatch-lg {
+      margin: 0 10px 8px;
+      height: 28px;
+      border-radius: 3px;
+      outline: 1px solid oklch(0 0 0 / 0.2);
+    }
+    .ports {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 8px;
+      padding: 4px 8px 10px;
+    }
+    .port {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      color: var(--ink-muted);
+      font-size: 11px;
+      width: 100%;
+      text-align: start;
+    }
+    .port.is-out { flex-direction: row-reverse; text-align: end; }
+    .port.is-hot .port-dot { box-shadow: 0 0 0 3px oklch(0.58 0.185 18 / 0.35); }
+    .port.is-bad .port-dot { outline: 2px solid var(--crit); }
+    .port-dot {
+      width: 10px;
+      height: 10px;
+      flex: none;
+      background: var(--port, var(--zinc));
+      border: 1px solid oklch(1 0 0 / 0.18);
+    }
+    .port-dot[data-shape="circle"] { border-radius: 50%; }
+    .port-dot[data-shape="square"] { border-radius: 2px; }
+    .port-dot[data-shape="diamond"] { transform: rotate(45deg); border-radius: 1px; }
+    .port-dot[data-shape="plus"] {
+      clip-path: polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%);
+    }
+
+    .marquee {
+      position: absolute;
+      border: 1px solid var(--ruby);
+      background: oklch(0.58 0.185 18 / 0.1);
+      pointer-events: none;
+      display: none;
+    }
+
+    .empty {
+      position: absolute;
+      inset: auto 16px 24px 16px;
+      max-width: 36ch;
+      margin: 0 auto;
+      left: 0;
+      right: 0;
+      padding: 16px 18px;
+      background: var(--bg-raised);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow);
+      display: none;
+    }
+    .empty.is-on { display: block; }
+    .empty h2 {
+      margin: 0 0 6px;
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      text-wrap: balance;
+    }
+    .empty p { margin: 0 0 12px; color: var(--ink-muted); text-wrap: pretty; }
+    .empty-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .text-btn, .ghost-btn {
+      display: inline-flex;
+      align-items: center;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+    }
+    .text-btn { background: var(--ruby); color: oklch(0.98 0.01 85); }
+    .ghost-btn { border: 1px solid var(--line); color: var(--ink); }
+    .text-btn:hover { background: var(--ruby-deep); }
+    .ghost-btn:hover { background: var(--surface-2); }
+    .text-btn:active, .ghost-btn:active { scale: 0.96; }
+
+    .inspector .table-block { padding: 0 14px 12px; }
+    .well {
+      background:
+        linear-gradient(in oklab, oklch(0.3 0.03 230), oklch(0.16 0.025 240));
+      border-radius: var(--radius-sm);
+      padding: 18px 16px 16px;
+      box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.06), 0 0 36px var(--table-glow);
+    }
+    [data-theme="day"] .well {
+      background: linear-gradient(in oklab, oklch(0.82 0.03 230), oklch(0.72 0.03 240));
+    }
+    .reg {
+      position: relative;
+      margin: 0 auto;
+      width: min(100%, 220px);
+    }
+    .reg canvas {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 4 / 5;
+      background: oklch(0.1 0.01 240);
+      display: block;
+    }
+    .crop {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      pointer-events: none;
+    }
+    .crop::before, .crop::after {
+      content: "";
+      position: absolute;
+      background: oklch(0.92 0.02 85);
+    }
+    .crop::before { width: 10px; height: 1px; }
+    .crop::after { width: 1px; height: 10px; }
+    .crop.tl { left: -12px; top: -12px; }
+    .crop.tr { right: -12px; top: -12px; }
+    .crop.tr::before { right: 0; }
+    .crop.tr::after { right: 0; }
+    .crop.bl { left: -12px; bottom: -12px; }
+    .crop.bl::before { bottom: 0; }
+    .crop.bl::after { bottom: 0; }
+    .crop.br { right: -12px; bottom: -12px; }
+    .crop.br::before { right: 0; bottom: 0; }
+    .crop.br::after { right: 0; bottom: 0; }
+    .table-cap {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 10px;
+      color: var(--ink-muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .table-cap strong { color: var(--ink); font-weight: 650; }
+    .preview-empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      text-align: center;
+      color: oklch(0.85 0.02 85);
+      font-size: 12px;
+      line-height: 1.4;
+      background: oklch(0.12 0.02 240 / 0.72);
+    }
+    .preview-empty[hidden] { display: none; }
+
+    .fields { padding: 4px 14px 18px; display: grid; gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    .field label {
+      font-size: 12px;
+      color: var(--ink-muted);
+    }
+    .field .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .field input[type="range"] { padding: 0; accent-color: var(--ruby); }
+    .field input[type="color"] {
+      width: 40px;
+      height: 32px;
+      padding: 2px;
+      cursor: pointer;
+    }
+    .val {
+      font-variant-numeric: tabular-nums;
+      color: var(--ink-subtle);
+      font-size: 12px;
+      min-width: 3ch;
+    }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+    }
+    .ins-empty {
+      padding: 8px 14px 18px;
+      color: var(--ink-muted);
+    }
+    .ins-actions {
+      display: flex;
+      gap: 8px;
+      padding: 0 14px 16px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 14px;
+      border-top: 1px solid var(--line);
+      background: var(--bg-raised);
+      color: var(--ink-muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      min-width: 0;
+    }
+    .status .hint { margin-inline-start: auto; color: var(--ink-subtle); }
+    .status [data-tone="crit"] { color: var(--crit); }
+    .status [data-tone="ok"] { color: var(--ok); }
+
+    .dock {
+      display: none;
+      border-top: 1px solid var(--line);
+      background: var(--bg-raised);
+      padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+      gap: 6px;
+    }
+    .dock button {
+      flex: 1;
+      height: 40px;
+      border-radius: var(--radius-sm);
+      color: var(--ink-muted);
+      font-weight: 600;
+    }
+    .dock button[aria-current="true"] {
+      background: var(--surface-2);
+      color: var(--ink);
+    }
+
+    .scrim {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: oklch(0.1 0.02 72 / 0.45);
+      z-index: 4;
+    }
+
+    dialog {
+      width: min(440px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: var(--radius-lg);
+      padding: 0;
+      box-shadow: var(--shadow);
+    }
+    dialog::backdrop { background: oklch(0.1 0.02 72 / 0.55); }
+    .dlg-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px 8px;
+    }
+    .dlg-h h2 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 22px;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+    .dlg-body { padding: 0 16px 16px; }
+    .dlg-body p { margin: 0 0 12px; color: var(--ink-muted); text-wrap: pretty; }
+    .shortcuts {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .shortcuts th, .shortcuts td {
+      text-align: start;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .shortcuts th { width: 42%; font-weight: 500; }
+    #palette { width: min(380px, calc(100vw - 24px)); }
+    #palette-list {
+      max-height: min(48vh, 360px);
+      overflow: auto;
+      margin: 8px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    #palette-list button {
+      display: grid;
+      grid-template-columns: 10px 1fr auto;
+      gap: 8px;
+      width: 100%;
+      text-align: start;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      align-items: center;
+    }
+    #palette-list button.is-active, #palette-list button:hover {
+      background: var(--surface-2);
+    }
+    #palette-list .meta { color: var(--ink-subtle); font-size: 12px; }
+    .dlg-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 8px 16px 16px;
+    }
+
+    .noscript {
+      margin: 24px auto;
+      max-width: 40ch;
+      padding: 16px;
+    }
+
+    @media (max-width: 959px) {
+      :root { --dock-h: 56px; --lib-w: 0px; --ins-w: 0px; }
+      .eyebrow, .zoom-read { display: none; }
+      .add-btn span { display: none; }
+      .graph-name { width: 120px; }
+      .workspace { grid-template-columns: 1fr; }
+      .library, .inspector {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: min(340px, 92vw);
+        z-index: 6;
+        box-shadow: var(--shadow);
+        transition-property: transform;
+        transition-duration: 180ms;
+        transition-timing-function: var(--ease);
+      }
+      .library { left: 0; transform: translateX(-105%); }
+      .inspector { right: 0; left: auto; transform: translateX(105%); }
+      .app[data-panel="library"] .library,
+      .app[data-panel="inspector"] .inspector { transform: none; }
+      .app[data-panel="library"] .scrim,
+      .app[data-panel="inspector"] .scrim { display: block; }
+      .dock { display: flex; }
+      .status .hint { display: none; }
+      .field input, .lib-search, .graph-name { font-size: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .node.is-spawned { animation: none; }
+      .icon-btn:active, .add-btn:active, .lib-item:active,
+      .text-btn:active, .ghost-btn:active { scale: none; }
+      .library, .inspector { transition: none; }
+    }
+
+    @media (forced-colors: active) {
+      .node, .well, .empty, dialog { border: 1px solid CanvasText; }
+      .mark, .view-pip, .port-dot { forced-color-adjust: none; }
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to canvas</a>
+  <noscript><p class="noscript">Rubylith needs JavaScript to compose plates.</p></noscript>
+  <div class="app" id="app" data-panel="stage">
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <h1>Rubylith</h1>
+        <span class="eyebrow">Plate compositor</span>
+      </div>
+      <label class="sr" for="graph-name">Plate name</label>
+      <input class="graph-name" id="graph-name" value="Night Shift" spellcheck="false" autocomplete="off">
+      <div class="top-spacer"></div>
+      <div class="tool-cluster">
+        <button class="icon-btn" id="btn-undo" type="button" aria-label="Undo" title="Undo">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 7h7.2a3.2 3.2 0 1 1 0 6.4H8"/><path d="M3.5 7 6 4.6M3.5 7 6 9.4"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-redo" type="button" aria-label="Redo" title="Redo">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M12.5 7H5.3a3.2 3.2 0 1 0 0 6.4H8"/><path d="M12.5 7 10 4.6M12.5 7 10 9.4"/></svg>
+        </button>
+      </div>
+      <button class="add-btn" id="btn-add" type="button">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+        <span>Add node</span>
+      </button>
+      <div class="tool-cluster">
+        <button class="icon-btn" id="btn-snap" type="button" aria-label="Snap to grid" aria-pressed="true" title="Snap to grid">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h3v3H3zM10 3h3v3h-3zM3 10h3v3H3zM10 10h3v3h-3z"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-fit" type="button" aria-label="Fit plate" title="Fit">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3"/></svg>
+        </button>
+        <button class="icon-btn zoom-read" id="btn-zoom" type="button" title="Reset zoom">100%</button>
+        <button class="icon-btn" id="btn-theme" type="button" aria-label="Switch to daylight" title="Studio / daylight">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-help" type="button" aria-label="Keyboard shortcuts" title="Shortcuts">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2a1.7 1.7 0 1 1 2.4 1.5c-.6.4-1 0.7-1 1.5"/><path d="M8 11.4h.01"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <div class="scrim" id="scrim" hidden></div>
+      <aside class="library" id="library" aria-label="Node library">
+        <p class="pane-h" id="lib-heading">Type case</p>
+        <label class="sr" for="lib-search">Search nodes</label>
+        <input class="lib-search" id="lib-search" type="search" placeholder="Paper, gel, letter…" autocomplete="off">
+        <div class="lib-scroll" id="lib-list"></div>
+      </aside>
+
+      <div class="stage-wrap">
+        <main id="stage" tabindex="0" aria-label="Compositor canvas">
+          <div class="world" id="world">
+            <div class="grid-bg" aria-hidden="true"></div>
+            <svg id="cables" aria-hidden="true"></svg>
+            <div id="nodes"></div>
+          </div>
+          <div class="marquee" id="marquee"></div>
+          <div class="empty" id="empty">
+            <h2>The table is empty</h2>
+            <p>Add a Paper node to start a plate, or load the Night Shift example.</p>
+            <div class="empty-actions">
+              <button class="text-btn" id="empty-paper" type="button">Add Paper</button>
+              <button class="ghost-btn" id="empty-example" type="button">Load Night Shift</button>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <aside class="inspector" id="inspector" aria-label="Light table and inspector">
+        <p class="pane-h">Light table</p>
+        <div class="table-block">
+          <div class="well">
+            <div class="reg">
+              <span class="crop tl" aria-hidden="true"></span>
+              <span class="crop tr" aria-hidden="true"></span>
+              <span class="crop bl" aria-hidden="true"></span>
+              <span class="crop br" aria-hidden="true"></span>
+              <canvas id="preview" width="240" height="300"></canvas>
+              <div class="preview-empty" id="preview-empty">Connect a plate to view it here.</div>
+            </div>
+            <div class="table-cap">
+              <strong id="preview-name">Plate</strong>
+              <span>240 × 300</span>
+            </div>
+          </div>
+        </div>
+        <p class="pane-h" id="ins-heading">Node</p>
+        <div class="ins-scroll">
+          <div class="ins-empty" id="ins-empty">Select a node to edit its inks and measures.</div>
+          <div class="fields" id="ins-fields" hidden></div>
+          <div class="ins-actions" id="ins-actions" hidden>
+            <button class="ghost-btn" id="btn-view" type="button">View on table</button>
+            <button class="ghost-btn" id="btn-delete" type="button">Delete</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="status">
+      <span id="stat-graph">0 nodes · 0 cables</span>
+      <span id="stat-eval">—</span>
+      <span id="stat-msg" role="status"></span>
+      <span class="hint">Space adds a node · F fits the plate</span>
+    </footer>
+    <nav class="dock" aria-label="Workspace">
+      <button type="button" data-panel="library">Nodes</button>
+      <button type="button" data-panel="stage" aria-current="true">Canvas</button>
+      <button type="button" data-panel="inspector">Plate</button>
+    </nav>
+  </div>
+
+  <dialog id="palette" aria-labelledby="palette-title">
+    <div class="dlg-h">
+      <h2 id="palette-title">Add a node</h2>
+      <button class="icon-btn" type="button" data-close="palette" aria-label="Close">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+    <div class="dlg-body">
+      <label class="sr" for="palette-search">Filter nodes</label>
+      <input class="lib-search" id="palette-search" type="search" placeholder="Search the type case" autocomplete="off" style="margin:0">
+      <div id="palette-list" role="listbox" aria-label="Node types"></div>
+    </div>
+  </dialog>
+
+  <dialog id="help" aria-labelledby="help-title">
+    <div class="dlg-h">
+      <h2 id="help-title">On the table</h2>
+      <button class="icon-btn" type="button" data-close="help" aria-label="Close">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+    </div>
+    <div class="dlg-body">
+      <p>Patch plates, inks, and masks toward a Plate node. The light table shows the still you pick. Threads that feed it stay bright; the rest recede.</p>
+      <table class="shortcuts">
+        <tbody>
+          <tr><th><kbd>Space</kbd></th><td>Add a node</td></tr>
+          <tr><th><kbd>F</kbd></th><td>Fit the graph</td></tr>
+          <tr><th><kbd>Delete</kbd></th><td>Remove selected nodes</td></tr>
+          <tr><th><kbd>Ctrl</kbd> <kbd>D</kbd></th><td>Duplicate</td></tr>
+          <tr><th><kbd>Ctrl</kbd> <kbd>Z</kbd></th><td>Undo</td></tr>
+          <tr><th><kbd>1</kbd></th><td>Zoom to 100%</td></tr>
+          <tr><th>Drag a port</th><td>Draw a cable</td></tr>
+          <tr><th>Space + drag</th><td>Pan the table</td></tr>
+          <tr><th>Scroll</th><td>Zoom toward the pointer</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </dialog>
+
+  <dialog id="confirm" aria-labelledby="confirm-title">
+    <div class="dlg-h"><h2 id="confirm-title">Clear this plate?</h2></div>
+    <div class="dlg-body">
+      <p>All nodes and cables will be removed. You can undo afterward.</p>
+    </div>
+    <div class="dlg-actions">
+      <button class="ghost-btn" id="confirm-cancel" type="button">Cancel</button>
+      <button class="text-btn" id="confirm-ok" type="button">Clear plate</button>
+    </div>
+  </dialog>
+
+  <script>
+    (function () {
+      const PW = 240;
+      const PH = 300;
+      const GRID = 24;
+      const SVG_PAD = 4000;
+      const TYPE = {
+        plate: { label: "Plate", color: "oklch(0.74 0.04 230)", shape: "square" },
+        ink: { label: "Ink", color: "oklch(0.62 0.19 18)", shape: "circle" },
+        mask: { label: "Mask", color: "oklch(0.62 0.2 12)", shape: "diamond" },
+        measure: { label: "Measure", color: "oklch(0.78 0.12 85)", shape: "plus" }
+      };
+      const CATS = [
+        { id: "stock", label: "Stock", swatch: "oklch(0.78 0.12 85)" },
+        { id: "drawing", label: "Drawing", swatch: "oklch(0.74 0.04 230)" },
+        { id: "color", label: "Color", swatch: "oklch(0.58 0.185 18)" },
+        { id: "mix", label: "Mix", swatch: "oklch(0.62 0.1 160)" },
+        { id: "finish", label: "Finish", swatch: "oklch(0.86 0.02 85)" }
+      ];
+      const BLENDS = {
+        over: "source-over",
+        multiply: "multiply",
+        screen: "screen",
+        overlay: "overlay",
+        darken: "darken",
+        lighten: "lighten",
+        add: "lighter"
+      };
+
+      const DEFS = {
+        paper: {
+          title: "Paper", cat: "stock", desc: "Stock color and tooth",
+          ins: [], outs: [{ id: "plate", type: "plate" }],
+          params: {
+            color: { type: "color", label: "Stock", value: "#e8d5b7" },
+            tooth: { type: "range", label: "Tooth", min: 0, max: 1, step: 0.01, value: 0.08 }
+          }
+        },
+        field: {
+          title: "Field", cat: "stock", desc: "Two-ink wash",
+          ins: [{ id: "a", type: "ink" }, { id: "b", type: "ink" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            angle: { type: "range", label: "Angle", min: 0, max: 360, step: 1, value: 180 },
+            spread: { type: "range", label: "Spread", min: 0.2, max: 1.4, step: 0.01, value: 1 }
+          }
+        },
+        grain: {
+          title: "Grain", cat: "stock", desc: "Emulsion noise",
+          ins: [{ id: "plate", type: "plate" }, { id: "amount", type: "measure", optional: true }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            amount: { type: "range", label: "Amount", min: 0, max: 1, step: 0.01, value: 0.18 },
+            size: { type: "range", label: "Size", min: 0.4, max: 4, step: 0.1, value: 1.2 }
+          }
+        },
+        form: {
+          title: "Form", cat: "drawing", desc: "Circle, rect, or rule",
+          ins: [{ id: "ink", type: "ink" }, { id: "size", type: "measure", optional: true }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            kind: { type: "enum", label: "Kind", options: ["circle", "rect", "diamond", "rule"], value: "circle" },
+            x: { type: "range", label: "X", min: 0, max: 1, step: 0.01, value: 0.72 },
+            y: { type: "range", label: "Y", min: 0, max: 1, step: 0.01, value: 0.22 },
+            size: { type: "range", label: "Size", min: 0.02, max: 1, step: 0.01, value: 0.13 },
+            width: { type: "range", label: "Width", min: 0.02, max: 1, step: 0.01, value: 0.4 },
+            height: { type: "range", label: "Height", min: 0.01, max: 1, step: 0.01, value: 0.08 },
+            rotate: { type: "range", label: "Rotate", min: -180, max: 180, step: 1, value: 0 }
+          }
+        },
+        letter: {
+          title: "Letter", cat: "drawing", desc: "Type on a plate",
+          ins: [{ id: "ink", type: "ink" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            text: { type: "text", label: "Copy", value: "NIGHT SHIFT" },
+            size: { type: "range", label: "Size", min: 8, max: 72, step: 1, value: 28 },
+            x: { type: "range", label: "X", min: 0, max: 1, step: 0.01, value: 0.5 },
+            y: { type: "range", label: "Y", min: 0, max: 1, step: 0.01, value: 0.7 },
+            tracking: { type: "range", label: "Tracking", min: -0.08, max: 0.4, step: 0.01, value: 0.12 },
+            align: { type: "enum", label: "Align", options: ["left", "center", "right"], value: "center" }
+          }
+        },
+        iris: {
+          title: "Iris", cat: "drawing", desc: "Radial mask",
+          ins: [{ id: "amount", type: "measure", optional: true }],
+          outs: [{ id: "mask", type: "mask" }],
+          params: {
+            amount: { type: "range", label: "Falloff", min: 0.1, max: 1.4, step: 0.01, value: 0.72 },
+            round: { type: "range", label: "Roundness", min: 0.4, max: 1.6, step: 0.01, value: 1 }
+          }
+        },
+        ink: {
+          title: "Ink", cat: "color", desc: "Spot color",
+          ins: [], outs: [{ id: "ink", type: "ink" }],
+          params: {
+            color: { type: "color", label: "Ink", value: "#c41e3a" }
+          }
+        },
+        gel: {
+          title: "Gel", cat: "color", desc: "Multiply an ink",
+          ins: [{ id: "plate", type: "plate" }, { id: "ink", type: "ink" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            strength: { type: "range", label: "Strength", min: 0, max: 1, step: 0.01, value: 1 }
+          }
+        },
+        stop: {
+          title: "Stop", cat: "color", desc: "Exposure",
+          ins: [{ id: "plate", type: "plate" }, { id: "stops", type: "measure", optional: true }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            stops: { type: "range", label: "Stops", min: -2, max: 2, step: 0.05, value: 0 }
+          }
+        },
+        grade: {
+          title: "Grade", cat: "color", desc: "Contrast, temperature, saturation",
+          ins: [{ id: "plate", type: "plate" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            contrast: { type: "range", label: "Contrast", min: 0.4, max: 2, step: 0.01, value: 1.12 },
+            temp: { type: "range", label: "Temperature", min: -1, max: 1, step: 0.01, value: 0.12 },
+            sat: { type: "range", label: "Saturation", min: 0, max: 2, step: 0.01, value: 1.05 }
+          }
+        },
+        overprint: {
+          title: "Overprint", cat: "mix", desc: "Layer two plates",
+          ins: [
+            { id: "under", type: "plate" },
+            { id: "over", type: "plate" },
+            { id: "mask", type: "mask", optional: true }
+          ],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            mode: { type: "enum", label: "Mode", options: Object.keys(BLENDS), value: "over" },
+            opacity: { type: "range", label: "Opacity", min: 0, max: 1, step: 0.01, value: 1 }
+          }
+        },
+        rubylith: {
+          title: "Rubylith", cat: "mix", desc: "Mask from luminance",
+          ins: [{ id: "plate", type: "plate" }],
+          outs: [{ id: "mask", type: "mask" }],
+          params: {
+            threshold: { type: "range", label: "Threshold", min: 0, max: 1, step: 0.01, value: 0.4 },
+            invert: { type: "check", label: "Invert mask", value: false }
+          }
+        },
+        register: {
+          title: "Register", cat: "finish", desc: "Shift, scale, rotate",
+          ins: [{ id: "plate", type: "plate" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {
+            dx: { type: "range", label: "Shift X", min: -1, max: 1, step: 0.01, value: 0 },
+            dy: { type: "range", label: "Shift Y", min: -1, max: 1, step: 0.01, value: 0 },
+            scale: { type: "range", label: "Scale", min: 0.2, max: 2.4, step: 0.01, value: 1 },
+            rotate: { type: "range", label: "Rotate", min: -45, max: 45, step: 0.5, value: 0 }
+          }
+        },
+        measure: {
+          title: "Measure", cat: "finish", desc: "A number",
+          ins: [], outs: [{ id: "value", type: "measure" }],
+          params: {
+            value: { type: "range", label: "Value", min: 0, max: 1, step: 0.01, value: 0.5 }
+          }
+        },
+        plate: {
+          title: "Plate", cat: "finish", desc: "The finished still",
+          ins: [{ id: "plate", type: "plate" }],
+          outs: [{ id: "plate", type: "plate" }],
+          params: {}
+        }
+      };
+
+      const app = document.getElementById("app");
+      const stage = document.getElementById("stage");
+      const world = document.getElementById("world");
+      const nodesRoot = document.getElementById("nodes");
+      const cablesSvg = document.getElementById("cables");
+      const marquee = document.getElementById("marquee");
+      const preview = document.getElementById("preview");
+      const previewCtx = preview.getContext("2d");
+      const previewEmpty = document.getElementById("preview-empty");
+      const previewName = document.getElementById("preview-name");
+      const libList = document.getElementById("lib-list");
+      const libSearch = document.getElementById("lib-search");
+      const palSearch = document.getElementById("palette-search");
+      const palList = document.getElementById("palette-list");
+      const palDlg = document.getElementById("palette");
+      const helpDlg = document.getElementById("help");
+      const confirmDlg = document.getElementById("confirm");
+      const emptyEl = document.getElementById("empty");
+      const insEmpty = document.getElementById("ins-empty");
+      const insFields = document.getElementById("ins-fields");
+      const insActions = document.getElementById("ins-actions");
+      const graphName = document.getElementById("graph-name");
+      const btnUndo = document.getElementById("btn-undo");
+      const btnRedo = document.getElementById("btn-redo");
+      const btnSnap = document.getElementById("btn-snap");
+      const btnZoom = document.getElementById("btn-zoom");
+      const btnTheme = document.getElementById("btn-theme");
+      const statGraph = document.getElementById("stat-graph");
+      const statEval = document.getElementById("stat-eval");
+      const statMsg = document.getElementById("stat-msg");
+      const scrim = document.getElementById("scrim");
+
+      let nodes = [];
+      let cables = [];
+      let selected = new Set();
+      let viewedId = null;
+      let nid = 1;
+      let cid = 1;
+      let snap = true;
+      let spaceDown = false;
+      let spaceConsumed = false;
+      let view = { x: 80, y: 60, scale: 0.85 };
+      let lastWorld = { x: 400, y: 240 };
+      let history = [];
+      let future = [];
+      let histLock = false;
+      const nodeEls = new Map();
+      const thumbs = new Map();
+      const pointers = new Map();
+      let drag = null;
+      let wiring = null;
+      let box = null;
+      let pinch = null;
+      let palIndex = 0;
+      let evalRaf = 0;
+      let cableRaf = 0;
+      let reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", (e) => {
+        reduced = e.matches;
+      });
+
+      function uid(kind) {
+        if (kind === "c") return "c" + cid++;
+        return "n" + nid++;
+      }
+      function defOf(n) { return DEFS[n.type]; }
+      function nodeById(id) { return nodes.find((n) => n.id === id); }
+      function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+      function lerp(a, b, t) { return a + (b - a) * t; }
+      function escapeText(s) {
+        return String(s).replace(/[&<>"']/g, (ch) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[ch]);
+      }
+      function parseHex(hex) {
+        const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+        if (!m) return { r: 255, g: 255, b: 255 };
+        const n = parseInt(m[1], 16);
+        return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+      }
+      function cssInk(ink) {
+        if (!ink) return "#ffffff";
+        if (ink.hex) return ink.hex;
+        return "rgb(" + ink.r + "," + ink.g + "," + ink.b + ")";
+      }
+      function drawTracked(ctx, text, x, y, trackingEm, size, align) {
+        const tracking = trackingEm * size;
+        ctx.textAlign = "left";
+        if (!text) return;
+        if (Math.abs(tracking) < 0.05) {
+          ctx.textAlign = align;
+          ctx.fillText(text, x, y);
+          return;
+        }
+        const chars = Array.from(text);
+        const widths = chars.map((ch) => ctx.measureText(ch).width);
+        let total = 0;
+        for (let i = 0; i < widths.length; i++) total += widths[i];
+        total += tracking * Math.max(0, chars.length - 1);
+        let cx = x;
+        if (align === "center") cx = x - total / 2;
+        if (align === "right") cx = x - total;
+        for (let i = 0; i < chars.length; i++) {
+          ctx.fillText(chars[i], cx, y);
+          cx += widths[i] + tracking;
+        }
+      }
+      function hash2(x, y, seed) {
+        let n = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 1274126177);
+        n = Math.imul(n ^ (n >>> 13), 1274126177);
+        return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+      }
+      function noiseAt(x, y, seed) {
+        const x0 = Math.floor(x), y0 = Math.floor(y);
+        const fx = x - x0, fy = y - y0;
+        const u = fx * fx * (3 - 2 * fx);
+        const v = fy * fy * (3 - 2 * fy);
+        return lerp(
+          lerp(hash2(x0, y0, seed), hash2(x0 + 1, y0, seed), u),
+          lerp(hash2(x0, y0 + 1, seed), hash2(x0 + 1, y0 + 1, seed), u),
+          v
+        );
+      }
+      function makeCanvas() {
+        const c = document.createElement("canvas");
+        c.width = PW;
+        c.height = PH;
+        return c;
+      }
+      function clearPlate(c, color) {
+        const ctx = c.getContext("2d");
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.filter = "none";
+        if (color) {
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, PW, PH);
+        } else {
+          ctx.clearRect(0, 0, PW, PH);
+        }
+        return ctx;
+      }
+      function copyPlate(src) {
+        const c = makeCanvas();
+        if (src) c.getContext("2d").drawImage(src, 0, 0);
+        return c;
+      }
+      function defaultParams(type) {
+        const out = {};
+        const ps = DEFS[type].params;
+        for (const k of Object.keys(ps)) out[k] = ps[k].value;
+        return out;
+      }
+
+      function snapshot() {
+        return JSON.stringify({
+          nodes: nodes.map((n) => ({
+            id: n.id, type: n.type, x: n.x, y: n.y,
+            params: { ...n.params }, bypass: !!n.bypass, name: n.name
+          })),
+          cables: cables.map((c) => ({
+            id: c.id,
+            from: { node: c.from.node, port: c.from.port },
+            to: { node: c.to.node, port: c.to.port }
+          })),
+          viewedId, name: graphName.value, nid, cid
+        });
+      }
+      function restore(raw) {
+        const s = JSON.parse(raw);
+        nodes = s.nodes;
+        cables = s.cables;
+        viewedId = s.viewedId;
+        nid = s.nid;
+        cid = s.cid;
+        graphName.value = s.name;
+        selected = new Set([...selected].filter((id) => nodeById(id)));
+        rebuildNodes();
+        requestEval();
+        syncChrome();
+      }
+      function pushHist() {
+        if (histLock) return;
+        history.push(snapshot());
+        if (history.length > 80) history.shift();
+        future = [];
+        syncChrome();
+      }
+      function undo() {
+        if (!history.length) return;
+        future.push(snapshot());
+        histLock = true;
+        restore(history.pop());
+        histLock = false;
+        say("Undid last change");
+      }
+      function redo() {
+        if (!future.length) return;
+        history.push(snapshot());
+        histLock = true;
+        restore(future.pop());
+        histLock = false;
+        say("Redid last change");
+      }
+
+      function clientToWorld(cx, cy) {
+        const r = stage.getBoundingClientRect();
+        return {
+          x: (cx - r.left - view.x) / view.scale,
+          y: (cy - r.top - view.y) / view.scale
+        };
+      }
+      function applyView() {
+        world.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.scale + ")";
+        btnZoom.textContent = Math.round(view.scale * 100) + "%";
+      }
+      function viewCenter() {
+        const r = stage.getBoundingClientRect();
+        return clientToWorld(r.left + r.width / 2, r.top + r.height / 2);
+      }
+      function setZoomAt(next, cx, cy) {
+        const r = stage.getBoundingClientRect();
+        const wx = (cx - r.left - view.x) / view.scale;
+        const wy = (cy - r.top - view.y) / view.scale;
+        view.scale = clamp(next, 0.22, 2.2);
+        view.x = cx - r.left - wx * view.scale;
+        view.y = cy - r.top - wy * view.scale;
+        applyView();
+      }
+      function fitView() {
+        if (!nodes.length) {
+          view = { x: 80, y: 60, scale: 1 };
+          applyView();
+          return;
+        }
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const n of nodes) {
+          const el = nodeEls.get(n.id);
+          const w = el ? el.offsetWidth : 196;
+          const h = el ? el.offsetHeight : 110;
+          minX = Math.min(minX, n.x);
+          minY = Math.min(minY, n.y);
+          maxX = Math.max(maxX, n.x + w);
+          maxY = Math.max(maxY, n.y + h);
+        }
+        const r = stage.getBoundingClientRect();
+        const pad = 72;
+        const bw = maxX - minX || 200;
+        const bh = maxY - minY || 200;
+        const s = clamp(Math.min((r.width - pad * 2) / bw, (r.height - pad * 2) / bh), 0.22, 1.4);
+        view.scale = s;
+        view.x = (r.width - bw * s) / 2 - minX * s;
+        view.y = (r.height - bh * s) / 2 - minY * s;
+        applyView();
+      }
+
+      function portWorld(btn) {
+        const dot = btn.querySelector(".port-dot");
+        const r = (dot || btn).getBoundingClientRect();
+        return clientToWorld(r.left + r.width / 2, r.top + r.height / 2);
+      }
+      function cablePath(x1, y1, x2, y2) {
+        const dx = Math.max(48, Math.abs(x2 - x1) * 0.5);
+        return "M " + (x1 + SVG_PAD) + " " + (y1 + SVG_PAD) +
+          " C " + (x1 + SVG_PAD + dx) + " " + (y1 + SVG_PAD) +
+          " " + (x2 + SVG_PAD - dx) + " " + (y2 + SVG_PAD) +
+          " " + (x2 + SVG_PAD) + " " + (y2 + SVG_PAD);
+      }
+      function cableColor(c) {
+        const src = nodeById(c.from.node);
+        if (!src) return TYPE.plate.color;
+        const out = defOf(src).outs.find((p) => p.id === c.from.port);
+        if (out && out.type === "ink") return src.params.color || TYPE.ink.color;
+        return TYPE[out ? out.type : "plate"].color;
+      }
+      function contributingSet() {
+        const keep = new Set();
+        if (!viewedId) return keep;
+        const stack = [viewedId];
+        keep.add(viewedId);
+        while (stack.length) {
+          const id = stack.pop();
+          for (const c of cables) {
+            if (c.to.node === id && !keep.has(c.from.node)) {
+              keep.add(c.from.node);
+              stack.push(c.from.node);
+            }
+          }
+        }
+        return keep;
+      }
+      function scheduleCables() {
+        if (cableRaf) return;
+        cableRaf = requestAnimationFrame(() => {
+          cableRaf = 0;
+          drawCables();
+        });
+      }
+      function drawCables() {
+        const contrib = contributingSet();
+        const isolate = nodes.length > 2 && contrib.size > 0;
+        const parts = [];
+        for (const c of cables) {
+          const a = nodesRoot.querySelector('[data-node="' + c.from.node + '"][data-port="' + c.from.port + '"][data-io="out"]');
+          const b = nodesRoot.querySelector('[data-node="' + c.to.node + '"][data-port="' + c.to.port + '"][data-io="in"]');
+          if (!a || !b) continue;
+          const p1 = portWorld(a);
+          const p2 = portWorld(b);
+          const on = !isolate || contrib.has(c.from.node) && contrib.has(c.to.node);
+          const sel = selected.has(c.from.node) || selected.has(c.to.node);
+          const w = sel ? 2.8 : on ? 2.2 : 1.4;
+          const op = on || sel ? 0.95 : 0.18;
+          parts.push(
+            '<path d="' + cablePath(p1.x, p1.y, p2.x, p2.y) +
+            '" fill="none" stroke="' + cableColor(c) +
+            '" stroke-width="' + w +
+            '" stroke-linecap="round" opacity="' + op + '"/>'
+          );
+        }
+        if (wiring && wiring.cur) {
+          const srcBtn = wiring.startBtn;
+          const p1 = portWorld(srcBtn);
+          const p2 = wiring.cur;
+          const t = wiring.startType;
+          parts.push(
+            '<path d="' + cablePath(
+              wiring.startIo === "out" ? p1.x : p2.x,
+              wiring.startIo === "out" ? p1.y : p2.y,
+              wiring.startIo === "out" ? p2.x : p1.x,
+              wiring.startIo === "out" ? p2.y : p1.y
+            ) + '" fill="none" stroke="' + TYPE[t].color +
+            '" stroke-width="2.2" stroke-linecap="round" opacity="0.9"/>'
+          );
+        }
+        cablesSvg.innerHTML = parts.join("");
+      }
+
+      function subtitle(n) {
+        const p = n.params;
+        if (p.text) return p.text;
+        if (n.type === "ink") return p.color;
+        if (p.mode) return p.mode;
+        if (p.kind) return p.kind;
+        if (n.type === "measure") return String(p.value);
+        return defOf(n).desc;
+      }
+      function buildPort(n, spec, io) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "port" + (io === "out" ? " is-out" : "");
+        btn.dataset.node = n.id;
+        btn.dataset.port = spec.id;
+        btn.dataset.io = io;
+        btn.dataset.type = spec.type;
+        btn.setAttribute("aria-label", TYPE[spec.type].label + " " + (io === "out" ? "output" : "input") + ", " + spec.id);
+        const dot = document.createElement("span");
+        dot.className = "port-dot";
+        dot.dataset.shape = TYPE[spec.type].shape;
+        dot.style.setProperty("--port", TYPE[spec.type].color);
+        const lab = document.createElement("span");
+        lab.textContent = TYPE[spec.type].label;
+        btn.append(dot, lab);
+        btn.addEventListener("pointerdown", onPortDown);
+        return btn;
+      }
+      function buildNodeEl(n) {
+        const d = defOf(n);
+        const el = document.createElement("article");
+        el.className = "node";
+        el.dataset.id = n.id;
+        el.style.left = n.x + "px";
+        el.style.top = n.y + "px";
+        const head = document.createElement("header");
+        head.className = "node-head";
+        const kind = document.createElement("span");
+        kind.className = "node-kind";
+        kind.textContent = d.title;
+        const pip = document.createElement("span");
+        pip.className = "view-pip";
+        pip.title = "On the light table";
+        head.append(kind, pip);
+        const title = document.createElement("h3");
+        title.className = "node-title";
+        title.textContent = subtitle(n);
+        const sub = document.createElement("div");
+        sub.className = "node-sub";
+        sub.textContent = d.desc;
+        el.append(head, title);
+        if (n.type === "ink") {
+          const sw = document.createElement("div");
+          sw.className = "swatch-lg";
+          sw.dataset.role = "swatch";
+          sw.style.background = n.params.color;
+          el.append(sw);
+        }
+        const hasPlateOut = d.outs.some((p) => p.type === "plate");
+        if (hasPlateOut) {
+          const wrap = document.createElement("div");
+          wrap.className = "node-thumb-wrap";
+          const cv = document.createElement("canvas");
+          cv.className = "node-thumb";
+          cv.width = 80;
+          cv.height = 100;
+          wrap.append(cv);
+          wrap.title = "View on the light table";
+          wrap.addEventListener("pointerdown", (e) => e.stopPropagation());
+          wrap.addEventListener("click", () => {
+            viewedId = n.id;
+            selectOnly(n.id);
+            requestEval();
+          });
+          el.append(wrap);
+          thumbs.set(n.id, cv);
+        }
+        el.append(sub);
+        const ports = document.createElement("div");
+        ports.className = "ports";
+        const ins = document.createElement("div");
+        const outs = document.createElement("div");
+        d.ins.forEach((p) => ins.append(buildPort(n, p, "in")));
+        d.outs.forEach((p) => outs.append(buildPort(n, p, "out")));
+        ports.append(ins, outs);
+        el.append(ports);
+        el.addEventListener("pointerdown", (e) => {
+          if (e.target.closest(".port, .node-thumb-wrap")) return;
+          if (e.shiftKey) {
+            if (selected.has(n.id)) selected.delete(n.id);
+            else selected.add(n.id);
+          } else if (!selected.has(n.id)) {
+            selectOnly(n.id);
+          }
+          syncSelection();
+          onNodeDown(e);
+        });
+        if (!reduced) el.classList.add("is-spawned");
+        el.addEventListener("animationend", () => el.classList.remove("is-spawned"));
+        return el;
+      }
+      function rebuildNodes() {
+        nodeEls.forEach((el) => el.remove());
+        nodeEls.clear();
+        thumbs.clear();
+        for (const n of nodes) {
+          const el = buildNodeEl(n);
+          nodeEls.set(n.id, el);
+          nodesRoot.append(el);
+        }
+        syncSelection();
+        emptyEl.classList.toggle("is-on", nodes.length === 0);
+        scheduleCables();
+      }
+      function syncNodePositions() {
+        for (const n of nodes) {
+          const el = nodeEls.get(n.id);
+          if (!el) continue;
+          el.style.left = n.x + "px";
+          el.style.top = n.y + "px";
+        }
+        scheduleCables();
+      }
+      function syncNodeChrome() {
+        const contrib = contributingSet();
+        const isolate = nodes.length > 2 && contrib.size > 0;
+        for (const n of nodes) {
+          const el = nodeEls.get(n.id);
+          if (!el) continue;
+          el.classList.toggle("is-selected", selected.has(n.id));
+          el.classList.toggle("is-viewed", n.id === viewedId);
+          el.classList.toggle("is-dim", isolate && !contrib.has(n.id) && !selected.has(n.id));
+          const title = el.querySelector(".node-title");
+          if (title) title.textContent = subtitle(n);
+          const sw = el.querySelector("[data-role=swatch]");
+          if (sw) sw.style.background = n.params.color;
+        }
+        scheduleCables();
+      }
+      function syncSelection() {
+        syncNodeChrome();
+        renderInspector();
+      }
+      function selectOnly(id) {
+        selected = new Set(id ? [id] : []);
+      }
+
+      function seedFrom(id) {
+        let h = 0;
+        for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+        return h;
+      }
+      function inkValue(v, fallback) {
+        if (v && v.kind === "ink") return v;
+        const rgb = parseHex(fallback || "#ffffff");
+        return { kind: "ink", r: rgb.r, g: rgb.g, b: rgb.b, hex: fallback || "#ffffff" };
+      }
+      function plateValue(v) {
+        if (v && v.kind === "plate" && v.canvas) return v.canvas;
+        return null;
+      }
+      function maskValue(v) {
+        if (v && v.kind === "mask" && v.canvas) return v.canvas;
+        return null;
+      }
+      function measureValue(v, fallback) {
+        if (v && v.kind === "measure") return v.value;
+        return fallback;
+      }
+      function withPixels(canvas, fn) {
+        const ctx = canvas.getContext("2d");
+        const img = ctx.getImageData(0, 0, PW, PH);
+        fn(img.data);
+        ctx.putImageData(img, 0, 0);
+      }
+      function compute(n, inputs) {
+        const p = n.params;
+        if (n.bypass) {
+          const pass = plateValue(inputs.plate) || plateValue(inputs.under);
+          return { plate: { kind: "plate", canvas: copyPlate(pass) } };
+        }
+        switch (n.type) {
+          case "ink": {
+            const rgb = parseHex(p.color);
+            return { ink: { kind: "ink", r: rgb.r, g: rgb.g, b: rgb.b, hex: p.color } };
+          }
+          case "measure":
+            return { value: { kind: "measure", value: Number(p.value) } };
+          case "paper": {
+            const c = makeCanvas();
+            const ctx = clearPlate(c, p.color);
+            const tooth = Number(p.tooth);
+            if (tooth > 0) {
+              const seed = seedFrom(n.id);
+              withPixels(c, (d) => {
+                for (let y = 0; y < PH; y++) {
+                  for (let x = 0; x < PW; x++) {
+                    const i = (y * PW + x) * 4;
+                    const nv = (noiseAt(x / 2.2, y / 2.2, seed) - 0.5) * tooth * 46;
+                    d[i] = clamp(d[i] + nv, 0, 255);
+                    d[i + 1] = clamp(d[i + 1] + nv, 0, 255);
+                    d[i + 2] = clamp(d[i + 2] + nv, 0, 255);
+                  }
+                }
+              });
+            }
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "field": {
+            const a = inkValue(inputs.a, "#121226");
+            const b = inkValue(inputs.b, "#d4683a");
+            const c = makeCanvas();
+            const ctx = clearPlate(c);
+            const ang = (Number(p.angle) * Math.PI) / 180;
+            const sp = Number(p.spread);
+            const cx = PW / 2, cy = PH / 2;
+            const dx = Math.cos(ang) * PW * sp, dy = Math.sin(ang) * PH * sp;
+            const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+            g.addColorStop(0, cssInk(a));
+            g.addColorStop(1, cssInk(b));
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, PW, PH);
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "form": {
+            const ink = inkValue(inputs.ink, "#f3d48a");
+            const size = measureValue(inputs.size, Number(p.size));
+            const c = makeCanvas();
+            const ctx = clearPlate(c);
+            ctx.translate(Number(p.x) * PW, Number(p.y) * PH);
+            ctx.rotate((Number(p.rotate) * Math.PI) / 180);
+            ctx.fillStyle = cssInk(ink);
+            const kind = p.kind;
+            if (kind === "circle") {
+              ctx.beginPath();
+              ctx.arc(0, 0, size * PW, 0, Math.PI * 2);
+              ctx.fill();
+            } else if (kind === "diamond") {
+              const w = Number(p.width) * PW / 2;
+              const h = Number(p.height) * PH / 2;
+              ctx.beginPath();
+              ctx.moveTo(0, -h); ctx.lineTo(w, 0); ctx.lineTo(0, h); ctx.lineTo(-w, 0);
+              ctx.closePath(); ctx.fill();
+            } else if (kind === "rule") {
+              const w = Number(p.width) * PW;
+              ctx.fillRect(-w / 2, -1.5, w, 3);
+            } else {
+              const w = Number(p.width) * PW;
+              const h = Number(p.height) * PH;
+              ctx.fillRect(-w / 2, -h / 2, w, h);
+            }
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "letter": {
+            const ink = inkValue(inputs.ink, "#f0e6d4");
+            const c = makeCanvas();
+            const ctx = clearPlate(c);
+            const size = Number(p.size);
+            ctx.fillStyle = cssInk(ink);
+            ctx.font = "600 " + size + "px " + getComputedStyle(document.documentElement).getPropertyValue("--font-display");
+            ctx.textBaseline = "middle";
+            const text = String(p.text || "");
+            const lines = text.split("\n");
+            const x = Number(p.x) * PW;
+            let y = Number(p.y) * PH - ((lines.length - 1) * size * 0.6);
+            for (const line of lines) {
+              drawTracked(ctx, line, x, y, Number(p.tracking), size, p.align);
+              y += size * 1.15;
+            }
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "iris": {
+            const amount = measureValue(inputs.amount, Number(p.amount));
+            const c = makeCanvas();
+            const ctx = clearPlate(c);
+            const g = ctx.createRadialGradient(PW / 2, PH / 2, 0, PW / 2, PH / 2, Math.max(PW, PH) * amount);
+            g.addColorStop(0, "#ffffff");
+            g.addColorStop(clamp(Number(p.round) * 0.45, 0.1, 0.85), "#ffffff");
+            g.addColorStop(1, "#000000");
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, PW, PH);
+            return { mask: { kind: "mask", canvas: c } };
+          }
+          case "grain": {
+            const src = plateValue(inputs.plate);
+            const c = copyPlate(src);
+            const amt = measureValue(inputs.amount, Number(p.amount));
+            const sz = Number(p.size);
+            const seed = seedFrom(n.id + "g");
+            withPixels(c, (d) => {
+              for (let y = 0; y < PH; y++) {
+                for (let x = 0; x < PW; x++) {
+                  const i = (y * PW + x) * 4;
+                  const nv = (noiseAt(x / sz, y / sz, seed) - 0.5) * amt * 70;
+                  d[i] = clamp(d[i] + nv, 0, 255);
+                  d[i + 1] = clamp(d[i + 1] + nv, 0, 255);
+                  d[i + 2] = clamp(d[i + 2] + nv, 0, 255);
+                }
+              }
+            });
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "gel": {
+            const src = plateValue(inputs.plate);
+            const ink = inkValue(inputs.ink, "#c41e3a");
+            const c = copyPlate(src);
+            const ctx = c.getContext("2d");
+            ctx.globalAlpha = Number(p.strength);
+            ctx.globalCompositeOperation = "multiply";
+            ctx.fillStyle = cssInk(ink);
+            ctx.fillRect(0, 0, PW, PH);
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "stop": {
+            const src = plateValue(inputs.plate);
+            const c = copyPlate(src);
+            const stops = measureValue(inputs.stops, Number(p.stops));
+            const m = Math.pow(2, stops);
+            withPixels(c, (d) => {
+              for (let i = 0; i < d.length; i += 4) {
+                d[i] = clamp(d[i] * m, 0, 255);
+                d[i + 1] = clamp(d[i + 1] * m, 0, 255);
+                d[i + 2] = clamp(d[i + 2] * m, 0, 255);
+              }
+            });
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "grade": {
+            const src = plateValue(inputs.plate);
+            const c = copyPlate(src);
+            const contrast = Number(p.contrast);
+            const temp = Number(p.temp);
+            const sat = Number(p.sat);
+            withPixels(c, (d) => {
+              for (let i = 0; i < d.length; i += 4) {
+                let r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+                r = (r - 0.5) * contrast + 0.5;
+                g = (g - 0.5) * contrast + 0.5;
+                b = (b - 0.5) * contrast + 0.5;
+                r += temp * 0.08;
+                b -= temp * 0.08;
+                const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = l + (r - l) * sat;
+                g = l + (g - l) * sat;
+                b = l + (b - l) * sat;
+                d[i] = clamp(r * 255, 0, 255);
+                d[i + 1] = clamp(g * 255, 0, 255);
+                d[i + 2] = clamp(b * 255, 0, 255);
+              }
+            });
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "overprint": {
+            const under = plateValue(inputs.under);
+            const over = plateValue(inputs.over);
+            const mask = maskValue(inputs.mask);
+            const c = copyPlate(under);
+            const ctx = c.getContext("2d");
+            if (over) {
+              if (mask) {
+                const tmp = copyPlate(over);
+                const tctx = tmp.getContext("2d");
+                tctx.globalCompositeOperation = "destination-in";
+                tctx.drawImage(mask, 0, 0);
+                ctx.globalAlpha = Number(p.opacity);
+                ctx.globalCompositeOperation = BLENDS[p.mode] || "source-over";
+                ctx.drawImage(tmp, 0, 0);
+              } else {
+                ctx.globalAlpha = Number(p.opacity);
+                ctx.globalCompositeOperation = BLENDS[p.mode] || "source-over";
+                ctx.drawImage(over, 0, 0);
+              }
+            }
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "rubylith": {
+            const src = plateValue(inputs.plate);
+            const c = copyPlate(src);
+            const th = Number(p.threshold) * 255;
+            const inv = !!p.invert;
+            withPixels(c, (d) => {
+              for (let i = 0; i < d.length; i += 4) {
+                const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+                let on = l >= th;
+                if (inv) on = !on;
+                const v = on ? 255 : 0;
+                d[i] = d[i + 1] = d[i + 2] = v;
+                d[i + 3] = 255;
+              }
+            });
+            return { mask: { kind: "mask", canvas: c } };
+          }
+          case "register": {
+            const src = plateValue(inputs.plate);
+            const c = makeCanvas();
+            const ctx = clearPlate(c);
+            ctx.translate(PW / 2 + Number(p.dx) * PW, PH / 2 + Number(p.dy) * PH);
+            ctx.rotate((Number(p.rotate) * Math.PI) / 180);
+            ctx.scale(Number(p.scale), Number(p.scale));
+            if (src) ctx.drawImage(src, -PW / 2, -PH / 2);
+            return { plate: { kind: "plate", canvas: c } };
+          }
+          case "plate": {
+            const src = plateValue(inputs.plate);
+            return { plate: { kind: "plate", canvas: copyPlate(src) } };
+          }
+          default:
+            return {};
+        }
+      }
+
+      let graphError = "";
+      function evaluate() {
+        const t0 = performance.now();
+        graphError = "";
+        const cache = new Map();
+        const visiting = new Set();
+        const cyclic = new Set();
+        function evalNode(id) {
+          if (cache.has(id)) return cache.get(id);
+          if (visiting.has(id)) {
+            graphError = "Cycle in the graph. Disconnect a cable to evaluate.";
+            visiting.forEach((x) => cyclic.add(x));
+            cache.set(id, {});
+            return cache.get(id);
+          }
+          const n = nodeById(id);
+          if (!n) return {};
+          visiting.add(id);
+          const d = defOf(n);
+          const inputs = {};
+          for (const spec of d.ins) {
+            const cab = cables.find((c) => c.to.node === id && c.to.port === spec.id);
+            if (cab) {
+              const srcOut = evalNode(cab.from.node);
+              inputs[spec.id] = srcOut[cab.from.port];
+            }
+          }
+          let out = {};
+          try { out = compute(n, inputs) || {}; }
+          catch (err) {
+            graphError = "Unable to evaluate " + d.title + ".";
+            out = {};
+          }
+          visiting.delete(id);
+          cache.set(id, out);
+          return out;
+        }
+        for (const n of nodes) evalNode(n.id);
+        for (const n of nodes) {
+          const out = cache.get(n.id) || {};
+          const plate = out.plate && out.plate.canvas;
+          const thumb = thumbs.get(n.id);
+          if (thumb && plate) {
+            const tctx = thumb.getContext("2d");
+            tctx.clearRect(0, 0, thumb.width, thumb.height);
+            tctx.drawImage(plate, 0, 0, thumb.width, thumb.height);
+          }
+        }
+        let viewNode = nodeById(viewedId);
+        if (!viewNode) {
+          viewNode = [...nodes].reverse().find((n) => n.type === "plate") ||
+            [...nodes].reverse().find((n) => defOf(n).outs.some((p) => p.type === "plate"));
+          viewedId = viewNode ? viewNode.id : null;
+        }
+        previewCtx.fillStyle = "#111018";
+        previewCtx.fillRect(0, 0, PW, PH);
+        let shown = null;
+        if (viewNode) {
+          const out = cache.get(viewNode.id) || {};
+          shown = (out.plate && out.plate.canvas) || (out.mask && out.mask.canvas);
+          previewName.textContent = defOf(viewNode).title + (viewNode.params.text ? " · " + viewNode.params.text : "");
+        } else {
+          previewName.textContent = "Plate";
+        }
+        if (shown) {
+          previewCtx.drawImage(shown, 0, 0);
+          previewEmpty.hidden = true;
+        } else {
+          previewEmpty.hidden = false;
+        }
+        const ms = performance.now() - t0;
+        statEval.textContent = ms.toFixed(1) + " ms";
+        statGraph.textContent = nodes.length + " nodes · " + cables.length + " cables";
+        if (graphError) {
+          statMsg.textContent = graphError;
+          statMsg.dataset.tone = "crit";
+        } else if (!statMsg.dataset.hold) {
+          statMsg.textContent = "";
+          delete statMsg.dataset.tone;
+        }
+        for (const n of nodes) {
+          const el = nodeEls.get(n.id);
+          if (el) el.classList.toggle("is-error", cyclic.has(n.id));
+        }
+        syncNodeChrome();
+      }
+      function requestEval() {
+        if (evalRaf) return;
+        evalRaf = requestAnimationFrame(() => {
+          evalRaf = 0;
+          evaluate();
+        });
+      }
+
+      function spawn(type, x, y, params) {
+        const n = {
+          id: uid("n"),
+          type,
+          x: snap ? Math.round(x / GRID) * GRID : x,
+          y: snap ? Math.round(y / GRID) * GRID : y,
+          params: { ...defaultParams(type), ...(params || {}) },
+          bypass: false
+        };
+        nodes.push(n);
+        const el = buildNodeEl(n);
+        nodeEls.set(n.id, el);
+        nodesRoot.append(el);
+        selectOnly(n.id);
+        if (type === "plate" || !viewedId) viewedId = n.id;
+        emptyEl.classList.toggle("is-on", false);
+        syncSelection();
+        requestEval();
+        return n;
+      }
+      function connect(from, to) {
+        if (from.node === to.node) return false;
+        const a = nodeById(from.node);
+        const b = nodeById(to.node);
+        if (!a || !b) return false;
+        const out = defOf(a).outs.find((p) => p.id === from.port);
+        const inn = defOf(b).ins.find((p) => p.id === to.port);
+        if (!out || !inn || out.type !== inn.type) {
+          say("Those ports do not share a type.", "crit");
+          return false;
+        }
+        const visiting = new Set([to.node]);
+        const stack = [to.node];
+        while (stack.length) {
+          const id = stack.pop();
+          for (const c of cables) {
+            if (c.from.node === id) {
+              if (c.to.node === from.node) {
+                say("That cable would loop the graph.", "crit");
+                return false;
+              }
+              if (!visiting.has(c.to.node)) {
+                visiting.add(c.to.node);
+                stack.push(c.to.node);
+              }
+            }
+          }
+        }
+        cables = cables.filter((c) => !(c.to.node === to.node && c.to.port === to.port));
+        cables.push({ id: uid("c"), from: { ...from }, to: { ...to } });
+        say(defOf(b).title + " receives " + TYPE[inn.type].label.toLowerCase() + " from " + defOf(a).title + ".");
+        return true;
+      }
+      function deleteSelected() {
+        if (!selected.size) return;
+        pushHist();
+        const ids = new Set(selected);
+        nodes = nodes.filter((n) => !ids.has(n.id));
+        cables = cables.filter((c) => !ids.has(c.from.node) && !ids.has(c.to.node));
+        selected = new Set();
+        if (ids.has(viewedId)) viewedId = null;
+        rebuildNodes();
+        requestEval();
+        say("Deleted selection");
+      }
+      function duplicateSelected() {
+        if (!selected.size) return;
+        pushHist();
+        const map = {};
+        const created = [];
+        for (const n of nodes) {
+          if (!selected.has(n.id)) continue;
+          const copy = {
+            id: uid("n"),
+            type: n.type,
+            x: n.x + GRID * 2,
+            y: n.y + GRID * 2,
+            params: { ...n.params },
+            bypass: n.bypass
+          };
+          map[n.id] = copy.id;
+          created.push(copy);
+        }
+        nodes.push(...created);
+        const extra = [];
+        for (const c of cables) {
+          if (map[c.from.node] && map[c.to.node]) {
+            extra.push({
+              id: uid("c"),
+              from: { node: map[c.from.node], port: c.from.port },
+              to: { node: map[c.to.node], port: c.to.port }
+            });
+          }
+        }
+        cables.push(...extra);
+        selected = new Set(created.map((n) => n.id));
+        rebuildNodes();
+        requestEval();
+        say("Duplicated " + created.length + (created.length === 1 ? " node" : " nodes"));
+      }
+
+      function onNodeDown(e) {
+        if (e.button !== 0 && e.pointerType !== "touch") return;
+        if (spaceDown) return;
+        const el = e.currentTarget.closest(".node");
+        const id = el.dataset.id;
+        if (!selected.has(id)) selectOnly(id);
+        const start = clientToWorld(e.clientX, e.clientY);
+        const origins = {};
+        for (const sid of selected) {
+          const n = nodeById(sid);
+          origins[sid] = { x: n.x, y: n.y };
+        }
+        drag = { ids: [...selected], start, origins, pointerId: e.pointerId, moved: false };
+        el.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
+      function onPortDown(e) {
+        if (e.button !== 0 && e.pointerType !== "touch") return;
+        e.stopPropagation();
+        const btn = e.currentTarget;
+        wiring = {
+          startBtn: btn,
+          startNode: btn.dataset.node,
+          startPort: btn.dataset.port,
+          startIo: btn.dataset.io,
+          startType: btn.dataset.type,
+          pointerId: e.pointerId,
+          cur: clientToWorld(e.clientX, e.clientY)
+        };
+        stage.classList.add("is-wiring");
+        btn.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
+
+      function pointerOnStage(e) {
+        lastWorld = clientToWorld(e.clientX, e.clientY);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+          pinch = {
+            dist: Math.hypot(dx, dy),
+            scale: view.scale,
+            midX: (pts[0].x + pts[1].x) / 2,
+            midY: (pts[0].y + pts[1].y) / 2
+          };
+        }
+      }
+      stage.addEventListener("pointerdown", (e) => {
+        stage.focus({ preventScroll: true });
+        pointerOnStage(e);
+        lastWorld = clientToWorld(e.clientX, e.clientY);
+        if (!spaceDown && (e.target.closest(".node") || e.target.closest(".port"))) return;
+        const pan = spaceDown || e.button === 1 || e.pointerType === "touch" || e.button === 2;
+        if (pan) {
+          if (spaceDown) spaceConsumed = true;
+          drag = { pan: true, x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, pointerId: e.pointerId };
+          stage.classList.add("is-panning");
+          stage.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          return;
+        }
+        if (e.button === 0) {
+          if (!e.shiftKey) selectOnly(null);
+          const w = clientToWorld(e.clientX, e.clientY);
+          box = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, pointerId: e.pointerId, additive: e.shiftKey };
+          stage.classList.add("is-boxing");
+          stage.setPointerCapture(e.pointerId);
+        }
+      });
+      window.addEventListener("pointermove", (e) => {
+        if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          const midX = (pts[0].x + pts[1].x) / 2;
+          const midY = (pts[0].y + pts[1].y) / 2;
+          setZoomAt(pinch.scale * (dist / pinch.dist), midX, midY);
+          return;
+        }
+        if (wiring && e.pointerId === wiring.pointerId) {
+          wiring.cur = clientToWorld(e.clientX, e.clientY);
+          const hit = document.elementFromPoint(e.clientX, e.clientY);
+          const port = hit && hit.closest(".port");
+          nodesRoot.querySelectorAll(".port.is-hot, .port.is-bad").forEach((p) => {
+            p.classList.remove("is-hot", "is-bad");
+          });
+          if (port && port.dataset.node !== wiring.startNode) {
+            const okIo = port.dataset.io !== wiring.startIo;
+            const okType = port.dataset.type === wiring.startType;
+            port.classList.add(okIo && okType ? "is-hot" : "is-bad");
+          }
+          scheduleCables();
+          return;
+        }
+        if (drag && drag.pan && e.pointerId === drag.pointerId) {
+          view.x = drag.vx + (e.clientX - drag.x);
+          view.y = drag.vy + (e.clientY - drag.y);
+          applyView();
+          return;
+        }
+        if (drag && drag.ids && e.pointerId === drag.pointerId) {
+          const w = clientToWorld(e.clientX, e.clientY);
+          const dx = w.x - drag.start.x;
+          const dy = w.y - drag.start.y;
+          if (Math.hypot(dx, dy) > 2) drag.moved = true;
+          const useSnap = snap && !e.altKey;
+          for (const id of drag.ids) {
+            const n = nodeById(id);
+            let x = drag.origins[id].x + dx;
+            let y = drag.origins[id].y + dy;
+            if (useSnap) {
+              x = Math.round(x / GRID) * GRID;
+              y = Math.round(y / GRID) * GRID;
+            }
+            n.x = x; n.y = y;
+          }
+          syncNodePositions();
+          return;
+        }
+        if (box && e.pointerId === box.pointerId) {
+          const w = clientToWorld(e.clientX, e.clientY);
+          box.x1 = w.x; box.y1 = w.y;
+          const r = stage.getBoundingClientRect();
+          const x = Math.min(box.x0, box.x1) * view.scale + view.x;
+          const y = Math.min(box.y0, box.y1) * view.scale + view.y;
+          const ww = Math.abs(box.x1 - box.x0) * view.scale;
+          const hh = Math.abs(box.y1 - box.y0) * view.scale;
+          marquee.style.display = "block";
+          marquee.style.left = x + "px";
+          marquee.style.top = y + "px";
+          marquee.style.width = ww + "px";
+          marquee.style.height = hh + "px";
+        }
+      });
+      function endPointer(e) {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinch = null;
+        if (wiring && e.pointerId === wiring.pointerId) {
+          const hit = document.elementFromPoint(e.clientX, e.clientY);
+          const port = hit && hit.closest(".port");
+          if (port) {
+            const a = { node: wiring.startNode, port: wiring.startPort, io: wiring.startIo };
+            const b = { node: port.dataset.node, port: port.dataset.port, io: port.dataset.io };
+            let from, to;
+            if (a.io === "out" && b.io === "in") { from = a; to = b; }
+            else if (a.io === "in" && b.io === "out") { from = b; to = a; }
+            if (from && to) {
+              pushHist();
+              connect({ node: from.node, port: from.port }, { node: to.node, port: to.port });
+              requestEval();
+            }
+          }
+          wiring = null;
+          stage.classList.remove("is-wiring");
+          nodesRoot.querySelectorAll(".port.is-hot, .port.is-bad").forEach((p) => {
+            p.classList.remove("is-hot", "is-bad");
+          });
+          scheduleCables();
+        }
+        if (drag && drag.ids && e.pointerId === drag.pointerId) {
+          if (drag.moved) pushHist();
+          drag = null;
+        }
+        if (drag && drag.pan && e.pointerId === drag.pointerId) {
+          drag = null;
+          stage.classList.remove("is-panning");
+        }
+        if (box && e.pointerId === box.pointerId) {
+          const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1);
+          const y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
+          if (x1 - x0 > 6 || y1 - y0 > 6) {
+            const next = box.additive ? new Set(selected) : new Set();
+            for (const n of nodes) {
+              const el = nodeEls.get(n.id);
+              const w = el ? el.offsetWidth : 196;
+              const h = el ? el.offsetHeight : 110;
+              if (n.x < x1 && n.x + w > x0 && n.y < y1 && n.y + h > y0) next.add(n.id);
+            }
+            selected = next;
+            syncSelection();
+          } else if (!box.additive) {
+            selectOnly(null);
+            syncSelection();
+          }
+          box = null;
+          marquee.style.display = "none";
+          stage.classList.remove("is-boxing");
+        }
+      }
+      window.addEventListener("pointerup", endPointer);
+      window.addEventListener("pointercancel", endPointer);
+
+      stage.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (e.shiftKey) {
+          view.x -= e.deltaY;
+          view.y -= e.deltaX;
+          applyView();
+          return;
+        }
+        const factor = Math.exp(-e.deltaY * 0.0015);
+        setZoomAt(view.scale * factor, e.clientX, e.clientY);
+      }, { passive: false });
+
+      stage.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".node")) return;
+        lastWorld = clientToWorld(e.clientX, e.clientY);
+        openPalette();
+      });
+      stage.addEventListener("contextmenu", (e) => e.preventDefault());
+
+      function typingTarget(el) {
+        if (!el) return false;
+        const tag = el.tagName;
+        return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+      }
+      function say(msg, tone) {
+        statMsg.textContent = msg;
+        if (tone) statMsg.dataset.tone = tone;
+        else delete statMsg.dataset.tone;
+        statMsg.dataset.hold = "1";
+        clearTimeout(say.t);
+        say.t = setTimeout(() => {
+          delete statMsg.dataset.hold;
+          if (!graphError) {
+            statMsg.textContent = "";
+            delete statMsg.dataset.tone;
+          }
+        }, 2400);
+      }
+
+      function filteredTypes(q) {
+        const s = (q || "").trim().toLowerCase();
+        const items = Object.keys(DEFS).map((k) => ({ type: k, ...DEFS[k] }));
+        if (!s) return items;
+        return items.filter((it) =>
+          (it.title + " " + it.desc + " " + it.type + " " + it.cat).toLowerCase().includes(s)
+        );
+      }
+      function renderLibrary() {
+        const q = libSearch.value;
+        const items = filteredTypes(q);
+        libList.innerHTML = "";
+        for (const cat of CATS) {
+          const group = items.filter((it) => it.cat === cat.id);
+          if (!group.length) continue;
+          const h = document.createElement("div");
+          h.className = "cat";
+          h.textContent = cat.label;
+          libList.append(h);
+          for (const it of group) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "lib-item";
+            b.innerHTML = '<span class="lib-swatch" style="--swatch:' + cat.swatch +
+              '"></span><span class="lib-name">' + escapeText(it.title) +
+              '</span><span class="lib-desc">' + escapeText(it.desc) + "</span>";
+            b.addEventListener("click", () => {
+              pushHist();
+              const c = viewCenter();
+              spawn(it.type, c.x - 80, c.y - 40);
+              say("Added " + it.title);
+              app.dataset.panel = "stage";
+              syncDock();
+            });
+            libList.append(b);
+          }
+        }
+        if (!items.length) {
+          const p = document.createElement("p");
+          p.className = "ins-empty";
+          p.textContent = "No nodes match “" + libSearch.value + "”.";
+          libList.append(p);
+        }
+      }
+      function renderPalette() {
+        const items = filteredTypes(palSearch.value);
+        palIndex = clamp(palIndex, 0, Math.max(0, items.length - 1));
+        palList.innerHTML = items.map((it, i) => {
+          const cat = CATS.find((c) => c.id === it.cat);
+          return '<button type="button" role="option" class="' + (i === palIndex ? "is-active" : "") +
+            '" data-type="' + it.type + '"><span class="lib-swatch" style="--swatch:' +
+            (cat ? cat.swatch : "var(--ruby)") + '"></span><span>' + escapeText(it.title) +
+            '</span><span class="meta">' + escapeText(it.desc) + "</span></button>";
+        }).join("") || '<p class="ins-empty">No match.</p>';
+        palList.querySelectorAll("button[data-type]").forEach((b, i) => {
+          b.addEventListener("mouseenter", () => { palIndex = i; renderPalette(); });
+          b.addEventListener("click", () => pickPalette(b.dataset.type));
+        });
+        const active = palList.querySelector(".is-active");
+        if (active) active.scrollIntoView({ block: "nearest" });
+      }
+      function pickPalette(type) {
+        if (!type) return;
+        pushHist();
+        spawn(type, lastWorld.x - 40, lastWorld.y - 20);
+        palDlg.close();
+        stage.focus({ preventScroll: true });
+        say("Added " + DEFS[type].title);
+      }
+      function openPalette() {
+        palSearch.value = "";
+        palIndex = 0;
+        renderPalette();
+        palDlg.showModal();
+        palSearch.focus();
+      }
+
+      function renderInspector() {
+        const id = [...selected][selected.size - 1];
+        const n = nodeById(id);
+        if (!n || selected.size !== 1) {
+          insEmpty.hidden = false;
+          insEmpty.textContent = selected.size > 1
+            ? selected.size + " nodes selected"
+            : "Select a node to edit its inks and measures.";
+          insFields.hidden = true;
+          insActions.hidden = true;
+          insFields.innerHTML = "";
+          return;
+        }
+        insEmpty.hidden = true;
+        insFields.hidden = false;
+        insActions.hidden = false;
+        const d = defOf(n);
+        document.getElementById("ins-heading").textContent = d.title;
+        const bits = [];
+        bits.push(
+          '<label class="check"><input type="checkbox" data-param="bypass"' +
+          (n.bypass ? " checked" : "") + "> Bypass</label>"
+        );
+        for (const key of Object.keys(d.params)) {
+          const spec = d.params[key];
+          const val = n.params[key];
+          bits.push('<div class="field">');
+          bits.push('<label for="p-' + key + '">' + escapeText(spec.label) + "</label>");
+          if (spec.type === "range") {
+            bits.push('<div class="row"><input id="p-' + key + '" type="range" min="' + spec.min +
+              '" max="' + spec.max + '" step="' + spec.step + '" value="' + val +
+              '" data-param="' + key + '"><span class="val" data-val="' + key + '">' + val + "</span></div>");
+          } else if (spec.type === "color") {
+            bits.push('<div class="row"><input id="p-' + key + '" type="color" value="' + val +
+              '" data-param="' + key + '"><input type="text" spellcheck="false" value="' + escapeText(val) +
+              '" data-param="' + key + '" data-as="hex"></div>');
+          } else if (spec.type === "enum") {
+            bits.push('<select id="p-' + key + '" data-param="' + key + '">' +
+              spec.options.map((o) => '<option' + (o === val ? " selected" : "") + ">" + o + "</option>").join("") +
+              "</select>");
+          } else if (spec.type === "check") {
+            bits.push('<label class="check"><input id="p-' + key + '" type="checkbox" data-param="' +
+              key + '"' + (val ? " checked" : "") + "> " + escapeText(spec.label) + "</label>");
+          } else {
+            bits.push('<input id="p-' + key + '" type="text" data-param="' + key + '" value="' +
+              escapeText(val) + '" spellcheck="false">');
+          }
+          bits.push("</div>");
+        }
+        insFields.innerHTML = bits.join("");
+        insFields.oninput = insFields.onchange = (e) => {
+          const t = e.target;
+          const key = t.dataset.param;
+          if (!key) return;
+          if (key === "bypass") {
+            n.bypass = t.checked;
+          } else if (t.type === "checkbox") {
+            n.params[key] = t.checked;
+          } else if (t.type === "range") {
+            n.params[key] = Number(t.value);
+            const lab = insFields.querySelector('[data-val="' + key + '"]');
+            if (lab) lab.textContent = t.value;
+          } else {
+            n.params[key] = t.value;
+            if (t.dataset.as === "hex" || t.type === "color") {
+              const other = insFields.querySelector(
+                t.type === "color" ? 'input[data-as=hex][data-param="' + key + '"]'
+                  : 'input[type=color][data-param="' + key + '"]'
+              );
+              if (other && /^#?[0-9a-f]{6}$/i.test(t.value)) {
+                const hex = t.value.startsWith("#") ? t.value : "#" + t.value;
+                n.params[key] = hex;
+                other.value = hex;
+              }
+            }
+          }
+          if (!insFields._hist) {
+            pushHist();
+            insFields._hist = true;
+            setTimeout(() => { insFields._hist = false; }, 400);
+          }
+          syncNodeChrome();
+          requestEval();
+        };
+      }
+
+      function loadNightShift() {
+        nodes = [];
+        cables = [];
+        selected = new Set();
+        nid = 1; cid = 1;
+        const add = (type, x, y, params) => {
+          const n = { id: uid("n"), type, x, y, params: { ...defaultParams(type), ...params }, bypass: false };
+          nodes.push(n);
+          return n;
+        };
+        const inkBone = add("ink", 48, 48, { color: "#f0e6d4" });
+        const inkNight = add("ink", 48, 188, { color: "#121226" });
+        const inkHorizon = add("ink", 48, 328, { color: "#d4683a" });
+        const inkMoon = add("ink", 48, 468, { color: "#f3d48a" });
+        const paper = add("paper", 280, 64, { color: "#e8d5b7", tooth: 0.1 });
+        const field = add("field", 280, 268, { angle: 168, spread: 1.05 });
+        const moon = add("form", 280, 488, { kind: "circle", x: 0.74, y: 0.2, size: 0.14 });
+        const title = add("letter", 280, 668, {
+          text: "NIGHT SHIFT", size: 26, y: 0.68, tracking: 0.18, align: "center"
+        });
+        const credit = add("letter", 280, 848, {
+          text: "THE FOUNDRY  ·  OCT 12", size: 11, y: 0.8, tracking: 0.22, align: "center",
+        });
+        const mix1 = add("overprint", 560, 200, { mode: "multiply", opacity: 0.92 });
+        const mix2 = add("overprint", 800, 260, { mode: "screen", opacity: 0.9 });
+        const mix3 = add("overprint", 1040, 330, { mode: "over", opacity: 1 });
+        const mix4 = add("overprint", 1280, 400, { mode: "over", opacity: 0.92 });
+        const grain = add("grain", 1520, 400, { amount: 0.16, size: 1.1 });
+        const grade = add("grade", 1760, 400, { contrast: 1.14, temp: 0.1, sat: 1.08 });
+        const plate = add("plate", 2000, 400, {});
+        const link = (a, ap, b, bp) => {
+          cables.push({ id: uid("c"), from: { node: a.id, port: ap }, to: { node: b.id, port: bp } });
+        };
+        link(inkNight, "ink", field, "a");
+        link(inkHorizon, "ink", field, "b");
+        link(inkMoon, "ink", moon, "ink");
+        link(inkBone, "ink", title, "ink");
+        link(inkBone, "ink", credit, "ink");
+        link(paper, "plate", mix1, "under");
+        link(field, "plate", mix1, "over");
+        link(mix1, "plate", mix2, "under");
+        link(moon, "plate", mix2, "over");
+        link(mix2, "plate", mix3, "under");
+        link(title, "plate", mix3, "over");
+        link(mix3, "plate", mix4, "under");
+        link(credit, "plate", mix4, "over");
+        link(mix4, "plate", grain, "plate");
+        link(grain, "plate", grade, "plate");
+        link(grade, "plate", plate, "plate");
+        viewedId = plate.id;
+        graphName.value = "Night Shift";
+        rebuildNodes();
+        requestEval();
+      }
+      function loadBlank() {
+        nodes = [];
+        cables = [];
+        selected = new Set();
+        viewedId = null;
+        nid = 1; cid = 1;
+        graphName.value = "Untitled plate";
+        rebuildNodes();
+        requestEval();
+      }
+
+      function syncChrome() {
+        btnUndo.disabled = !history.length;
+        btnRedo.disabled = !future.length;
+        btnSnap.setAttribute("aria-pressed", snap ? "true" : "false");
+      }
+      function syncDock() {
+        document.querySelectorAll(".dock button").forEach((b) => {
+          b.setAttribute("aria-current", b.dataset.panel === app.dataset.panel ? "true" : "false");
+        });
+        scrim.hidden = app.dataset.panel === "stage";
+      }
+      function isMod(e) { return e.ctrlKey || e.metaKey; }
+
+      document.getElementById("btn-add").addEventListener("click", openPalette);
+      document.getElementById("btn-fit").addEventListener("click", fitView);
+      btnZoom.addEventListener("click", () => {
+        const r = stage.getBoundingClientRect();
+        setZoomAt(1, r.left + r.width / 2, r.top + r.height / 2);
+      });
+      btnUndo.addEventListener("click", undo);
+      btnRedo.addEventListener("click", redo);
+      btnSnap.addEventListener("click", () => {
+        snap = !snap;
+        syncChrome();
+        say(snap ? "Snap on" : "Snap off");
+      });
+      btnTheme.addEventListener("click", () => {
+        const next = document.documentElement.dataset.theme === "day" ? "studio" : "day";
+        const freeze = document.createElement("style");
+        freeze.textContent = "*,*::before,*::after{transition:none !important}";
+        document.head.append(freeze);
+        document.documentElement.dataset.theme = next;
+        document.documentElement.offsetHeight;
+        freeze.remove();
+        document.querySelector('meta[name="color-scheme"]').setAttribute("content", next === "day" ? "light" : "dark");
+        btnTheme.setAttribute("aria-label", next === "day" ? "Switch to studio" : "Switch to daylight");
+        try { localStorage.setItem("rubylith-theme", next); } catch (err) {}
+      });
+      document.getElementById("btn-help").addEventListener("click", () => helpDlg.showModal());
+      document.getElementById("btn-view").addEventListener("click", () => {
+        const id = [...selected][0];
+        if (id) { viewedId = id; requestEval(); }
+      });
+      document.getElementById("btn-delete").addEventListener("click", deleteSelected);
+      document.getElementById("empty-paper").addEventListener("click", () => {
+        pushHist();
+        const c = viewCenter();
+        spawn("paper", c.x - 90, c.y - 20);
+      });
+      document.getElementById("empty-example").addEventListener("click", () => {
+        pushHist();
+        loadNightShift();
+        fitView();
+      });
+      document.querySelectorAll("[data-close]").forEach((b) => {
+        b.addEventListener("click", () => document.getElementById(b.dataset.close).close());
+      });
+      palSearch.addEventListener("input", () => { palIndex = 0; renderPalette(); });
+      palDlg.addEventListener("keydown", (e) => {
+        const items = filteredTypes(palSearch.value);
+        if (e.key === "ArrowDown") { e.preventDefault(); palIndex = Math.min(items.length - 1, palIndex + 1); renderPalette(); }
+        if (e.key === "ArrowUp") { e.preventDefault(); palIndex = Math.max(0, palIndex - 1); renderPalette(); }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (items[palIndex]) pickPalette(items[palIndex].type);
+        }
+      });
+      libSearch.addEventListener("input", renderLibrary);
+      document.querySelectorAll(".dock button").forEach((b) => {
+        b.addEventListener("click", () => {
+          app.dataset.panel = b.dataset.panel;
+          syncDock();
+        });
+      });
+      scrim.addEventListener("click", () => { app.dataset.panel = "stage"; syncDock(); });
+      document.getElementById("confirm-cancel").addEventListener("click", () => confirmDlg.close());
+      document.getElementById("confirm-ok").addEventListener("click", () => {
+        confirmDlg.close();
+        pushHist();
+        loadBlank();
+        say("Cleared plate");
+      });
+
+      function canvasHotkeyTarget(el) {
+        if (!el || typingTarget(el)) return false;
+        if (el.closest && el.closest("button, a, input, select, textarea, dialog")) return false;
+        return true;
+      }
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (palDlg.open) palDlg.close();
+          else if (helpDlg.open) helpDlg.close();
+          else if (confirmDlg.open) confirmDlg.close();
+          else if (app.dataset.panel !== "stage") { app.dataset.panel = "stage"; syncDock(); }
+          else { selectOnly(null); syncSelection(); }
+          return;
+        }
+        if (e.code === "Space" && canvasHotkeyTarget(e.target) && !palDlg.open) {
+          e.preventDefault();
+          if (!e.repeat) {
+            spaceDown = true;
+            spaceConsumed = false;
+          }
+          return;
+        }
+        if (palDlg.open || helpDlg.open || confirmDlg.open) return;
+        if (typingTarget(e.target)) return;
+        if (isMod(e) && e.key.toLowerCase() === "z") {
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+        } else if (isMod(e) && e.key.toLowerCase() === "y") {
+          e.preventDefault(); redo();
+        } else if (isMod(e) && e.key.toLowerCase() === "d") {
+          e.preventDefault(); duplicateSelected();
+        } else if (isMod(e) && e.key.toLowerCase() === "a") {
+          e.preventDefault();
+          selected = new Set(nodes.map((n) => n.id));
+          syncSelection();
+        } else if ((e.key === "Delete" || e.key === "Backspace") && canvasHotkeyTarget(e.target)) {
+          e.preventDefault();
+          deleteSelected();
+        } else if ((e.key === "f" || e.key === "F") && canvasHotkeyTarget(e.target)) {
+          e.preventDefault(); fitView();
+        } else if (e.key === "1" && !isMod(e) && canvasHotkeyTarget(e.target)) {
+          const r = stage.getBoundingClientRect();
+          setZoomAt(1, r.left + r.width / 2, r.top + r.height / 2);
+        } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+          helpDlg.showModal();
+        } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) && selected.size) {
+          e.preventDefault();
+          pushHist();
+          const d = e.shiftKey ? GRID : 1;
+          const dx = e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0;
+          const dy = e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0;
+          for (const id of selected) {
+            const n = nodeById(id);
+            n.x += dx; n.y += dy;
+          }
+          syncNodePositions();
+        }
+      });
+      window.addEventListener("keyup", (e) => {
+        if (e.code !== "Space") return;
+        if (spaceDown && !spaceConsumed && !palDlg.open && canvasHotkeyTarget(document.activeElement) && !drag) {
+          e.preventDefault();
+          openPalette();
+        }
+        spaceDown = false;
+        spaceConsumed = false;
+      });
+
+      try {
+        const t = localStorage.getItem("rubylith-theme");
+        if (t === "day" || t === "studio") {
+          document.documentElement.dataset.theme = t;
+          document.querySelector('meta[name="color-scheme"]').setAttribute("content", t === "day" ? "light" : "dark");
+          btnTheme.setAttribute("aria-label", t === "day" ? "Switch to studio" : "Switch to daylight");
+        }
+      } catch (err) {}
+
+      renderLibrary();
+      loadNightShift();
+      applyView();
+      requestAnimationFrame(() => {
+        fitView();
+        requestEval();
+        syncChrome();
+      });
+    })();
+  </script>
+</body>
+</html>
+

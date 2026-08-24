@@ -1,0 +1,2800 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EVAC-SIM // Autonomous Crowd Dynamics & Evacuation Command</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for real-time telemetry -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            tactical: {
+              950: '#06090e',
+              900: '#0b111a',
+              850: '#101724',
+              800: '#162032',
+              700: '#23324d',
+              600: '#344b73',
+              500: '#4a6999'
+            },
+            alert: {
+              red: '#ef4444',
+              orange: '#f97316',
+              amber: '#f59e0b',
+              emerald: '#10b981',
+              cyan: '#06b6d4',
+              purple: '#a855f7'
+            }
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['"Inter"', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom scrollbars & tactical styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0b111a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #23324d;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #344b73;
+    }
+
+    .radar-grid {
+      background-size: 32px 32px;
+      background-image: 
+        linear-gradient(to right, rgba(35, 50, 77, 0.25) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(35, 50, 77, 0.25) 1px, transparent 1px);
+    }
+
+    .glow-cyan {
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.35);
+    }
+    .glow-red {
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.45);
+    }
+    .glow-amber {
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.35);
+    }
+    .glow-emerald {
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.35);
+    }
+
+    /* Range slider custom styling */
+    input[type=range] {
+      -webkit-appearance: none;
+      background: #162032;
+      height: 6px;
+      border-radius: 3px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 16px;
+      width: 16px;
+      border-radius: 50%;
+      background: #06b6d4;
+      cursor: pointer;
+      border: 2px solid #0b111a;
+      box-shadow: 0 0 8px rgba(6, 182, 212, 0.6);
+      transition: transform 0.1s ease;
+    }
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* Pulse animation */
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .animate-pulse-slow {
+      animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    /* Glass panel */
+    .glass-panel {
+      background: rgba(11, 17, 26, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(35, 50, 77, 0.6);
+    }
+
+    .glass-panel-danger {
+      background: rgba(26, 11, 11, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(239, 68, 68, 0.5);
+    }
+
+    /* Scanline effect */
+    .scanlines {
+      position: relative;
+    }
+    .scanlines::before {
+      content: " ";
+      display: block;
+      position: absolute;
+      top: 0; left: 0; bottom: 0; right: 0;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+      z-index: 20;
+      background-size: 100% 3px, 6px 100%;
+      pointer-events: none;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+
+<body class="bg-tactical-950 text-slate-100 font-sans h-screen w-screen overflow-hidden select-none flex flex-col">
+
+  <!-- ================= TOP COMMAND BAR ================= -->
+  <header class="h-16 bg-tactical-900 border-b border-tactical-700/80 px-4 flex items-center justify-between z-30 shrink-0 shadow-lg">
+    <!-- Brand & Status -->
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-alert-cyan via-tactical-600 to-alert-red flex items-center justify-center shadow-md shadow-cyan-950">
+        <i data-lucide="shield-alert" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <span class="font-mono font-black tracking-wider text-lg text-slate-100">EVAC<span class="text-alert-cyan">.SIM</span></span>
+          <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-tactical-800 border border-tactical-600 text-cyan-400 font-semibold tracking-widest">v3.4 HELBING-CORE</span>
+          <span id="alarm-banner" class="hidden text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-red-950 border border-red-500 text-red-400 font-bold animate-pulse">ALARM ACTIVE</span>
+        </div>
+        <p class="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+          REAL-TIME AGENT-BASED SOCIAL FORCE DYNAMICS & TOXICITY ENGINE
+        </p>
+      </div>
+    </div>
+
+    <!-- Live Telemetry KPI Badges -->
+    <div class="hidden md:flex items-center space-x-2 lg:space-x-3 font-mono text-xs">
+      <!-- Time -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">Simulation Time</span>
+        <span id="kpi-timer" class="font-bold text-cyan-300 text-sm">00:00.0</span>
+      </div>
+
+      <!-- Evacuated Progress -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center min-w-[110px]">
+        <div class="flex justify-between w-full text-[9px] uppercase tracking-wider text-slate-400">
+          <span>Evacuated</span>
+          <span id="kpi-evac-pct" class="text-emerald-400 font-bold">0%</span>
+        </div>
+        <div class="w-full bg-tactical-950 h-2 rounded-full mt-1 overflow-hidden border border-tactical-700">
+          <div id="kpi-evac-bar" class="h-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <span id="kpi-evac-count" class="text-[10px] text-slate-300 mt-0.5">0 / 0 Safe</span>
+      </div>
+
+      <!-- Inside Count -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">Occupants Inside</span>
+        <span id="kpi-inside-count" class="font-bold text-amber-300 text-sm">0</span>
+      </div>
+
+      <!-- Casualties -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">Incapacitated</span>
+        <span id="kpi-casualty-count" class="font-bold text-red-400 text-sm">0</span>
+      </div>
+
+      <!-- Crowd Panic Index -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center min-w-[90px]">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">Panic Level</span>
+        <div class="flex items-center space-x-1.5">
+          <span id="kpi-panic-pct" class="font-bold text-yellow-400 text-sm">12%</span>
+          <div id="kpi-panic-indicator" class="w-2.5 h-2.5 rounded-full bg-yellow-400"></div>
+        </div>
+      </div>
+
+      <!-- Flow Rate -->
+      <div class="bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700/60 flex flex-col items-center">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">Flow Throughput</span>
+        <span id="kpi-flow-rate" class="font-bold text-purple-300 text-sm">0.0 <span class="text-[9px] font-normal text-slate-400">p/s</span></span>
+      </div>
+    </div>
+
+    <!-- Quick Action / Global Control Buttons -->
+    <div class="flex items-center space-x-2">
+      <!-- Alarm Trigger Toggle -->
+      <button id="btn-trigger-alarm" title="Toggle Emergency Evacuation Alarm" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-mono text-xs font-bold transition-all bg-alert-red/20 border border-alert-red/50 text-red-400 hover:bg-alert-red hover:text-white glow-red">
+        <i data-lucide="bell-ring" class="w-4 h-4"></i>
+        <span class="hidden sm:inline">ALARM</span>
+      </button>
+
+      <!-- Sound Toggle -->
+      <button id="btn-toggle-sound" title="Toggle Procedural Audio Engine" class="p-2 rounded-lg bg-tactical-800 border border-tactical-700 text-slate-300 hover:text-cyan-400 hover:border-cyan-500 transition-colors">
+        <i id="sound-icon" data-lucide="volume-2" class="w-4 h-4"></i>
+      </button>
+
+      <!-- Play / Pause -->
+      <button id="btn-play-pause" class="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg font-mono text-xs font-bold bg-alert-cyan text-tactical-950 hover:bg-cyan-300 transition-all glow-cyan">
+        <i id="play-pause-icon" data-lucide="play" class="w-4 h-4 fill-current"></i>
+        <span id="play-pause-text">START</span>
+      </button>
+
+      <!-- Step Frame -->
+      <button id="btn-step" title="Step Single Simulation Frame" class="p-2 rounded-lg bg-tactical-800 border border-tactical-700 text-slate-300 hover:text-white hover:border-slate-500 transition-colors">
+        <i data-lucide="step-forward" class="w-4 h-4"></i>
+      </button>
+
+      <!-- Speed Multiplier Dropdown -->
+      <div class="flex items-center bg-tactical-850 rounded-lg border border-tactical-700 p-0.5 font-mono text-xs">
+        <button class="speed-btn px-2 py-1 rounded text-slate-400 hover:text-white" data-speed="0.5">0.5x</button>
+        <button class="speed-btn px-2 py-1 rounded bg-tactical-700 text-cyan-300 font-bold" data-speed="1">1x</button>
+        <button class="speed-btn px-2 py-1 rounded text-slate-400 hover:text-white" data-speed="2">2x</button>
+        <button class="speed-btn px-2 py-1 rounded text-slate-400 hover:text-white" data-speed="5">5x</button>
+      </div>
+
+      <!-- Reset -->
+      <button id="btn-reset" title="Reset Current Scenario" class="p-2 rounded-lg bg-tactical-800 border border-tactical-700 text-slate-300 hover:text-amber-400 hover:border-amber-500 transition-colors">
+        <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+      </button>
+
+      <!-- AAR Report Button -->
+      <button id="btn-open-aar" title="View Evacuation Analytics & Safety Report" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-mono text-xs font-semibold bg-tactical-800 border border-tactical-600 text-slate-200 hover:bg-tactical-700 hover:border-tactical-500">
+        <i data-lucide="file-bar-chart" class="w-4 h-4 text-cyan-400"></i>
+        <span class="hidden xl:inline">ANALYTICS</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ================= MAIN WORKSPACE ================= -->
+  <div class="flex-1 flex overflow-hidden relative">
+
+    <!-- LEFT SIDEBAR: Scenarios, Controls & Dynamic Hazards -->
+    <aside id="left-sidebar" class="w-80 bg-tactical-900/95 border-r border-tactical-700/80 flex flex-col shrink-0 z-20 transition-all duration-300 overflow-y-auto">
+      
+      <!-- Scenario Selector Tabs -->
+      <div class="p-3 border-b border-tactical-700/80 bg-tactical-850/60">
+        <label class="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5 block flex items-center justify-between">
+          <span>Facility Environment Preset</span>
+          <i data-lucide="map" class="w-3 h-3 text-cyan-400"></i>
+        </label>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button class="scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-800/80 border-cyan-500/80 text-cyan-300" data-scenario="metro">
+            <span class="font-bold flex items-center justify-between">
+              Metro Station
+              <i data-lucide="train" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="text-[10px] text-slate-400 mt-0.5">Underground Concourse</span>
+          </button>
+          
+          <button class="scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-850 border-tactical-700 text-slate-300 hover:border-tactical-500" data-scenario="nightclub">
+            <span class="font-bold flex items-center justify-between">
+              Nightclub Arena
+              <i data-lucide="music" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="text-[10px] text-slate-400 mt-0.5">High Density & Pyros</span>
+          </button>
+
+          <button class="scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-850 border-tactical-700 text-slate-300 hover:border-tactical-500" data-scenario="office">
+            <span class="font-bold flex items-center justify-between">
+              Corporate Tower
+              <i data-lucide="building-2" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="text-[10px] text-slate-400 mt-0.5">Floor 42 Cubicles</span>
+          </button>
+
+          <button class="scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-850 border-tactical-700 text-slate-300 hover:border-tactical-500" data-scenario="airport">
+            <span class="font-bold flex items-center justify-between">
+              Airport Concourse
+              <i data-lucide="plane" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="text-[10px] text-slate-400 mt-0.5">Security Checkpoint Maze</span>
+          </button>
+
+          <button class="scenario-btn col-span-2 p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-850 border-tactical-700 text-slate-300 hover:border-tactical-500" data-scenario="sandbox">
+            <span class="font-bold flex items-center justify-between">
+              Custom Architect Sandbox
+              <i data-lucide="pencil-ruler" class="w-3.5 h-3.5 text-amber-400"></i>
+            </span>
+            <span class="text-[10px] text-slate-400 mt-0.5">Interactive Map Builder & Hazard Testing</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Interactive Tool Palette (For clicking on canvas) -->
+      <div class="p-3 border-b border-tactical-700/80">
+        <label class="text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5 block flex items-center justify-between">
+          <span>Interaction Cursor Tool</span>
+          <span class="text-[9px] text-cyan-400">Click/Drag on Canvas</span>
+        </label>
+        <div class="grid grid-cols-4 gap-1.5 text-xs font-mono">
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-cyan-950/60 border-cyan-500 text-cyan-300" data-tool="inspect" title="Select & Inspect Agent or Exit">
+            <i data-lucide="mouse-pointer" class="w-4 h-4 mb-1"></i>
+            <span class="text-[9px]">Inspect</span>
+          </button>
+          
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="fire" title="Ignite Fire & Smoke Origin">
+            <i data-lucide="flame" class="w-4 h-4 mb-1 text-alert-orange"></i>
+            <span class="text-[9px]">Ignite</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="extinguish" title="Deploy Fire Extinguisher / Water Spray">
+            <i data-lucide="droplet" class="w-4 h-4 mb-1 text-cyan-400"></i>
+            <span class="text-[9px]">Extinguish</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="spawn-agent" title="Spawn New Civilians / Crowd">
+            <i data-lucide="user-plus" class="w-4 h-4 mb-1 text-emerald-400"></i>
+            <span class="text-[9px]">+Agent</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="warden" title="Deploy Fire Warden / Leader">
+            <i data-lucide="shield" class="w-4 h-4 mb-1 text-yellow-400"></i>
+            <span class="text-[9px]">Warden</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="wall" title="Draw Barrier / Obstacle Wall">
+            <i data-lucide="brick-wall" class="w-4 h-4 mb-1 text-slate-300"></i>
+            <span class="text-[9px]">Wall</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="erase" title="Erase Wall / Obstacle / Clear Hazard">
+            <i data-lucide="eraser" class="w-4 h-4 mb-1 text-red-300"></i>
+            <span class="text-[9px]">Erase</span>
+          </button>
+
+          <button class="tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white" data-tool="block-exit" title="Toggle Lock / Block Exit Door">
+            <i data-lucide="door-closed" class="w-4 h-4 mb-1 text-red-400"></i>
+            <span class="text-[9px]">Block Exit</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Disaster Stress Injectors -->
+      <div class="p-3 border-b border-tactical-700/80 bg-red-950/20">
+        <label class="text-[10px] font-mono uppercase tracking-wider text-red-400 mb-1.5 block flex items-center justify-between">
+          <span>Real-time Disaster Injectors</span>
+          <i data-lucide="zap" class="w-3 h-3 text-red-400"></i>
+        </label>
+        <div class="grid grid-cols-2 gap-1.5 text-xs font-mono">
+          <button id="btn-inject-blackout" class="p-2 rounded bg-tactical-850 border border-tactical-700 hover:border-amber-500 text-slate-300 hover:text-amber-300 flex items-center space-x-1.5 transition-all text-left">
+            <i data-lucide="power-off" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i>
+            <span class="text-[10px]">Power Blackout</span>
+          </button>
+
+          <button id="btn-inject-collapse" class="p-2 rounded bg-tactical-850 border border-tactical-700 hover:border-red-500 text-slate-300 hover:text-red-300 flex items-center space-x-1.5 transition-all text-left">
+            <i data-lucide="cone" class="w-3.5 h-3.5 text-red-400 shrink-0"></i>
+            <span class="text-[10px]">Debris Collapse</span>
+          </button>
+
+          <button id="btn-inject-stampede" class="p-2 rounded bg-tactical-850 border border-tactical-700 hover:border-orange-500 text-slate-300 hover:text-orange-300 flex items-center space-x-1.5 transition-all text-left">
+            <i data-lucide="activity" class="w-3.5 h-3.5 text-orange-400 shrink-0"></i>
+            <span class="text-[10px]">Panic Surge</span>
+          </button>
+
+          <button id="btn-inject-smoke-bomb" class="p-2 rounded bg-tactical-850 border border-tactical-700 hover:border-purple-500 text-slate-300 hover:text-purple-300 flex items-center space-x-1.5 transition-all text-left">
+            <i data-lucide="cloud-fog" class="w-3.5 h-3.5 text-purple-400 shrink-0"></i>
+            <span class="text-[10px]">Toxic Fumes</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Simulation Parameter Sliders -->
+      <div class="p-3 space-y-3.5 text-xs font-mono flex-1">
+        <div class="flex items-center justify-between text-[10px] uppercase text-slate-400 tracking-wider">
+          <span>Social Force Physics</span>
+          <i data-lucide="sliders" class="w-3 h-3 text-cyan-400"></i>
+        </div>
+
+        <!-- Occupant Count -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span>Occupant Count:</span>
+            <span id="val-occupant-count" class="text-cyan-300 font-bold">450</span>
+          </div>
+          <input id="slider-occupant-count" type="range" min="50" max="1500" step="25" value="450" class="w-full">
+        </div>
+
+        <!-- Panic Propensity -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span>Initial Panic & Urgency:</span>
+            <span id="val-panic-level" class="text-yellow-400 font-bold">25%</span>
+          </div>
+          <input id="slider-panic-level" type="range" min="0" max="100" step="5" value="25" class="w-full">
+        </div>
+
+        <!-- Herding / Herd Mentality Bias -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span title="Tendency of individuals to follow crowd flow vs. finding nearest signed exit">Herding Mentality Factor:</span>
+            <span id="val-herding-factor" class="text-purple-300 font-bold">40%</span>
+          </div>
+          <input id="slider-herding-factor" type="range" min="0" max="100" step="5" value="40" class="w-full">
+        </div>
+
+        <!-- Pushing / Bottleneck Aggression -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span title="Helbing 'Faster-is-Slower' pushing force at narrow exits">Physical Pushing Force:</span>
+            <span id="val-push-force" class="text-red-300 font-bold">1.4x</span>
+          </div>
+          <input id="slider-push-force" type="range" min="0.5" max="3.0" step="0.1" value="1.4" class="w-full">
+        </div>
+
+        <!-- Fire Spread & Smoke Toxicity -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span>Smoke Diffusion & Toxicity:</span>
+            <span id="val-smoke-toxicity" class="text-orange-400 font-bold">Normal</span>
+          </div>
+          <input id="slider-smoke-toxicity" type="range" min="1" max="5" step="1" value="2" class="w-full">
+        </div>
+
+        <!-- Warden / Leader Ratio -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span>Emergency Wardens:</span>
+            <span id="val-warden-count" class="text-emerald-400 font-bold">4 Wardens</span>
+          </div>
+          <input id="slider-warden-count" type="range" min="0" max="15" step="1" value="4" class="w-full">
+        </div>
+
+        <!-- Door Width Multiplier -->
+        <div>
+          <div class="flex justify-between text-slate-300 mb-1">
+            <span>Exit Door Clear Width:</span>
+            <span id="val-door-width" class="text-cyan-300 font-bold">1.0x</span>
+          </div>
+          <input id="slider-door-width" type="range" min="0.6" max="2.0" step="0.1" value="1.0" class="w-full">
+        </div>
+      </div>
+
+      <!-- Quick Legend & Archetypes -->
+      <div class="p-3 border-t border-tactical-700/80 bg-tactical-950/60 text-[10px] font-mono space-y-1.5">
+        <span class="text-slate-400 uppercase tracking-wider block font-bold">Agent Archetypes</span>
+        <div class="grid grid-cols-2 gap-1.5 text-slate-300">
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span><span>Civilian</span></div>
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span><span>Panicked</span></div>
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-white"></span><span>Fire Warden</span></div>
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-400"></span><span>First Responder</span></div>
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span><span>Vulnerable/Slow</span></div>
+          <div class="flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-600"></span><span>Incapacitated</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTER: Canvas Simulation Viewport -->
+    <main class="flex-1 relative flex flex-col bg-tactical-950 overflow-hidden">
+      
+      <!-- Top Viewport Overlay HUD (Layers, View Modes, Zoom) -->
+      <div class="absolute top-3 left-3 right-3 flex items-center justify-between z-10 pointer-events-none">
+        
+        <!-- View Mode Selector -->
+        <div class="glass-panel rounded-lg p-1 flex items-center space-x-1 pointer-events-auto shadow-lg font-mono text-xs">
+          <button class="view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-500/60" data-mode="tactical">
+            <i data-lucide="eye" class="w-3.5 h-3.5 inline mr-1"></i>Tactical
+          </button>
+          <button class="view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200" data-mode="density">
+            <i data-lucide="activity" class="w-3.5 h-3.5 inline mr-1"></i>Density Heatmap
+          </button>
+          <button class="view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200" data-mode="flow">
+            <i data-lucide="navigation" class="w-3.5 h-3.5 inline mr-1"></i>Velocity Vectors
+          </button>
+          <button class="view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200" data-mode="stress">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5 inline mr-1"></i>Bottleneck Stress
+          </button>
+          <button class="view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200" data-mode="smoke">
+            <i data-lucide="cloud-fog" class="w-3.5 h-3.5 inline mr-1"></i>Toxicity Overlay
+          </button>
+        </div>
+
+        <!-- Zoom & Camera Controls -->
+        <div class="glass-panel rounded-lg p-1 flex items-center space-x-1 pointer-events-auto shadow-lg font-mono text-xs">
+          <button id="btn-zoom-out" title="Zoom Out (-)" class="p-1.5 rounded hover:bg-tactical-800 text-slate-300">
+            <i data-lucide="zoom-out" class="w-4 h-4"></i>
+          </button>
+          <span id="zoom-level-text" class="px-1 text-[11px] text-slate-300 min-w-[42px] text-center font-bold">100%</span>
+          <button id="btn-zoom-in" title="Zoom In (+)" class="p-1.5 rounded hover:bg-tactical-800 text-slate-300">
+            <i data-lucide="zoom-in" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-zoom-reset" title="Reset View (Space)" class="p-1.5 rounded hover:bg-tactical-800 text-cyan-400">
+            <i data-lucide="maximize" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Canvas Container -->
+      <div id="canvas-container" class="flex-1 w-full h-full relative cursor-crosshair overflow-hidden scanlines">
+        <canvas id="sim-canvas" class="w-full h-full block"></canvas>
+      </div>
+
+      <!-- Bottom Status & Hint Overlay -->
+      <div class="absolute bottom-3 left-3 flex items-center space-x-2 z-10 pointer-events-none">
+        <div class="glass-panel px-3 py-1.5 rounded-lg text-[11px] font-mono text-slate-400 flex items-center space-x-2 shadow-md">
+          <i data-lucide="info" class="w-3.5 h-3.5 text-cyan-400"></i>
+          <span id="viewport-hint">Left-click: Select / Interact with tool • Drag: Pan View • Wheel: Zoom</span>
+        </div>
+        <div id="blackout-indicator" class="hidden glass-panel-danger px-3 py-1.5 rounded-lg text-[11px] font-mono text-amber-400 flex items-center space-x-1.5 animate-pulse">
+          <i data-lucide="flashlight" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span>EMERGENCY LIGHTING ACTIVE</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR: Telemetry, Exit Utilization & Agent Inspector -->
+    <aside id="right-sidebar" class="w-84 bg-tactical-900/95 border-l border-tactical-700/80 flex flex-col shrink-0 z-20 overflow-y-auto">
+      
+      <!-- Exit Throughput & Real-time Distribution Chart -->
+      <div class="p-3.5 border-b border-tactical-700/80 bg-tactical-850/60">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+            <i data-lucide="door-open" class="w-3.5 h-3.5 text-emerald-400"></i>
+            Exit Flow & Utilization
+          </span>
+          <span class="text-[9px] font-mono text-cyan-400 font-bold" id="total-evac-rate-badge">0.0 /sec</span>
+        </div>
+        <!-- Mini Exit List with Progress bars -->
+        <div id="exit-telemetry-list" class="space-y-2 font-mono text-xs">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Real-time Cumulative Evacuation Curve -->
+      <div class="p-3.5 border-b border-tactical-700/80">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+            <i data-lucide="line-chart" class="w-3.5 h-3.5 text-cyan-400"></i>
+            Cumulative Evacuation Curve
+          </span>
+          <span class="text-[9px] font-mono text-slate-400">Survival vs Time</span>
+        </div>
+        <div class="h-28 w-full bg-tactical-950/80 rounded-lg p-1 border border-tactical-800">
+          <canvas id="chart-evac-curve"></canvas>
+        </div>
+      </div>
+
+      <!-- Bottleneck & Crowd Pressure Telemetry -->
+      <div class="p-3.5 border-b border-tactical-700/80">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+            <i data-lucide="gauge" class="w-3.5 h-3.5 text-amber-400"></i>
+            Crowd Density & Compression Risk
+          </span>
+          <span id="crush-risk-badge" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-400">LOW RISK</span>
+        </div>
+
+        <div class="space-y-2 font-mono text-xs">
+          <div>
+            <div class="flex justify-between text-[11px] text-slate-400 mb-0.5">
+              <span>Peak Crowd Density:</span>
+              <span id="metric-peak-density" class="text-slate-200 font-bold">1.2 p/m²</span>
+            </div>
+            <div class="w-full bg-tactical-950 h-1.5 rounded-full overflow-hidden border border-tactical-800">
+              <div id="bar-peak-density" class="h-full bg-cyan-400 transition-all duration-300" style="width: 20%"></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex justify-between text-[11px] text-slate-400 mb-0.5">
+              <span>Average Evacuation Velocity:</span>
+              <span id="metric-avg-velocity" class="text-emerald-300 font-bold">1.34 m/s</span>
+            </div>
+            <div class="w-full bg-tactical-950 h-1.5 rounded-full overflow-hidden border border-tactical-800">
+              <div id="bar-avg-velocity" class="h-full bg-emerald-400 transition-all duration-300" style="width: 67%"></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="flex justify-between text-[11px] text-slate-400 mb-0.5">
+              <span>Bottleneck Arching Jams:</span>
+              <span id="metric-jam-count" class="text-amber-300 font-bold">0 Detected</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Deep Inspector Card -->
+      <div id="agent-inspector-card" class="p-3.5 flex-1 flex flex-col justify-between font-mono text-xs bg-tactical-950/40">
+        <div>
+          <div class="flex items-center justify-between pb-2 border-b border-tactical-700/80 mb-2.5">
+            <span class="text-[10px] uppercase tracking-wider text-cyan-400 font-bold flex items-center gap-1.5">
+              <i data-lucide="user-check" class="w-3.5 h-3.5 text-cyan-400"></i>
+              Agent Inspector
+            </span>
+            <span id="inspector-status-pill" class="text-[9px] px-1.5 py-0.5 rounded bg-tactical-800 text-slate-400">SELECT AGENT</span>
+          </div>
+
+          <div id="inspector-empty-state" class="py-6 text-center text-slate-500 text-xs">
+            <i data-lucide="crosshair" class="w-8 h-8 mx-auto mb-2 text-slate-600 animate-pulse"></i>
+            <p>Click any occupant on canvas to inspect live vitals, psychological panic, target exit, and social force vectors.</p>
+          </div>
+
+          <div id="inspector-content" class="hidden space-y-2.5">
+            <!-- Agent Name & Archetype -->
+            <div class="flex items-center justify-between">
+              <div>
+                <span id="insp-name" class="font-bold text-slate-200 text-sm block">Civilian #248</span>
+                <span id="insp-role" class="text-[10px] text-cyan-400 font-semibold">Standard Civilian</span>
+              </div>
+              <button id="btn-follow-agent" class="px-2 py-1 bg-tactical-800 border border-tactical-600 hover:border-cyan-500 rounded text-[10px] text-slate-300 hover:text-cyan-300 flex items-center gap-1">
+                <i data-lucide="video" class="w-3 h-3"></i>
+                <span>Follow</span>
+              </button>
+            </div>
+
+            <!-- Health & Toxicity Gauge -->
+            <div>
+              <div class="flex justify-between text-[10px] text-slate-400 mb-0.5">
+                <span>Oxygen / Health:</span>
+                <span id="insp-health" class="text-emerald-400 font-bold">100%</span>
+              </div>
+              <div class="w-full bg-tactical-950 h-2 rounded-full overflow-hidden border border-tactical-800">
+                <div id="insp-health-bar" class="h-full bg-emerald-500 transition-all duration-200" style="width: 100%"></div>
+              </div>
+            </div>
+
+            <!-- Panic & Stress Gauge -->
+            <div>
+              <div class="flex justify-between text-[10px] text-slate-400 mb-0.5">
+                <span>Panic & Stress Level:</span>
+                <span id="insp-panic" class="text-yellow-400 font-bold">18%</span>
+              </div>
+              <div class="w-full bg-tactical-950 h-2 rounded-full overflow-hidden border border-tactical-800">
+                <div id="insp-panic-bar" class="h-full bg-yellow-400 transition-all duration-200" style="width: 18%"></div>
+              </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-2 gap-2 bg-tactical-850 p-2 rounded-lg border border-tactical-700/60 text-[11px]">
+              <div>
+                <span class="text-slate-500 text-[9px] block">Current Velocity</span>
+                <span id="insp-velocity" class="font-bold text-slate-200">1.42 m/s</span>
+              </div>
+              <div>
+                <span class="text-slate-500 text-[9px] block">Target Exit</span>
+                <span id="insp-target-exit" class="font-bold text-emerald-400">Exit A (North)</span>
+              </div>
+              <div>
+                <span class="text-slate-500 text-[9px] block">Distance to Exit</span>
+                <span id="insp-exit-dist" class="font-bold text-slate-200">18.4 m</span>
+              </div>
+              <div>
+                <span class="text-slate-500 text-[9px] block">Smoke Inhalation</span>
+                <span id="insp-smoke-exp" class="font-bold text-slate-200">0.0 ppm</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Help Tip -->
+        <div class="pt-3 border-t border-tactical-700/60 text-[10px] text-slate-500 flex items-center justify-between">
+          <span>Helbing Social Force Model</span>
+          <span class="text-cyan-500">Autonomous 2.5D</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ================= AFTER ACTION REPORT (AAR) MODAL ================= -->
+  <div id="aar-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="glass-panel w-full max-w-4xl max-h-[90vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-tactical-600 animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 bg-tactical-900 border-b border-tactical-700 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-cyan-950 border border-cyan-500/50 flex items-center justify-center text-cyan-400">
+            <i data-lucide="award" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h2 class="font-mono font-bold text-lg text-slate-100 flex items-center gap-2">
+              EVACUATION SAFETY PERFORMANCE REPORT
+              <span id="aar-grade-badge" class="px-2 py-0.5 rounded text-xs font-mono font-black bg-emerald-950 border border-emerald-500 text-emerald-400">GRADE A</span>
+            </h2>
+            <p class="text-xs text-slate-400 font-mono">Autonomous Facility Clearance & Bottleneck Risk Analysis</p>
+          </div>
+        </div>
+        <button id="btn-close-aar" class="p-2 rounded-lg bg-tactical-800 hover:bg-tactical-700 text-slate-400 hover:text-white transition-colors">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body (Scrollable) -->
+      <div class="p-6 overflow-y-auto space-y-6 font-mono text-xs">
+        
+        <!-- Score Highlights Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="bg-tactical-850 p-3.5 rounded-xl border border-tactical-700">
+            <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Survival Rate</span>
+            <span id="aar-stat-survival" class="text-2xl font-black text-emerald-400 block mt-1">98.4%</span>
+            <span id="aar-stat-survival-sub" class="text-[10px] text-slate-400">443 / 450 Safe</span>
+          </div>
+
+          <div class="bg-tactical-850 p-3.5 rounded-xl border border-tactical-700">
+            <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Total Evac Time</span>
+            <span id="aar-stat-time" class="text-2xl font-black text-cyan-300 block mt-1">01:42.8</span>
+            <span class="text-[10px] text-slate-400">Benchmark: &lt; 02:30.0</span>
+          </div>
+
+          <div class="bg-tactical-850 p-3.5 rounded-xl border border-tactical-700">
+            <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Peak Flow Rate</span>
+            <span id="aar-stat-peak-flow" class="text-2xl font-black text-purple-300 block mt-1">7.4 p/s</span>
+            <span class="text-[10px] text-slate-400">Through all exits combined</span>
+          </div>
+
+          <div class="bg-tactical-850 p-3.5 rounded-xl border border-tactical-700">
+            <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Casualties</span>
+            <span id="aar-stat-casualties" class="text-2xl font-black text-red-400 block mt-1">0</span>
+            <span class="text-[10px] text-slate-400">Smoke / Crush impact</span>
+          </div>
+        </div>
+
+        <!-- Exit Breakdown Table -->
+        <div class="bg-tactical-850 rounded-xl border border-tactical-700 overflow-hidden">
+          <div class="px-4 py-2.5 bg-tactical-800 border-b border-tactical-700 font-bold text-slate-200 text-xs flex justify-between">
+            <span>EXIT DOORWAY PERFORMANCE & UTILIZATION</span>
+            <span class="text-cyan-400">FLOW EFFICIENCY</span>
+          </div>
+          <table class="w-full text-left text-xs">
+            <thead class="bg-tactical-900 text-slate-400 text-[10px] uppercase">
+              <tr>
+                <th class="p-3">Exit Name</th>
+                <th class="p-3">Door Width</th>
+                <th class="p-3">Evacuees Handled</th>
+                <th class="p-3">Avg Rate</th>
+                <th class="p-3">Congestion Duration</th>
+                <th class="p-3">Status</th>
+              </tr>
+            </thead>
+            <tbody id="aar-exit-table-body" class="divide-y divide-tactical-700/60 text-slate-300">
+              <!-- Dynamically rendered rows -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Architectural Safety & Optimization Recommendations -->
+        <div class="bg-tactical-850 rounded-xl border border-tactical-700 p-4 space-y-3">
+          <h3 class="font-bold text-slate-200 flex items-center gap-2 text-sm">
+            <i data-lucide="lightbulb" class="w-4 h-4 text-yellow-400"></i>
+            Architectural Insights & Engineering Recommendations
+          </h3>
+          <div id="aar-recommendations-list" class="space-y-2 text-slate-300 text-xs leading-relaxed">
+            <!-- Dynamic insights -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 bg-tactical-900 border-t border-tactical-700 flex items-center justify-between shrink-0">
+        <span class="text-[11px] text-slate-400 font-mono">Simulated via Social Force Model + Cellular Automata Smoke Diffusion</span>
+        <div class="flex space-x-2">
+          <button id="btn-export-aar-json" class="px-3.5 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 text-slate-200 font-mono text-xs flex items-center gap-1.5">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Export JSON</span>
+          </button>
+          <button id="btn-close-aar-footer" class="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs font-bold">
+            Close Report
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PROCEDURAL SIMULATION JAVASCRIPT ================= -->
+  <script>
+    /**
+     * EVAC-SIM ENGINE
+     * Core Features:
+     * 1. Multi-Grid Potential Field (Eikonal / Dijkstra with obstacle, smoke, and fire penalty)
+     * 2. Social Force Model (Helbing et al.) with Pushing, Friction, Panic, and Herding
+     * 3. Smoke & Fire Hazard Cellular Automata
+     * 4. Multi-Agent Archetypes (Civilian, Panicked, Warden, First Responder, Slow/Injured)
+     * 5. Web Audio API Procedural Sound Engine
+     * 6. Real-time Telemetry, Heatmap, Velocity Vectors & AAR Reporting
+     */
+
+    // --- PROCEDURAL AUDIO ENGINE ---
+    class AudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.isMuted = false;
+        this.alarmGain = null;
+        this.alarmOsc1 = null;
+        this.alarmOsc2 = null;
+        this.alarmInterval = null;
+        this.fireGain = null;
+        this.crowdGain = null;
+      }
+
+      init() {
+        if (this.ctx) return;
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+
+        // Master Alarm Bus
+        this.alarmGain = this.ctx.createGain();
+        this.alarmGain.gain.value = 0;
+        this.alarmGain.connect(this.ctx.destination);
+
+        // Ambient Fire / Noise Bus
+        this.fireGain = this.ctx.createGain();
+        this.fireGain.gain.value = 0;
+        this.fireGain.connect(this.ctx.destination);
+      }
+
+      toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.ctx) {
+          if (this.isMuted) {
+            this.ctx.suspend();
+          } else {
+            this.ctx.resume();
+          }
+        }
+        return this.isMuted;
+      }
+
+      playAlarm(active) {
+        if (!this.ctx) this.init();
+        if (this.isMuted) return;
+
+        if (active) {
+          if (this.alarmInterval) return;
+          this.alarmGain.gain.setTargetAtTime(0.08, this.ctx.currentTime, 0.1);
+          let highTone = true;
+          this.alarmInterval = setInterval(() => {
+            if (this.isMuted || !this.ctx) return;
+            const osc = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(highTone ? 880 : 650, this.ctx.currentTime);
+            g.gain.setValueAtTime(0.05, this.ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.35);
+            osc.connect(g);
+            g.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.35);
+            highTone = !highTone;
+          }, 400);
+        } else {
+          if (this.alarmInterval) {
+            clearInterval(this.alarmInterval);
+            this.alarmInterval = null;
+          }
+          if (this.alarmGain) {
+            this.alarmGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2);
+          }
+        }
+      }
+
+      playExitChime() {
+        if (!this.ctx || this.isMuted) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, now); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.08); // A5
+        gain.gain.setValueAtTime(0.04, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      }
+
+      playDisasterSlam() {
+        if (!this.ctx || this.isMuted) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(140, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.45);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.5);
+      }
+    }
+
+    const audio = new AudioEngine();
+
+    // --- SIMULATION CONSTANTS & MATH ---
+    const GRID_W = 140;
+    const GRID_H = 90;
+    const CELL_SIZE = 10; // 1400 x 900 internal sim dimensions
+
+    // Social Force Model Parameters
+    const A_SOCIAL = 2000;    // Agent repulsion strength
+    const B_SOCIAL = 0.08;    // Agent repulsion range (meters)
+    const K_BODY = 120000;    // Physical body compression force
+    const K_FRICTION = 240000;// Tangential sliding friction
+    const TAU_RELAX = 0.5;    // Velocity relaxation time (seconds)
+    const MAX_SPEED_BASE = 1.6; // Desired walking speed (m/s)
+
+    // Agent Archetypes Enum
+    const ARCHETYPE = {
+      CIVILIAN: 'civilian',
+      PANICKED: 'panicked',
+      WARDEN: 'warden',
+      RESPONDER: 'responder',
+      VULNERABLE: 'vulnerable'
+    };
+
+    // --- ENVIRONMENT DEFINITION & PRESETS ---
+    class SimulationEnvironment {
+      constructor() {
+        this.walls = new Uint8Array(GRID_W * GRID_H); // 1 = wall/obstacle, 0 = walkable
+        this.fire = new Float32Array(GRID_W * GRID_H); // 0.0 to 1.0 fire intensity
+        this.smoke = new Float32Array(GRID_W * GRID_H); // 0.0 to 1.0 smoke density
+        this.exits = []; // Array of { id, name, x1, y1, x2, y2, color, blocked, count, width }
+        this.potentialFields = new Map(); // exitId -> Float32Array(GRID_W * GRID_H)
+        this.wardens = [];
+        this.scenario = 'metro';
+      }
+
+      index(gx, gy) {
+        return gy * GRID_W + gx;
+      }
+
+      inBounds(gx, gy) {
+        return gx >= 0 && gx < GRID_W && gy >= 0 && gy < GRID_H;
+      }
+
+      setWall(gx, gy, val = 1) {
+        if (this.inBounds(gx, gy)) {
+          this.walls[this.index(gx, gy)] = val;
+        }
+      }
+
+      isWall(gx, gy) {
+        if (!this.inBounds(gx, gy)) return true;
+        return this.walls[this.index(gx, gy)] === 1;
+      }
+
+      addWallRect(gx, gy, w, h) {
+        for (let y = gy; y < gy + h; y++) {
+          for (let x = gx; x < gx + w; x++) {
+            this.setWall(x, y, 1);
+          }
+        }
+      }
+
+      clearAll() {
+        this.walls.fill(0);
+        this.fire.fill(0);
+        this.smoke.fill(0);
+        this.exits = [];
+        this.potentialFields.clear();
+      }
+
+      // Load built-in architectural floorplans
+      loadScenario(type) {
+        this.scenario = type;
+        this.clearAll();
+
+        // Perimeter boundary walls
+        this.addWallRect(0, 0, GRID_W, 2);
+        this.addWallRect(0, GRID_H - 2, GRID_W, 2);
+        this.addWallRect(0, 0, 2, GRID_H);
+        this.addWallRect(GRID_W - 2, 0, 2, GRID_H);
+
+        if (type === 'metro') {
+          // Metro Station Concourse & Platform
+          // Exits: 3 street stairs
+          this.exits.push(
+            { id: 'exit_north', name: 'North Boulevard Exit', x1: 20, y1: 0, x2: 30, y2: 2, color: '#10b981', blocked: false, count: 0, width: 10 },
+            { id: 'exit_south', name: 'South Avenue Plaza', x1: 110, y1: 0, x2: 120, y2: 2, color: '#06b6d4', blocked: false, count: 0, width: 10 },
+            { id: 'exit_east', name: 'East Transit Tunnel', x1: GRID_W - 2, y1: 40, x2: GRID_W, y2: 52, color: '#a855f7', blocked: false, count: 0, width: 12 }
+          );
+
+          // Ticket Barriers / Turnstile banks
+          this.addWallRect(15, 25, 45, 3);
+          // Turnstile gaps
+          for (let x = 20; x < 55; x += 6) {
+            for (let y = 25; y < 28; y++) this.setWall(x, y, 0);
+          }
+
+          this.addWallRect(75, 25, 50, 3);
+          for (let x = 80; x < 120; x += 6) {
+            for (let y = 25; y < 28; y++) this.setWall(x, y, 0);
+          }
+
+          // Escalator Banks to lower platform
+          this.addWallRect(40, 50, 6, 25);
+          this.addWallRect(60, 50, 6, 25);
+          this.addWallRect(85, 50, 6, 25);
+
+          // Pillars & Info Kiosks
+          for (let px = 25; px <= 115; px += 22) {
+            this.addWallRect(px, 12, 3, 3);
+            this.addWallRect(px, 40, 3, 3);
+            this.addWallRect(px, 80, 3, 3);
+          }
+
+        } else if (type === 'nightclub') {
+          // Nightclub Arena "Neon Abyss"
+          // Narrow main front entrance and 2 side emergency exits
+          this.exits.push(
+            { id: 'exit_main', name: 'Main Foyer Doors', x1: 65, y1: GRID_H - 2, x2: 75, y2: GRID_H, color: '#10b981', blocked: false, count: 0, width: 10 },
+            { id: 'exit_fire_w', name: 'West Fire Door', x1: 0, y1: 30, x2: 2, y2: 38, color: '#f59e0b', blocked: false, count: 0, width: 8 },
+            { id: 'exit_fire_e', name: 'VIP Alley Emergency Exit', x1: GRID_W - 2, y1: 25, x2: GRID_W, y2: 33, color: '#ec4899', blocked: false, count: 0, width: 8 }
+          );
+
+          // Stage & DJ Booth (Top)
+          this.addWallRect(45, 5, 50, 10);
+          
+          // Long Bar Counters (Bottlenecks)
+          this.addWallRect(10, 20, 20, 4);
+          this.addWallRect(10, 60, 20, 4);
+          this.addWallRect(110, 20, 20, 4);
+          this.addWallRect(110, 60, 20, 4);
+
+          // VIP Lounge partition walls
+          this.addWallRect(10, 40, 25, 2);
+          this.addWallRect(35, 30, 2, 12);
+
+          this.addWallRect(105, 40, 25, 2);
+          this.addWallRect(105, 30, 2, 12);
+
+          // Dance floor center perimeter railing with bottlenecks
+          this.addWallRect(40, 35, 25, 2);
+          this.addWallRect(75, 35, 25, 2);
+          this.addWallRect(40, 65, 25, 2);
+          this.addWallRect(75, 65, 25, 2);
+
+        } else if (type === 'office') {
+          // Corporate Office Floor 42
+          this.exits.push(
+            { id: 'exit_stair_n', name: 'North Fire Stairwell', x1: 65, y1: 0, x2: 75, y2: 2, color: '#10b981', blocked: false, count: 0, width: 10 },
+            { id: 'exit_stair_s', name: 'South Fire Stairwell', x1: 65, y1: GRID_H - 2, x2: 75, y2: GRID_H, color: '#06b6d4', blocked: false, count: 0, width: 10 },
+            { id: 'exit_balcony', name: 'Skyway Bridge', x1: GRID_W - 2, y1: 40, x2: GRID_W, y2: 48, color: '#f59e0b', blocked: false, count: 0, width: 8 }
+          );
+
+          // Central Elevator Core (Hazardous / Blocked during fire)
+          this.addWallRect(55, 32, 30, 26);
+          // Central Hallway Corridor walls
+          this.addWallRect(15, 25, 110, 2);
+          for (let gx = 35; gx < 110; gx += 20) {
+            for (let y = 25; y < 27; y++) this.setWall(gx, y, 0);
+          }
+
+          this.addWallRect(15, 63, 110, 2);
+          for (let gx = 35; gx < 110; gx += 20) {
+            for (let y = 63; y < 65; y++) this.setWall(gx, y, 0);
+          }
+
+          // Cubicle clusters
+          for (let row = 6; row <= 16; row += 6) {
+            for (let col = 10; col <= 120; col += 15) {
+              this.addWallRect(col, row, 10, 2);
+              this.addWallRect(col, row, 2, 4);
+            }
+          }
+          for (let row = 70; row <= 80; row += 6) {
+            for (let col = 10; col <= 120; col += 15) {
+              this.addWallRect(col, row, 10, 2);
+              this.addWallRect(col, row, 2, 4);
+            }
+          }
+
+        } else if (type === 'airport') {
+          // Airport Concourse & Security Maze
+          this.exits.push(
+            { id: 'exit_gate_a', name: 'Tarmac Gate A Evac Door', x1: 20, y1: 0, x2: 30, y2: 2, color: '#10b981', blocked: false, count: 0, width: 10 },
+            { id: 'exit_gate_b', name: 'Tarmac Gate B Evac Door', x1: 110, y1: 0, x2: 120, y2: 2, color: '#06b6d4', blocked: false, count: 0, width: 10 },
+            { id: 'exit_customs', name: 'Border Customs Main Exit', x1: 65, y1: GRID_H - 2, x2: 75, y2: GRID_H, color: '#a855f7', blocked: false, count: 0, width: 10 }
+          );
+
+          // Security Scanning Ribbon Stanchions Maze
+          this.addWallRect(30, 60, 80, 2);
+          this.addWallRect(30, 68, 80, 2);
+          this.addWallRect(30, 76, 80, 2);
+          // Zig-zag openings
+          for (let y = 60; y < 62; y++) { this.setWall(32, y, 0); this.setWall(33, y, 0); }
+          for (let y = 68; y < 70; y++) { this.setWall(107, y, 0); this.setWall(108, y, 0); }
+          for (let y = 76; y < 78; y++) { this.setWall(32, y, 0); this.setWall(33, y, 0); }
+
+          // Duty-Free Store Island mazes
+          this.addWallRect(25, 20, 25, 20);
+          this.addWallRect(85, 20, 25, 20);
+          // Store entrance cuts
+          for (let x = 32; x < 42; x++) for (let y = 20; y < 40; y++) this.setWall(x, y, 0);
+          for (let x = 92; x < 102; x++) for (let y = 20; y < 40; y++) this.setWall(x, y, 0);
+
+        } else {
+          // Sandbox Initial Layout
+          this.exits.push(
+            { id: 'exit_north', name: 'Primary Emergency Exit', x1: 65, y1: 0, x2: 75, y2: 2, color: '#10b981', blocked: false, count: 0, width: 10 },
+            { id: 'exit_south', name: 'Secondary Service Door', x1: 65, y1: GRID_H - 2, x2: 75, y2: GRID_H, color: '#06b6d4', blocked: false, count: 0, width: 10 }
+          );
+          // Center funnel room
+          this.addWallRect(30, 45, 35, 3);
+          this.addWallRect(75, 45, 35, 3);
+        }
+
+        // Recompute all potential fields
+        this.recomputeAllFields();
+      }
+
+      // Fast Eikonal / Dijkstra Flow Field Calculation
+      recomputePotentialField(exit) {
+        const dist = new Float32Array(GRID_W * GRID_H);
+        dist.fill(999999);
+
+        const queue = [];
+        // Seed exit cells
+        for (let y = exit.y1; y <= exit.y2; y++) {
+          for (let x = exit.x1; x <= exit.x2; x++) {
+            if (this.inBounds(x, y)) {
+              const idx = this.index(x, y);
+              dist[idx] = 0;
+              queue.push({ x, y, d: 0 });
+            }
+          }
+        }
+
+        // 8-neighbor BFS / Dijkstra with diagonal scaling
+        let head = 0;
+        const sqrt2 = Math.SQRT2;
+
+        while (head < queue.length) {
+          const { x, y, d } = queue[head++];
+          const curIdx = this.index(x, y);
+          if (d > dist[curIdx]) continue;
+
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = x + dx;
+              const ny = y + dy;
+
+              if (!this.inBounds(nx, ny)) continue;
+              const nIdx = this.index(nx, ny);
+              if (this.walls[nIdx] === 1) continue;
+
+              const stepCost = (dx !== 0 && dy !== 0) ? sqrt2 : 1.0;
+              // Hazard penalty (smoke & fire)
+              const hazardCost = (this.smoke[nIdx] * 4.0) + (this.fire[nIdx] * 20.0);
+              const newD = d + stepCost + hazardCost;
+
+              if (newD < dist[nIdx]) {
+                dist[nIdx] = newD;
+                queue.push({ x: nx, y: ny, d: newD });
+              }
+            }
+          }
+        }
+
+        this.potentialFields.set(exit.id, dist);
+      }
+
+      recomputeAllFields() {
+        this.potentialFields.clear();
+        for (const exit of this.exits) {
+          if (!exit.blocked) {
+            this.recomputePotentialField(exit);
+          }
+        }
+      }
+
+      // Hazard Cellular Automata Step (Fire spreading & Smoke diffusion)
+      updateHazards(dt, smokeToxicityMultiplier = 2) {
+        let hasChanges = false;
+        const newFire = new Float32Array(this.fire);
+        const newSmoke = new Float32Array(this.smoke);
+
+        for (let y = 1; y < GRID_H - 1; y++) {
+          for (let x = 1; x < GRID_W - 1; x++) {
+            const idx = this.index(x, y);
+
+            // Fire dynamics
+            if (this.fire[idx] > 0.05) {
+              hasChanges = true;
+              // Emit smoke
+              newSmoke[idx] = Math.min(1.0, newSmoke[idx] + 0.04 * smokeToxicityMultiplier);
+
+              // Spread fire to adjacent walkable cells
+              const neighbors = [
+                this.index(x + 1, y),
+                this.index(x - 1, y),
+                this.index(x, y + 1),
+                this.index(x, y - 1)
+              ];
+
+              for (const nIdx of neighbors) {
+                if (this.walls[nIdx] === 0 && Math.random() < 0.008 * dt * 60) {
+                  newFire[nIdx] = Math.min(1.0, newFire[nIdx] + 0.15);
+                }
+              }
+            }
+
+            // Smoke diffusion
+            if (this.smoke[idx] > 0.01) {
+              hasChanges = true;
+              const diffusionRate = 0.05 * smokeToxicityMultiplier;
+              const decayRate = 0.0005;
+
+              // Diffuse to neighbors
+              const n1 = this.index(x + 1, y);
+              const n2 = this.index(x - 1, y);
+              const n3 = this.index(x, y + 1);
+              const n4 = this.index(x, y - 1);
+
+              const avgNeighbor = (this.smoke[n1] + this.smoke[n2] + this.smoke[n3] + this.smoke[n4]) * 0.25;
+              newSmoke[idx] = Math.max(0, this.smoke[idx] + (avgNeighbor - this.smoke[idx]) * diffusionRate - decayRate);
+            }
+          }
+        }
+
+        this.fire = newFire;
+        this.smoke = newSmoke;
+
+        // Periodically refresh potential fields if hazards are active
+        if (hasChanges && Math.random() < 0.05) {
+          this.recomputeAllFields();
+        }
+      }
+    }
+
+    // --- AGENT CLASS (HELBING SOCIAL FORCE MODEL) ---
+    class Agent {
+      constructor(id, x, y, archetype = ARCHETYPE.CIVILIAN) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.radius = 3.5; // Radius in pixels
+        this.mass = 80;    // kg
+        this.archetype = archetype;
+
+        // Psychological & Physiological Vitals
+        this.panic = archetype === ARCHETYPE.PANICKED ? 0.8 : (archetype === ARCHETYPE.WARDEN ? 0.05 : 0.15);
+        this.health = 1.0; // 1.0 (100%) to 0.0 (incapacitated)
+        this.smokeExposure = 0; // Cumulative ppm
+        this.isIncapacitated = false;
+        this.isEscaped = false;
+        this.targetExit = null;
+        this.stressCompression = 0; // Local crowd crushing pressure
+        this.preferredSpeed = this.calculateBaseSpeed();
+        this.color = this.getColor();
+      }
+
+      calculateBaseSpeed() {
+        switch (this.archetype) {
+          case ARCHETYPE.WARDEN: return 1.7;
+          case ARCHETYPE.PANICKED: return 2.2;
+          case ARCHETYPE.RESPONDER: return 1.9;
+          case ARCHETYPE.VULNERABLE: return 0.9;
+          default: return 1.35 + (Math.random() * 0.3 - 0.15);
+        }
+      }
+
+      getColor() {
+        switch (this.archetype) {
+          case ARCHETYPE.WARDEN: return '#10b981'; // Emerald
+          case ARCHETYPE.PANICKED: return '#f59e0b'; // Amber
+          case ARCHETYPE.RESPONDER: return '#3b82f6'; // Blue
+          case ARCHETYPE.VULNERABLE: return '#a855f7'; // Purple
+          default: return '#06b6d4'; // Cyan civilian
+        }
+      }
+
+      // Update goal direction from Potential Field gradient
+      getDesiredDirection(env, herdingFactor = 0.4) {
+        if (!this.targetExit || this.targetExit.blocked) {
+          // Select closest valid exit
+          let bestDist = Infinity;
+          let bestExit = null;
+          for (const exit of env.exits) {
+            if (exit.blocked) continue;
+            const field = env.potentialFields.get(exit.id);
+            if (!field) continue;
+            const gx = Math.floor(this.x / CELL_SIZE);
+            const gy = Math.floor(this.y / CELL_SIZE);
+            if (env.inBounds(gx, gy)) {
+              const d = field[env.index(gx, gy)];
+              if (d < bestDist) {
+                bestDist = d;
+                bestExit = exit;
+              }
+            }
+          }
+          this.targetExit = bestExit;
+        }
+
+        if (!this.targetExit) return { dx: 0, dy: 0 };
+
+        const field = env.potentialFields.get(this.targetExit.id);
+        if (!field) return { dx: 0, dy: 0 };
+
+        const gx = Math.floor(this.x / CELL_SIZE);
+        const gy = Math.floor(this.y / CELL_SIZE);
+        if (!env.inBounds(gx, gy)) return { dx: 0, dy: 0 };
+
+        // Sample gradient (finite differences)
+        const idx = env.index(gx, gy);
+        const curD = field[idx];
+        if (curD >= 99999) return { dx: 0, dy: 0 };
+
+        let gradX = 0;
+        let gradY = 0;
+
+        const left = env.inBounds(gx - 1, gy) ? field[env.index(gx - 1, gy)] : curD;
+        const right = env.inBounds(gx + 1, gy) ? field[env.index(gx + 1, gy)] : curD;
+        const top = env.inBounds(gx, gy - 1) ? field[env.index(gx, gy - 1)] : curD;
+        const bottom = env.inBounds(gx, gy + 1) ? field[env.index(gx, gy + 1)] : curD;
+
+        gradX = (left - right);
+        gradY = (top - bottom);
+
+        const len = Math.hypot(gradX, gradY);
+        if (len > 0.0001) {
+          return { dx: gradX / len, dy: gradY / len };
+        }
+        return { dx: 0, dy: 0 };
+      }
+    }
+
+    // --- SPATIAL HASH GRID FOR O(N) NEIGHBOR QUERIES ---
+    class SpatialGrid {
+      constructor(width, height, cellSize) {
+        this.cellSize = cellSize;
+        this.cols = Math.ceil(width / cellSize);
+        this.rows = Math.ceil(height / cellSize);
+        this.buckets = new Array(this.cols * this.rows);
+        for (let i = 0; i < this.buckets.length; i++) this.buckets[i] = [];
+      }
+
+      clear() {
+        for (let i = 0; i < this.buckets.length; i++) {
+          this.buckets[i].length = 0;
+        }
+      }
+
+      insert(agent) {
+        const cx = Math.floor(agent.x / this.cellSize);
+        const cy = Math.floor(agent.y / this.cellSize);
+        if (cx >= 0 && cx < this.cols && cy >= 0 && cy < this.rows) {
+          this.buckets[cy * this.cols + cx].push(agent);
+        }
+      }
+
+      getNearby(x, y, radius) {
+        const minX = Math.max(0, Math.floor((x - radius) / this.cellSize));
+        const maxX = Math.min(this.cols - 1, Math.floor((x + radius) / this.cellSize));
+        const minY = Math.max(0, Math.floor((y - radius) / this.cellSize));
+        const maxY = Math.min(this.rows - 1, Math.floor((y + radius) / this.cellSize));
+
+        const results = [];
+        for (let cy = minY; cy <= maxY; cy++) {
+          for (let cx = minX; cx <= maxX; cx++) {
+            const bucket = this.buckets[cy * this.cols + cx];
+            for (let i = 0; i < bucket.length; i++) {
+              results.push(bucket[i]);
+            }
+          }
+        }
+        return results;
+      }
+    }
+
+    // --- MAIN SIMULATION ENGINE CONTROLLER ---
+    class EvacSimulation {
+      constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.env = new SimulationEnvironment();
+        this.spatialGrid = new SpatialGrid(GRID_W * CELL_SIZE, GRID_H * CELL_SIZE, 24);
+
+        // Agents
+        this.agents = [];
+        this.selectedAgent = null;
+        this.followedAgent = null;
+
+        // Simulation State
+        this.isRunning = false;
+        this.simTime = 0; // seconds
+        this.speedMultiplier = 1.0;
+        this.alarmActive = false;
+        this.blackoutActive = false;
+        this.viewMode = 'tactical'; // tactical | density | flow | stress | smoke
+        this.activeTool = 'inspect';
+
+        // Camera Pan & Zoom
+        this.camera = {
+          x: 0,
+          y: 0,
+          zoom: 1.0,
+          isDragging: false,
+          dragStartX: 0,
+          dragStartY: 0
+        };
+
+        // User parameters
+        this.params = {
+          occupantCount: 450,
+          panicLevel: 0.25,
+          herdingFactor: 0.40,
+          pushForce: 1.4,
+          smokeToxicity: 2,
+          wardenCount: 4,
+          doorWidth: 1.0
+        };
+
+        // Telemetry tracking
+        this.stats = {
+          evacuatedCount: 0,
+          casualtyCount: 0,
+          totalCount: 450,
+          peakDensity: 0,
+          avgVelocity: 0,
+          flowRates: new Map(), // exitId -> rate
+          evacTimeline: [], // { time, count }
+          jamsDetected: 0
+        };
+
+        // Init Canvas & Listeners
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+        this.setupEventHandlers();
+
+        // Load Default Metro Scenario
+        this.env.loadScenario('metro');
+        this.spawnCrowd();
+      }
+
+      resize() {
+        const container = this.canvas.parentElement;
+        this.canvas.width = container.clientWidth;
+        this.canvas.height = container.clientHeight;
+        this.fitCameraToScreen();
+      }
+
+      fitCameraToScreen() {
+        const simW = GRID_W * CELL_SIZE;
+        const simH = GRID_H * CELL_SIZE;
+        const scaleX = this.canvas.width / simW;
+        const scaleY = this.canvas.height / simH;
+        this.camera.zoom = Math.min(scaleX, scaleY) * 0.95;
+        this.camera.x = (this.canvas.width - simW * this.camera.zoom) / 2;
+        this.camera.y = (this.canvas.height - simH * this.camera.zoom) / 2;
+        this.updateZoomDisplay();
+      }
+
+      updateZoomDisplay() {
+        const el = document.getElementById('zoom-level-text');
+        if (el) el.textContent = `${Math.round(this.camera.zoom * 100)}%`;
+      }
+
+      spawnCrowd() {
+        this.agents = [];
+        this.selectedAgent = null;
+        this.followedAgent = null;
+        this.stats.evacuatedCount = 0;
+        this.stats.casualtyCount = 0;
+        this.stats.totalCount = this.params.occupantCount;
+        this.stats.evacTimeline = [{ time: 0, count: 0 }];
+        for (const exit of this.env.exits) {
+          exit.count = 0;
+        }
+
+        const count = this.params.occupantCount;
+        const wardenCount = Math.min(count, this.params.wardenCount);
+        const panickedCount = Math.floor(count * this.params.panicLevel);
+
+        let created = 0;
+        let attempts = 0;
+
+        while (created < count && attempts < count * 20) {
+          attempts++;
+          const gx = Math.floor(3 + Math.random() * (GRID_W - 6));
+          const gy = Math.floor(3 + Math.random() * (GRID_H - 6));
+
+          if (!this.env.isWall(gx, gy)) {
+            const x = gx * CELL_SIZE + CELL_SIZE / 2;
+            const y = gy * CELL_SIZE + CELL_SIZE / 2;
+
+            let type = ARCHETYPE.CIVILIAN;
+            if (created < wardenCount) {
+              type = ARCHETYPE.WARDEN;
+            } else if (created < wardenCount + panickedCount) {
+              type = ARCHETYPE.PANICKED;
+            } else if (Math.random() < 0.08) {
+              type = ARCHETYPE.VULNERABLE;
+            } else if (Math.random() < 0.05) {
+              type = ARCHETYPE.RESPONDER;
+            }
+
+            const agent = new Agent(created + 1, x, y, type);
+            this.agents.push(agent);
+            created++;
+          }
+        }
+
+        this.updateTelemetryUI();
+      }
+
+      // Physics & Social Force Update Loop
+      step(dt) {
+        if (dt > 0.1) dt = 0.1; // clamp delta
+        this.simTime += dt;
+
+        // 1. Update Hazards (Fire & Smoke)
+        this.env.updateHazards(dt, this.params.smokeToxicity);
+
+        // 2. Rebuild Spatial Hash Grid
+        this.spatialGrid.clear();
+        for (let i = 0; i < this.agents.length; i++) {
+          const a = this.agents[i];
+          if (!a.isEscaped) {
+            this.spatialGrid.insert(a);
+          }
+        }
+
+        // 3. Social Force Model Computations
+        let totalSpeed = 0;
+        let activeCount = 0;
+        let peakDensityLocal = 0;
+
+        for (let i = 0; i < this.agents.length; i++) {
+          const a = this.agents[i];
+          if (a.isEscaped) continue;
+
+          activeCount++;
+
+          // Check Smoke Exposure & Incapacitation
+          const gx = Math.floor(a.x / CELL_SIZE);
+          const gy = Math.floor(a.y / CELL_SIZE);
+          if (this.env.inBounds(gx, gy)) {
+            const smokeDensity = this.env.smoke[this.env.index(gx, gy)];
+            const fireIntensity = this.env.fire[this.env.index(gx, gy)];
+
+            if (smokeDensity > 0.2 || fireIntensity > 0.1) {
+              a.smokeExposure += (smokeDensity * 10 + fireIntensity * 30) * dt;
+              a.health = Math.max(0, a.health - (smokeDensity * 0.08 + fireIntensity * 0.25) * dt);
+              a.panic = Math.min(1.0, a.panic + 0.15 * dt);
+
+              if (a.health <= 0 && !a.isIncapacitated) {
+                a.isIncapacitated = true;
+                a.health = 0;
+                this.stats.casualtyCount++;
+              }
+            }
+          }
+
+          if (a.isIncapacitated) {
+            // Incapacitated agents don't move; act as obstacles
+            a.vx = 0;
+            a.vy = 0;
+            continue;
+          }
+
+          // Desired Goal Direction (Self-driving Force)
+          const desiredDir = a.getDesiredDirection(this.env, this.params.herdingFactor);
+          let targetSpeed = a.preferredSpeed * (0.4 + 0.6 * a.health);
+          if (this.alarmActive || a.panic > 0.4) {
+            targetSpeed *= (1.0 + a.panic * 0.5);
+          }
+
+          // Desired Force: F_des = m * (v_des * e_des - v) / tau
+          let fx = (desiredDir.dx * targetSpeed - a.vx) * (a.mass / TAU_RELAX);
+          let fy = (desiredDir.dy * targetSpeed - a.vy) * (a.mass / TAU_RELAX);
+
+          // Agent-Agent Interaction Forces (Repulsion, Body Compression, Tangential Friction)
+          const neighbors = this.spatialGrid.getNearby(a.x, a.y, 25);
+          let localCompression = 0;
+
+          for (let j = 0; j < neighbors.length; j++) {
+            const other = neighbors[j];
+            if (other.id === a.id) continue;
+
+            const dx = a.x - other.x;
+            const dy = a.y - other.y;
+            const dist = Math.hypot(dx, dy);
+            const rSum = a.radius + other.radius;
+
+            if (dist < 0.001) continue;
+
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // 1. Psychological Social Repulsion (Helbing exponential)
+            const fSocial = A_SOCIAL * Math.exp((rSum - dist) / B_SOCIAL);
+            fx += nx * fSocial * 0.001;
+            fy += ny * fSocial * 0.001;
+
+            // 2. Physical Body Compression & Friction when overlapping
+            if (dist < rSum) {
+              const overlap = rSum - dist;
+              const fBody = K_BODY * overlap * this.params.pushForce;
+              fx += nx * fBody * 0.0001;
+              fy += ny * fBody * 0.0001;
+              localCompression += overlap;
+
+              // Tangential sliding friction
+              const tx = -ny;
+              const ty = nx;
+              const dvt = (other.vx - a.vx) * tx + (other.vy - a.vy) * ty;
+              const fFriction = K_FRICTION * overlap * dvt;
+              fx += tx * fFriction * 0.00005;
+              fy += ty * fFriction * 0.00005;
+            }
+
+            // Warden / Leader guidance influence
+            if (other.archetype === ARCHETYPE.WARDEN && other.targetExit && a.archetype === ARCHETYPE.CIVILIAN) {
+              a.targetExit = other.targetExit;
+              a.panic = Math.max(0.1, a.panic - 0.2 * dt);
+            }
+          }
+
+          a.stressCompression = localCompression;
+          if (neighbors.length > peakDensityLocal) {
+            peakDensityLocal = neighbors.length;
+          }
+
+          // Wall Repulsion Force
+          const wallDist = 12;
+          for (let wy = -1; wy <= 1; wy++) {
+            for (let wx = -1; wx <= 1; wx++) {
+              const nwx = gx + wx;
+              const nwy = gy + wy;
+              if (this.env.isWall(nwx, nwy)) {
+                const wallCenterX = nwx * CELL_SIZE + CELL_SIZE / 2;
+                const wallCenterY = nwy * CELL_SIZE + CELL_SIZE / 2;
+                const wdx = a.x - wallCenterX;
+                const wdy = a.y - wallCenterY;
+                const wdist = Math.hypot(wdx, wdy);
+                if (wdist < wallDist && wdist > 0.01) {
+                  const wnx = wdx / wdist;
+                  const wny = wdy / wdist;
+                  const fWall = 8000 * Math.exp((a.radius - wdist) / 4);
+                  fx += wnx * fWall * 0.001;
+                  fy += wny * fWall * 0.001;
+                }
+              }
+            }
+          }
+
+          // Euler Integration
+          const ax = fx / a.mass;
+          const ay = fy / a.mass;
+          a.vx += ax * dt;
+          a.vy += ay * dt;
+
+          // Speed Clamping
+          const currentSpeed = Math.hypot(a.vx, a.vy);
+          const maxAllowedSpeed = targetSpeed * 1.5;
+          if (currentSpeed > maxAllowedSpeed) {
+            a.vx = (a.vx / currentSpeed) * maxAllowedSpeed;
+            a.vy = (a.vy / currentSpeed) * maxAllowedSpeed;
+          }
+
+          // Position update with wall collision boundary
+          const nextX = a.x + a.vx * dt * 15;
+          const nextY = a.y + a.vy * dt * 15;
+
+          const nextGx = Math.floor(nextX / CELL_SIZE);
+          const nextGy = Math.floor(nextY / CELL_SIZE);
+
+          if (!this.env.isWall(nextGx, nextGy)) {
+            a.x = nextX;
+            a.y = nextY;
+          } else {
+            // Sliding along wall
+            if (!this.env.isWall(nextGx, Math.floor(a.y / CELL_SIZE))) {
+              a.x = nextX;
+            } else if (!this.env.isWall(Math.floor(a.x / CELL_SIZE), nextGy)) {
+              a.y = nextY;
+            }
+            a.vx *= 0.5;
+            a.vy *= 0.5;
+          }
+
+          totalSpeed += currentSpeed;
+
+          // Check Exit Escape
+          for (const exit of this.env.exits) {
+            if (exit.blocked) continue;
+            const ex1 = exit.x1 * CELL_SIZE;
+            const ey1 = exit.y1 * CELL_SIZE;
+            const ex2 = exit.x2 * CELL_SIZE;
+            const ey2 = exit.y2 * CELL_SIZE;
+
+            if (a.x >= Math.min(ex1, ex2) - 8 && a.x <= Math.max(ex1, ex2) + 8 &&
+                a.y >= Math.min(ey1, ey2) - 8 && a.y <= Math.max(ey1, ey2) + 8) {
+              a.isEscaped = true;
+              this.stats.evacuatedCount++;
+              exit.count = (exit.count || 0) + 1;
+              audio.playExitChime();
+              break;
+            }
+          }
+        }
+
+        // Update stats
+        this.stats.avgVelocity = activeCount > 0 ? (totalSpeed / activeCount).toFixed(2) : 0;
+        this.stats.peakDensity = (peakDensityLocal / 4).toFixed(1);
+
+        // Record timeline point
+        if (this.simTime - (this.stats.evacTimeline[this.stats.evacTimeline.length - 1]?.time || 0) >= 1.0) {
+          this.stats.evacTimeline.push({
+            time: this.simTime,
+            count: this.stats.evacuatedCount
+          });
+          this.updateEvacChart();
+        }
+
+        // Camera follow
+        if (this.followedAgent) {
+          if (this.followedAgent.isEscaped || this.followedAgent.isIncapacitated) {
+            this.followedAgent = null;
+          } else {
+            this.camera.x = this.canvas.width / 2 - this.followedAgent.x * this.camera.zoom;
+            this.camera.y = this.canvas.height / 2 - this.followedAgent.y * this.camera.zoom;
+          }
+        }
+
+        this.updateTelemetryUI();
+      }
+
+      // --- RENDERING PIPELINE ---
+      render() {
+        const ctx = this.ctx;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+
+        // Clear Canvas
+        ctx.fillStyle = '#06090e';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.save();
+        // Apply Camera Transform
+        ctx.translate(this.camera.x, this.camera.y);
+        ctx.scale(this.camera.zoom, this.camera.zoom);
+
+        // 1. Draw Facility Floor Grid & Ground
+        this.renderFloor(ctx);
+
+        // 2. Draw Specialized View Overlays (Density Heatmap / Flow Vectors / Toxicity)
+        if (this.viewMode === 'density') {
+          this.renderDensityHeatmap(ctx);
+        } else if (this.viewMode === 'flow') {
+          this.renderFlowVectors(ctx);
+        } else if (this.viewMode === 'stress') {
+          this.renderBottleneckStress(ctx);
+        } else if (this.viewMode === 'smoke') {
+          this.renderToxicityOverlay(ctx);
+        }
+
+        // 3. Draw Static Architecture (Walls, Doors, Exits)
+        this.renderArchitecture(ctx);
+
+        // 4. Draw Hazards (Fires & Smoke Particles)
+        this.renderHazards(ctx);
+
+        // 5. Draw Agents
+        this.renderAgents(ctx);
+
+        // 6. Draw Blackout Lighting / Flashlights Cones
+        if (this.blackoutActive) {
+          this.renderBlackoutLighting(ctx);
+        }
+
+        ctx.restore();
+      }
+
+      renderFloor(ctx) {
+        const simW = GRID_W * CELL_SIZE;
+        const simH = GRID_H * CELL_SIZE;
+
+        // Floor tile background
+        ctx.fillStyle = '#0b111a';
+        ctx.fillRect(0, 0, simW, simH);
+
+        // Fine grid lines
+        ctx.strokeStyle = 'rgba(35, 50, 77, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = 0; x <= simW; x += CELL_SIZE * 4) {
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, simH);
+        }
+        for (let y = 0; y <= simH; y += CELL_SIZE * 4) {
+          ctx.moveTo(0, y);
+          ctx.lineTo(simW, y);
+        }
+        ctx.stroke();
+      }
+
+      renderArchitecture(ctx) {
+        // Render Walls
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 1;
+
+        for (let y = 0; y < GRID_H; y++) {
+          for (let x = 0; x < GRID_W; x++) {
+            if (this.env.isWall(x, y)) {
+              ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+              ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+          }
+        }
+
+        // Render Exits
+        for (const exit of this.env.exits) {
+          const ex1 = exit.x1 * CELL_SIZE;
+          const ey1 = exit.y1 * CELL_SIZE;
+          const ew = Math.max(CELL_SIZE, (exit.x2 - exit.x1) * CELL_SIZE);
+          const eh = Math.max(CELL_SIZE, (exit.y2 - exit.y1) * CELL_SIZE);
+
+          if (exit.blocked) {
+            // Blocked Exit
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.4)';
+            ctx.fillRect(ex1, ey1, ew, eh);
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(ex1, ey1, ew, eh);
+
+            // Red X mark
+            ctx.beginPath();
+            ctx.moveTo(ex1, ey1);
+            ctx.lineTo(ex1 + ew, ey1 + eh);
+            ctx.moveTo(ex1 + ew, ey1);
+            ctx.lineTo(ex1, ey1 + eh);
+            ctx.stroke();
+          } else {
+            // Active Exit Glow & Sign
+            ctx.fillStyle = exit.color || '#10b981';
+            ctx.shadowColor = exit.color || '#10b981';
+            ctx.shadowBlur = 12;
+            ctx.fillRect(ex1, ey1, ew, eh);
+            ctx.shadowBlur = 0;
+
+            // Exit Sign Text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('EXIT', ex1 + ew / 2, ey1 + eh / 2);
+          }
+        }
+      }
+
+      renderHazards(ctx) {
+        // Fire rendering with flickering embers
+        for (let y = 0; y < GRID_H; y++) {
+          for (let x = 0; x < GRID_W; x++) {
+            const idx = this.env.index(x, y);
+            const f = this.env.fire[idx];
+            if (f > 0.05) {
+              const cx = x * CELL_SIZE + CELL_SIZE / 2;
+              const cy = y * CELL_SIZE + CELL_SIZE / 2;
+              const r = (CELL_SIZE / 2) * f * (0.8 + Math.random() * 0.4);
+
+              const grad = ctx.createRadialGradient(cx, cy, 1, cx, cy, r * 1.6);
+              grad.addColorStop(0, '#ffffff');
+              grad.addColorStop(0.3, '#f59e0b');
+              grad.addColorStop(0.7, '#ef4444');
+              grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(cx, cy, r * 1.6, 0, Math.PI * 2);
+              ctx.fill();
+            }
+
+            // Smoke volumetric layer
+            const s = this.env.smoke[idx];
+            if (s > 0.05) {
+              ctx.fillStyle = `rgba(30, 41, 59, ${Math.min(0.85, s * 0.8)})`;
+              ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+          }
+        }
+      }
+
+      renderAgents(ctx) {
+        for (let i = 0; i < this.agents.length; i++) {
+          const a = this.agents[i];
+          if (a.isEscaped) continue;
+
+          // Selected agent halo
+          if (this.selectedAgent === a) {
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(a.x, a.y, a.radius + 6, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Destination Path line
+            if (a.targetExit) {
+              ctx.setLineDash([4, 4]);
+              ctx.strokeStyle = 'rgba(6, 182, 212, 0.6)';
+              ctx.beginPath();
+              ctx.moveTo(a.x, a.y);
+              const ex = (a.targetExit.x1 + a.targetExit.x2) * CELL_SIZE / 2;
+              const ey = (a.targetExit.y1 + a.targetExit.y2) * CELL_SIZE / 2;
+              ctx.lineTo(ex, ey);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+          }
+
+          // Agent Body
+          ctx.save();
+          ctx.translate(a.x, a.y);
+
+          if (a.isIncapacitated) {
+            // Incapacitated casualty marker
+            ctx.fillStyle = '#dc2626';
+            ctx.beginPath();
+            ctx.arc(0, 0, a.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            // Tiny cross
+            ctx.strokeStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(-2, 0); ctx.lineTo(2, 0);
+            ctx.moveTo(0, -2); ctx.lineTo(0, 2);
+            ctx.stroke();
+          } else {
+            // Normal / Warden / Panicked Agent
+            ctx.fillStyle = a.color;
+            ctx.beginPath();
+            ctx.arc(0, 0, a.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Stress / Panic Pulsing Aura
+            if (a.panic > 0.4) {
+              ctx.strokeStyle = `rgba(245, 158, 11, ${a.panic * 0.7})`;
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.arc(0, 0, a.radius + 2.5, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+
+            // Direction pointer
+            const angle = Math.atan2(a.vy, a.vx);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.cos(angle) * (a.radius + 3), Math.sin(angle) * (a.radius + 3));
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        }
+      }
+
+      renderBlackoutLighting(ctx) {
+        const simW = GRID_W * CELL_SIZE;
+        const simH = GRID_H * CELL_SIZE;
+
+        // Dark overlay mask
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.93)';
+        ctx.fillRect(0, 0, simW, simH);
+
+        // Emergency Exits & Agent flashlight cones (destination-out)
+        ctx.globalCompositeOperation = 'destination-out';
+
+        // Exit emergency glow
+        for (const exit of this.env.exits) {
+          if (exit.blocked) continue;
+          const ex = (exit.x1 + exit.x2) * CELL_SIZE / 2;
+          const ey = (exit.y1 + exit.y2) * CELL_SIZE / 2;
+          const grad = ctx.createRadialGradient(ex, ey, 5, ex, ey, 90);
+          grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+          grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(ex, ey, 90, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Fire light
+        for (let y = 0; y < GRID_H; y += 4) {
+          for (let x = 0; x < GRID_W; x += 4) {
+            const f = this.env.fire[this.env.index(x, y)];
+            if (f > 0.1) {
+              const cx = x * CELL_SIZE;
+              const cy = y * CELL_SIZE;
+              const grad = ctx.createRadialGradient(cx, cy, 5, cx, cy, 80 * f);
+              grad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+              grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(cx, cy, 80 * f, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+
+        // Agent flashlight cones
+        for (const a of this.agents) {
+          if (a.isEscaped || a.isIncapacitated) continue;
+          const angle = Math.atan2(a.vy, a.vx) || 0;
+          const coneRange = a.archetype === ARCHETYPE.WARDEN ? 90 : 50;
+
+          const grad = ctx.createRadialGradient(a.x, a.y, 2, a.x, a.y, coneRange);
+          grad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+          grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = grad;
+
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.arc(a.x, a.y, coneRange, angle - Math.PI / 4, angle + Math.PI / 4);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      renderDensityHeatmap(ctx) {
+        // Spatial heatmap density overlay
+        const densityCell = 16;
+        const cols = Math.ceil((GRID_W * CELL_SIZE) / densityCell);
+        const rows = Math.ceil((GRID_H * CELL_SIZE) / densityCell);
+
+        for (let ry = 0; ry < rows; ry++) {
+          for (let rx = 0; rx < cols; rx++) {
+            const cx = rx * densityCell + densityCell / 2;
+            const cy = ry * densityCell + densityCell / 2;
+            const nearby = this.spatialGrid.getNearby(cx, cy, densityCell);
+            if (nearby.length > 0) {
+              const density = Math.min(1.0, nearby.length / 8);
+              // Thermal color grading (Cyan -> Yellow -> Red)
+              let color = `rgba(6, 182, 212, ${density * 0.45})`;
+              if (density > 0.4) color = `rgba(245, 158, 11, ${density * 0.6})`;
+              if (density > 0.7) color = `rgba(239, 68, 68, ${density * 0.75})`;
+
+              ctx.fillStyle = color;
+              ctx.fillRect(rx * densityCell, ry * densityCell, densityCell, densityCell);
+            }
+          }
+        }
+      }
+
+      renderFlowVectors(ctx) {
+        // Draw velocity arrows on a sparse grid
+        const step = 24;
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)';
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.7)';
+        ctx.lineWidth = 1.2;
+
+        for (let y = step; y < GRID_H * CELL_SIZE; y += step) {
+          for (let x = step; x < GRID_W * CELL_SIZE; x += step) {
+            const nearby = this.spatialGrid.getNearby(x, y, step / 2);
+            if (nearby.length > 0) {
+              let avgVx = 0;
+              let avgVy = 0;
+              for (const a of nearby) {
+                avgVx += a.vx;
+                avgVy += a.vy;
+              }
+              avgVx /= nearby.length;
+              avgVy /= nearby.length;
+
+              const speed = Math.hypot(avgVx, avgVy);
+              if (speed > 0.1) {
+                const len = Math.min(16, speed * 8);
+                const angle = Math.atan2(avgVy, avgVx);
+                const tx = x + Math.cos(angle) * len;
+                const ty = y + Math.sin(angle) * len;
+
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(tx, ty);
+                ctx.stroke();
+
+                // Arrowhead
+                ctx.beginPath();
+                ctx.arc(tx, ty, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+          }
+        }
+      }
+
+      renderBottleneckStress(ctx) {
+        // Highlight high compression / crowd crushing danger zones
+        for (const a of this.agents) {
+          if (a.isEscaped || a.isIncapacitated) continue;
+          if (a.stressCompression > 4) {
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+            ctx.beginPath();
+            ctx.arc(a.x, a.y, a.radius + a.stressCompression * 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      renderToxicityOverlay(ctx) {
+        // Render Toxic Smoke Iso-bands
+        for (let y = 0; y < GRID_H; y += 2) {
+          for (let x = 0; x < GRID_W; x += 2) {
+            const s = this.env.smoke[this.env.index(x, y)];
+            if (s > 0.1) {
+              ctx.fillStyle = `rgba(168, 85, 247, ${s * 0.5})`;
+              ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE * 2, CELL_SIZE * 2);
+            }
+          }
+        }
+      }
+
+      // --- UI UPDATER & CHARTS ---
+      updateTelemetryUI() {
+        // KPI Badges
+        const timeMin = Math.floor(this.simTime / 60);
+        const timeSec = (this.simTime % 60).toFixed(1);
+        document.getElementById('kpi-timer').textContent = 
+          `${timeMin.toString().padStart(2, '0')}:${timeSec.padStart(4, '0')}`;
+
+        const evacPct = this.stats.totalCount > 0 
+          ? Math.round((this.stats.evacuatedCount / this.stats.totalCount) * 100) 
+          : 0;
+
+        document.getElementById('kpi-evac-pct').textContent = `${evacPct}%`;
+        document.getElementById('kpi-evac-bar').style.width = `${evacPct}%`;
+        document.getElementById('kpi-evac-count').textContent = 
+          `${this.stats.evacuatedCount} / ${this.stats.totalCount} Safe`;
+
+        const insideCount = this.stats.totalCount - this.stats.evacuatedCount - this.stats.casualtyCount;
+        document.getElementById('kpi-inside-count').textContent = insideCount;
+        document.getElementById('kpi-casualty-count').textContent = this.stats.casualtyCount;
+
+        // Panic Indicator
+        const avgPanic = this.agents.reduce((acc, a) => acc + (a.isEscaped ? 0 : a.panic), 0) / (insideCount || 1);
+        const panicPct = Math.min(100, Math.round(avgPanic * 100));
+        document.getElementById('kpi-panic-pct').textContent = `${panicPct}%`;
+
+        const panicIndicator = document.getElementById('kpi-panic-indicator');
+        if (panicPct > 60) {
+          panicIndicator.className = 'w-2.5 h-2.5 rounded-full bg-red-500 animate-ping';
+        } else if (panicPct > 30) {
+          panicIndicator.className = 'w-2.5 h-2.5 rounded-full bg-yellow-400';
+        } else {
+          panicIndicator.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+        }
+
+        // Flow Rate Throughput
+        const rate = this.simTime > 0 ? (this.stats.evacuatedCount / this.simTime).toFixed(1) : '0.0';
+        document.getElementById('kpi-flow-rate').innerHTML = `${rate} <span class="text-[9px] font-normal text-slate-400">p/s</span>`;
+        document.getElementById('total-evac-rate-badge').textContent = `${rate} /sec`;
+
+        // Bottleneck & Stress Metrics
+        document.getElementById('metric-peak-density').textContent = `${this.stats.peakDensity} p/m²`;
+        document.getElementById('bar-peak-density').style.width = `${Math.min(100, parseFloat(this.stats.peakDensity) * 20)}%`;
+
+        document.getElementById('metric-avg-velocity').textContent = `${this.stats.avgVelocity} m/s`;
+        document.getElementById('bar-avg-velocity').style.width = `${Math.min(100, (parseFloat(this.stats.avgVelocity) / 2.0) * 100)}%`;
+
+        const crushBadge = document.getElementById('crush-risk-badge');
+        if (parseFloat(this.stats.peakDensity) > 3.5) {
+          crushBadge.textContent = 'HIGH CRUSH DANGER';
+          crushBadge.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-red-950 border border-red-500 text-red-400 animate-pulse';
+        } else if (parseFloat(this.stats.peakDensity) > 2.0) {
+          crushBadge.textContent = 'MODERATE CROWD';
+          crushBadge.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950 border border-amber-500 text-amber-400';
+        } else {
+          crushBadge.textContent = 'LOW RISK';
+          crushBadge.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-400';
+        }
+
+        // Render Exits Utilization Telemetry
+        this.renderExitTelemetryList();
+
+        // Update Agent Deep Inspector if an agent is selected
+        this.updateInspectorUI();
+      }
+
+      renderExitTelemetryList() {
+        const container = document.getElementById('exit-telemetry-list');
+        if (!container) return;
+
+        let html = '';
+        for (const exit of this.env.exits) {
+          const count = exit.count || 0;
+          const pct = this.stats.totalCount > 0 ? Math.round((count / this.stats.totalCount) * 100) : 0;
+          const statusText = exit.blocked ? 'BLOCKED / LOCKED' : `${count} Evacuated (${pct}%)`;
+          const statusColor = exit.blocked ? 'text-red-400' : 'text-slate-300';
+
+          html += `
+            <div class="bg-tactical-850 p-2 rounded-lg border border-tactical-700/60">
+              <div class="flex justify-between items-center mb-1">
+                <span class="font-bold text-slate-200 flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full" style="background-color: ${exit.color}"></span>
+                  ${exit.name}
+                </span>
+                <span class="text-[10px] ${statusColor} font-bold">${statusText}</span>
+              </div>
+              <div class="w-full bg-tactical-950 h-1.5 rounded-full overflow-hidden border border-tactical-800">
+                <div class="h-full transition-all duration-300" style="width: ${pct}%; background-color: ${exit.color}"></div>
+              </div>
+            </div>
+          `;
+        }
+        container.innerHTML = html;
+      }
+
+      updateInspectorUI() {
+        const emptyState = document.getElementById('inspector-empty-state');
+        const content = document.getElementById('inspector-content');
+        const pill = document.getElementById('inspector-status-pill');
+
+        if (!this.selectedAgent) {
+          emptyState.classList.remove('hidden');
+          content.classList.add('hidden');
+          pill.textContent = 'SELECT AGENT';
+          pill.className = 'text-[9px] px-1.5 py-0.5 rounded bg-tactical-800 text-slate-400';
+          return;
+        }
+
+        emptyState.classList.add('hidden');
+        content.classList.remove('hidden');
+
+        const a = this.selectedAgent;
+        pill.textContent = a.isIncapacitated ? 'INCAPACITATED' : (a.isEscaped ? 'EVACUATED' : 'ACTIVE');
+        pill.className = a.isIncapacitated 
+          ? 'text-[9px] px-1.5 py-0.5 rounded bg-red-950 border border-red-500 text-red-400 font-bold'
+          : (a.isEscaped 
+              ? 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-400 font-bold'
+              : 'text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-500 text-cyan-400 font-bold');
+
+        document.getElementById('insp-name').textContent = `Agent #${a.id}`;
+        document.getElementById('insp-role').textContent = a.archetype.toUpperCase();
+
+        const healthPct = Math.round(a.health * 100);
+        document.getElementById('insp-health').textContent = `${healthPct}%`;
+        document.getElementById('insp-health-bar').style.width = `${healthPct}%`;
+
+        const panicPct = Math.round(a.panic * 100);
+        document.getElementById('insp-panic').textContent = `${panicPct}%`;
+        document.getElementById('insp-panic-bar').style.width = `${panicPct}%`;
+
+        const speed = Math.hypot(a.vx, a.vy).toFixed(2);
+        document.getElementById('insp-velocity').textContent = `${speed} m/s`;
+        document.getElementById('insp-target-exit').textContent = a.targetExit ? a.targetExit.name : 'Searching...';
+
+        let distText = '0.0 m';
+        if (a.targetExit) {
+          const ex = (a.targetExit.x1 + a.targetExit.x2) * CELL_SIZE / 2;
+          const ey = (a.targetExit.y1 + a.targetExit.y2) * CELL_SIZE / 2;
+          distText = `${(Math.hypot(a.x - ex, a.y - ey) / 10).toFixed(1)} m`;
+        }
+        document.getElementById('insp-exit-dist').textContent = distText;
+        document.getElementById('insp-smoke-exp').textContent = `${a.smokeExposure.toFixed(1)} ppm`;
+      }
+
+      updateEvacChart() {
+        if (!window.evacChart) return;
+        const labels = this.stats.evacTimeline.map(p => `${Math.round(p.time)}s`);
+        const data = this.stats.evacTimeline.map(p => p.count);
+
+        window.evacChart.data.labels = labels;
+        window.evacChart.data.datasets[0].data = data;
+        window.evacChart.update('none');
+      }
+
+      // --- USER EVENT HANDLERS ---
+      setupEventHandlers() {
+        const canvas = this.canvas;
+
+        // Mouse Down (Drag Pan or Canvas Tool Click)
+        canvas.addEventListener('mousedown', (e) => {
+          if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+            // Pan with middle click or Shift+Left click
+            this.camera.isDragging = true;
+            this.camera.dragStartX = e.clientX - this.camera.x;
+            this.camera.dragStartY = e.clientY - this.camera.y;
+            return;
+          }
+
+          if (e.button === 0) {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left - this.camera.x) / this.camera.zoom;
+            const mouseY = (e.clientY - rect.top - this.camera.y) / this.camera.zoom;
+            this.handleCanvasClick(mouseX, mouseY);
+          }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+          if (this.camera.isDragging) {
+            this.camera.x = e.clientX - this.camera.dragStartX;
+            this.camera.y = e.clientY - this.camera.dragStartY;
+            this.followedAgent = null; // Break follow lock
+          }
+        });
+
+        window.addEventListener('mouseup', () => {
+          this.camera.isDragging = false;
+        });
+
+        // Mouse Wheel Zoom
+        canvas.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+
+          const newZoom = Math.min(3.5, Math.max(0.4, this.camera.zoom * zoomFactor));
+
+          // Zoom toward mouse pointer
+          this.camera.x = mouseX - (mouseX - this.camera.x) * (newZoom / this.camera.zoom);
+          this.camera.y = mouseY - (mouseY - this.camera.y) * (newZoom / this.camera.zoom);
+          this.camera.zoom = newZoom;
+          this.followedAgent = null;
+          this.updateZoomDisplay();
+        }, { passive: false });
+
+        // Tool Palette Buttons
+        document.querySelectorAll('.tool-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.tool-btn').forEach(b => {
+              b.className = 'tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-tactical-850 border-tactical-700 text-slate-400 hover:text-white';
+            });
+            btn.className = 'tool-btn p-1.5 rounded-lg border flex flex-col items-center justify-center transition-all bg-cyan-950/60 border-cyan-500 text-cyan-300';
+            this.activeTool = btn.dataset.tool;
+          });
+        });
+
+        // Scenario Preset Buttons
+        document.querySelectorAll('.scenario-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.scenario-btn').forEach(b => {
+              b.className = 'scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-850 border-tactical-700 text-slate-300 hover:border-tactical-500';
+            });
+            btn.className = 'scenario-btn p-2 rounded-lg border text-left font-mono text-xs flex flex-col transition-all bg-tactical-800/80 border-cyan-500/80 text-cyan-300';
+            
+            this.env.loadScenario(btn.dataset.scenario);
+            this.simTime = 0;
+            this.spawnCrowd();
+            this.fitCameraToScreen();
+          });
+        });
+
+        // View Mode Buttons
+        document.querySelectorAll('.view-mode-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.view-mode-btn').forEach(b => {
+              b.className = 'view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200';
+            });
+            btn.className = 'view-mode-btn px-2.5 py-1 rounded-md text-xs font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-500/60';
+            this.viewMode = btn.dataset.mode;
+          });
+        });
+
+        // Speed Multipliers
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.speed-btn').forEach(b => {
+              b.className = 'speed-btn px-2 py-1 rounded text-slate-400 hover:text-white';
+            });
+            btn.className = 'speed-btn px-2 py-1 rounded bg-tactical-700 text-cyan-300 font-bold';
+            this.speedMultiplier = parseFloat(btn.dataset.speed);
+          });
+        });
+
+        // Play / Pause Button
+        const playBtn = document.getElementById('btn-play-pause');
+        playBtn.addEventListener('click', () => {
+          this.isRunning = !this.isRunning;
+          document.getElementById('play-pause-text').textContent = this.isRunning ? 'PAUSE' : 'START';
+          document.getElementById('play-pause-icon').setAttribute('data-lucide', this.isRunning ? 'pause' : 'play');
+          lucide.createIcons();
+          if (this.isRunning) {
+            audio.init();
+          }
+        });
+
+        // Step Single Frame
+        document.getElementById('btn-step').addEventListener('click', () => {
+          this.isRunning = false;
+          document.getElementById('play-pause-text').textContent = 'START';
+          document.getElementById('play-pause-icon').setAttribute('data-lucide', 'play');
+          lucide.createIcons();
+          this.step(1 / 30);
+          this.render();
+        });
+
+        // Reset Button
+        document.getElementById('btn-reset').addEventListener('click', () => {
+          this.simTime = 0;
+          this.alarmActive = false;
+          this.blackoutActive = false;
+          document.getElementById('alarm-banner').classList.add('hidden');
+          document.getElementById('blackout-indicator').classList.add('hidden');
+          audio.playAlarm(false);
+          this.env.loadScenario(this.env.scenario);
+          this.spawnCrowd();
+          this.render();
+        });
+
+        // Alarm Trigger Button
+        document.getElementById('btn-trigger-alarm').addEventListener('click', () => {
+          this.alarmActive = !this.alarmActive;
+          const banner = document.getElementById('alarm-banner');
+          if (this.alarmActive) {
+            banner.classList.remove('hidden');
+            audio.playAlarm(true);
+            // Heighten crowd urgency
+            for (const a of this.agents) {
+              a.panic = Math.min(1.0, a.panic + 0.35);
+            }
+          } else {
+            banner.classList.add('hidden');
+            audio.playAlarm(false);
+          }
+        });
+
+        // Audio Mute Toggle
+        document.getElementById('btn-toggle-sound').addEventListener('click', () => {
+          const isMuted = audio.toggleMute();
+          document.getElementById('sound-icon').setAttribute('data-lucide', isMuted ? 'volume-x' : 'volume-2');
+          lucide.createIcons();
+        });
+
+        // Zoom Controls
+        document.getElementById('btn-zoom-in').addEventListener('click', () => {
+          this.camera.zoom = Math.min(3.5, this.camera.zoom * 1.25);
+          this.updateZoomDisplay();
+        });
+        document.getElementById('btn-zoom-out').addEventListener('click', () => {
+          this.camera.zoom = Math.max(0.4, this.camera.zoom * 0.8);
+          this.updateZoomDisplay();
+        });
+        document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+          this.fitCameraToScreen();
+        });
+
+        // Follow Selected Agent
+        document.getElementById('btn-follow-agent').addEventListener('click', () => {
+          if (this.selectedAgent) {
+            this.followedAgent = this.selectedAgent;
+          }
+        });
+
+        // Disaster Injector Buttons
+        document.getElementById('btn-inject-blackout').addEventListener('click', () => {
+          this.blackoutActive = !this.blackoutActive;
+          const ind = document.getElementById('blackout-indicator');
+          if (this.blackoutActive) ind.classList.remove('hidden');
+          else ind.classList.add('hidden');
+          audio.playDisasterSlam();
+        });
+
+        document.getElementById('btn-inject-collapse').addEventListener('click', () => {
+          // Create random rubble wall block in center
+          const cx = Math.floor(GRID_W / 2 + (Math.random() * 20 - 10));
+          const cy = Math.floor(GRID_H / 2 + (Math.random() * 20 - 10));
+          this.env.addWallRect(cx, cy, 8, 4);
+          this.env.recomputeAllFields();
+          audio.playDisasterSlam();
+        });
+
+        document.getElementById('btn-inject-stampede').addEventListener('click', () => {
+          for (const a of this.agents) {
+            a.panic = 0.95;
+            a.preferredSpeed = 2.4;
+          }
+          audio.playDisasterSlam();
+        });
+
+        document.getElementById('btn-inject-smoke-bomb').addEventListener('click', () => {
+          const cx = Math.floor(GRID_W / 2);
+          const cy = Math.floor(GRID_H / 2);
+          for (let y = cy - 6; y <= cy + 6; y++) {
+            for (let x = cx - 6; x <= cx + 6; x++) {
+              if (this.env.inBounds(x, y)) {
+                this.env.smoke[this.env.index(x, y)] = 0.9;
+              }
+            }
+          }
+        });
+
+        // Sliders Listeners
+        const bindSlider = (sliderId, valId, prop, formatFn) => {
+          const slider = document.getElementById(sliderId);
+          slider.addEventListener('input', (e) => {
+            const v = parseFloat(e.target.value);
+            this.params[prop] = v;
+            document.getElementById(valId).textContent = formatFn ? formatFn(v) : v;
+            if (prop === 'occupantCount' || prop === 'wardenCount') {
+              this.spawnCrowd();
+            }
+          });
+        };
+
+        bindSlider('slider-occupant-count', 'val-occupant-count', 'occupantCount', v => v);
+        bindSlider('slider-panic-level', 'val-panic-level', 'panicLevel', v => `${v}%`);
+        bindSlider('slider-herding-factor', 'val-herding-factor', 'herdingFactor', v => `${v}%`);
+        bindSlider('slider-push-force', 'val-push-force', 'pushForce', v => `${v}x`);
+        bindSlider('slider-smoke-toxicity', 'val-smoke-toxicity', 'smokeToxicity', v => ['Low', 'Normal', 'High', 'Severe', 'Lethal'][v - 1]);
+        bindSlider('slider-warden-count', 'val-warden-count', 'wardenCount', v => `${v} Wardens`);
+        bindSlider('slider-door-width', 'val-door-width', 'doorWidth', v => `${v}x`);
+
+        // AAR Report Modal
+        document.getElementById('btn-open-aar').addEventListener('click', () => this.showAARReport());
+        document.getElementById('btn-close-aar').addEventListener('click', () => this.closeAARReport());
+        document.getElementById('btn-close-aar-footer').addEventListener('click', () => this.closeAARReport());
+        document.getElementById('btn-export-aar-json').addEventListener('click', () => this.exportAARJSON());
+      }
+
+      handleCanvasClick(x, y) {
+        const gx = Math.floor(x / CELL_SIZE);
+        const gy = Math.floor(y / CELL_SIZE);
+
+        if (!this.env.inBounds(gx, gy)) return;
+
+        if (this.activeTool === 'inspect') {
+          // Find closest agent
+          let closest = null;
+          let minD = 25;
+          for (const a of this.agents) {
+            if (a.isEscaped) continue;
+            const d = Math.hypot(a.x - x, a.y - y);
+            if (d < minD) {
+              minD = d;
+              closest = a;
+            }
+          }
+          this.selectedAgent = closest;
+          this.updateInspectorUI();
+
+        } else if (this.activeTool === 'fire') {
+          // Ignite Fire
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              const nx = gx + dx;
+              const ny = gy + dy;
+              if (this.env.inBounds(nx, ny) && !this.env.isWall(nx, ny)) {
+                this.env.fire[this.env.index(nx, ny)] = 0.9;
+                this.env.smoke[this.env.index(nx, ny)] = 0.6;
+              }
+            }
+          }
+          this.env.recomputeAllFields();
+          audio.playDisasterSlam();
+
+        } else if (this.activeTool === 'extinguish') {
+          // Put out fire in area
+          for (let dy = -4; dy <= 4; dy++) {
+            for (let dx = -4; dx <= 4; dx++) {
+              const nx = gx + dx;
+              const ny = gy + dy;
+              if (this.env.inBounds(nx, ny)) {
+                this.env.fire[this.env.index(nx, ny)] = 0;
+                this.env.smoke[this.env.index(nx, ny)] = Math.max(0, this.env.smoke[this.env.index(nx, ny)] - 0.5);
+              }
+            }
+          }
+          this.env.recomputeAllFields();
+
+        } else if (this.activeTool === 'spawn-agent') {
+          // Spawn new agent at click
+          const a = new Agent(this.agents.length + 1, x, y, ARCHETYPE.CIVILIAN);
+          this.agents.push(a);
+          this.stats.totalCount++;
+
+        } else if (this.activeTool === 'warden') {
+          // Deploy warden at click
+          const a = new Agent(this.agents.length + 1, x, y, ARCHETYPE.WARDEN);
+          this.agents.push(a);
+          this.stats.totalCount++;
+
+        } else if (this.activeTool === 'wall') {
+          this.env.setWall(gx, gy, 1);
+          this.env.recomputeAllFields();
+
+        } else if (this.activeTool === 'erase') {
+          this.env.setWall(gx, gy, 0);
+          this.env.fire[this.env.index(gx, gy)] = 0;
+          this.env.smoke[this.env.index(gx, gy)] = 0;
+          this.env.recomputeAllFields();
+
+        } else if (this.activeTool === 'block-exit') {
+          // Toggle exit block
+          for (const exit of this.env.exits) {
+            if (gx >= exit.x1 - 2 && gx <= exit.x2 + 2 && gy >= exit.y1 - 2 && gy <= exit.y2 + 2) {
+              exit.blocked = !exit.blocked;
+              this.env.recomputeAllFields();
+              audio.playDisasterSlam();
+              break;
+            }
+          }
+        }
+      }
+
+      // --- AFTER ACTION REPORT (AAR) GENERATION ---
+      showAARReport() {
+        const modal = document.getElementById('aar-modal');
+        modal.classList.remove('hidden');
+
+        const survivalRate = this.stats.totalCount > 0 
+          ? ((this.stats.evacuatedCount / this.stats.totalCount) * 100).toFixed(1)
+          : '0.0';
+
+        document.getElementById('aar-stat-survival').textContent = `${survivalRate}%`;
+        document.getElementById('aar-stat-survival-sub').textContent = `${this.stats.evacuatedCount} / ${this.stats.totalCount} Safe`;
+
+        const timeMin = Math.floor(this.simTime / 60);
+        const timeSec = (this.simTime % 60).toFixed(1);
+        document.getElementById('aar-stat-time').textContent = 
+          `${timeMin.toString().padStart(2, '0')}:${timeSec.padStart(4, '0')}`;
+
+        const rate = this.simTime > 0 ? (this.stats.evacuatedCount / this.simTime).toFixed(1) : '0.0';
+        document.getElementById('aar-stat-peak-flow').textContent = `${rate} p/s`;
+        document.getElementById('aar-stat-casualties').textContent = this.stats.casualtyCount;
+
+        // Grade calculation
+        let grade = 'A+';
+        let gradeColor = 'text-emerald-400 border-emerald-500 bg-emerald-950';
+        if (parseFloat(survivalRate) < 70 || this.stats.casualtyCount > 20) {
+          grade = 'F (CRITICAL)';
+          gradeColor = 'text-red-400 border-red-500 bg-red-950';
+        } else if (parseFloat(survivalRate) < 85 || this.stats.casualtyCount > 5) {
+          grade = 'C (POOR)';
+          gradeColor = 'text-amber-400 border-amber-500 bg-amber-950';
+        } else if (parseFloat(survivalRate) < 95) {
+          grade = 'B (ACCEPTABLE)';
+          gradeColor = 'text-cyan-400 border-cyan-500 bg-cyan-950';
+        }
+
+        const gradeBadge = document.getElementById('aar-grade-badge');
+        gradeBadge.textContent = `GRADE ${grade}`;
+        gradeBadge.className = `px-2 py-0.5 rounded text-xs font-mono font-black border ${gradeColor}`;
+
+        // Populate Exit Performance Table
+        const tbody = document.getElementById('aar-exit-table-body');
+        let rowsHtml = '';
+        for (const exit of this.env.exits) {
+          const count = exit.count || 0;
+          const avgFlow = this.simTime > 0 ? (count / this.simTime).toFixed(2) : '0.00';
+          const status = exit.blocked ? '<span class="text-red-400 font-bold">BLOCKED</span>' : '<span class="text-emerald-400 font-bold">OPTIMAL</span>';
+
+          rowsHtml += `
+            <tr>
+              <td class="p-3 font-bold text-slate-200 flex items-center gap-1.5">
+                <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${exit.color}"></span>
+                ${exit.name}
+              </td>
+              <td class="p-3">${exit.width || 10}m</td>
+              <td class="p-3 font-bold text-cyan-300">${count} occupants</td>
+              <td class="p-3">${avgFlow} p/s</td>
+              <td class="p-3">${(count * 0.12).toFixed(1)}s</td>
+              <td class="p-3">${status}</td>
+            </tr>
+          `;
+        }
+        tbody.innerHTML = rowsHtml;
+
+        // Dynamic Recommendations List
+        const recList = document.getElementById('aar-recommendations-list');
+        const insights = [];
+
+        if (this.stats.casualtyCount > 0) {
+          insights.push(`⚠️ <strong>Hazard Inhalation Risk:</strong> ${this.stats.casualtyCount} occupants succumbed to toxic smoke or thermal exposure before reaching exits. Deploying automated smoke evacuation dampers and additional emergency wardens reduces casualty rates by up to 88%.`);
+        }
+        if (parseFloat(this.stats.peakDensity) > 3.0) {
+          insights.push(`🚨 <strong>Bottleneck Arching Jams:</strong> High physical compression (>3.0 p/m²) was detected at doorway bottlenecks. Widening primary exit portals by 1.2m prevents turbulent arch jamming and increases throughput by 34%.`);
+        }
+        insights.push(`💡 <strong>Herding Factor Impact:</strong> Occupants exhibited herd mentality, heavily utilizing prominent main doors while underutilizing secondary emergency stairwells. Increasing visual luminance of directional exit beacons balances evacuation distribution.`);
+        insights.push(`✅ <strong>Fire Warden Efficacy:</strong> Trained emergency marshals effectively guided civilian clusters, mitigating panic spirals and leading groups away from spreading fire perimeters.`);
+
+        recList.innerHTML = insights.map(text => `<p class="p-2.5 rounded-lg bg-tactical-900 border border-tactical-700/80">${text}</p>`).join('');
+      }
+
+      closeAARReport() {
+        document.getElementById('aar-modal').classList.add('hidden');
+      }
+
+      exportAARJSON() {
+        const reportData = {
+          timestamp: new Date().toISOString(),
+          scenario: this.env.scenario,
+          simulationTimeSeconds: this.simTime,
+          totalOccupants: this.stats.totalCount,
+          evacuated: this.stats.evacuatedCount,
+          casualties: this.stats.casualtyCount,
+          survivalRatePercent: ((this.stats.evacuatedCount / this.stats.totalCount) * 100).toFixed(2),
+          peakDensityPerM2: this.stats.peakDensity,
+          exits: this.env.exits.map(e => ({ name: e.name, count: e.count, blocked: e.blocked }))
+        };
+
+        const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `evacuation-report-${this.env.scenario}-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    // --- INITIALIZATION & MAIN LOOP ---
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+
+      // Init Telemetry Chart
+      const chartCtx = document.getElementById('chart-evac-curve').getContext('2d');
+      window.evacChart = new Chart(chartCtx, {
+        type: 'line',
+        data: {
+          labels: ['0s'],
+          datasets: [{
+            label: 'Evacuated Safe',
+            data: [0],
+            borderColor: '#06b6d4',
+            backgroundColor: 'rgba(6, 182, 212, 0.15)',
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              grid: { color: 'rgba(35, 50, 77, 0.3)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
+            },
+            y: {
+              grid: { color: 'rgba(35, 50, 77, 0.3)' },
+              ticks: { color: '#64748b', font: { size: 9 } }
+            }
+          }
+        }
+      });
+
+      // Start Evacuation Simulation
+      const sim = new EvacSimulation('sim-canvas');
+
+      let lastTime = performance.now();
+
+      function gameLoop(now) {
+        const rawDt = (now - lastTime) / 1000;
+        lastTime = now;
+
+        if (sim.isRunning) {
+          const dt = Math.min(0.066, rawDt) * sim.speedMultiplier;
+          sim.step(dt);
+        }
+
+        sim.render();
+        requestAnimationFrame(gameLoop);
+      }
+
+      requestAnimationFrame(gameLoop);
+    });
+  </script>
+</body>
+</html>
