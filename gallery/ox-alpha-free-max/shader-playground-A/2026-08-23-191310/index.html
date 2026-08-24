@@ -20,7 +20,6 @@ body{
   font:13px/1.45 system-ui,'Segoe UI',Roboto,sans-serif;
 }
 body.dragging{cursor:col-resize; user-select:none}
-body.dragging-h{cursor:row-resize}
 
 /* ---------- top bar ---------- */
 #topbar{
@@ -30,7 +29,8 @@ body.dragging-h{cursor:row-resize}
 #logo{font-weight:600; letter-spacing:.3px; color:var(--accent); margin-right:6px}
 .btn{
   appearance:none; background:#161c29; border:1px solid var(--border); color:var(--text);
-  padding:5px 11px; border-radius:6px; font:inherit; cursor:pointer; transition:border-color .15s, background .15s;
+  padding:5px 11px; border-radius:6px; font:inherit; cursor:pointer;
+  transition:border-color .15s, background .15s;
 }
 .btn:hover{border-color:#2e3952; background:#1b2334}
 .btn:active{transform:translateY(1px)}
@@ -38,7 +38,7 @@ body.dragging-h{cursor:row-resize}
 .btn.primary{background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600}
 .btn.primary:hover{filter:brightness(1.1)}
 select{
-  appearance:none; background:#161c29; border:1px solid var(--border); color:var(--text);
+  appearance:none; background-color:#161c29; border:1px solid var(--border); color:var(--text);
   padding:5px 26px 5px 10px; border-radius:6px; font:inherit; cursor:pointer;
   background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b94a7' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 9px center;
@@ -62,6 +62,7 @@ select{
   position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
   padding:24px; text-align:center; color:var(--err); background:rgba(4,6,10,.92);
 }
+#glfail[hidden]{display:none}
 
 /* ---------- editor ---------- */
 #editorWrap{flex:1; display:flex; min-height:0; border-bottom:1px solid var(--border)}
@@ -121,7 +122,6 @@ select{
   #split{flex-direction:column}
   #left{flex:none; width:100%; height:44%}
   #divider{cursor:row-resize; border:none; border-top:1px solid var(--border); border-bottom:1px solid var(--border)}
-  body.dragging{cursor:row-resize}
 }
 </style>
 </head>
@@ -175,20 +175,779 @@ select{
 'use strict';
 (function(){
 
-/* ================= presets ================= */
+/* ============================================================
+ * Presets — each value is a complete GLSL ES 1.00 fragment
+ * shader. Exactly this text is what gets compiled.
+ * ============================================================ */
 
 var HEAD =
-'precision highp float;\n' +
-'\n' +
-'uniform vec2  u_resolution; // canvas size in pixels\n' +
-'uniform float u_time;       // seconds since start (pauses with playback)\n' +
-'uniform vec2  u_mouse;      // pointer over canvas, roughly [-1 .. 1]\n';
+  'precision highp float;\n' +
+  '\n' +
+  'uniform vec2  u_resolution; // canvas size in pixels\n' +
+  'uniform float u_time;       // seconds since start (pauses with playback)\n' +
+  'uniform vec2  u_mouse;      // pointer over canvas, roughly [-1 .. 1]\n';
 
 var PRES = {};
 
-PRES['Plasma'] = HEAD + '''
-''';
-/* placeholder replaced below */
+PRES['Plasma'] = HEAD + [
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / min(u_resolution.x, u_resolution.y);',
+'',
+'    float v = 0.0;',
+'    v += sin(uv.x * 3.0 + u_time);',
+'    v += sin((uv.y + u_time) * 2.0);',
+'    v += sin((uv.x + uv.y) * 2.0 + u_time);',
+'    vec2 c = uv + vec2(sin(u_time * 0.3), cos(u_time * 0.27)) * 0.6;',
+'    v += sin(length(c) * 6.0 - u_time * 1.5);',
+'    v *= 0.25;',
+'',
+'    vec2 m = u_mouse * 0.5;',
+'    v += 0.15 * cos(10.0 * distance(uv, m));',
+'',
+'    vec3 col = 0.5 + 0.5 * cos(6.28318 * (v + u_time * 0.1 + vec3(0.0, 0.33, 0.67)));',
+'    col *= 1.0 - 0.25 * dot(uv, uv); // soft vignette',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Raymarch — Torus Orbit'] = HEAD + [
+'',
+'mat2 rot(float a) {',
+'    float c = cos(a), s = sin(a);',
+'    return mat2(c, -s, s, c);',
+'}',
+'',
+'float sdTorus(vec3 p, vec2 t) {',
+'    vec2 q = vec2(length(p.xz) - t.x, p.y);',
+'    return length(q) - t.y;',
+'}',
+'',
+'float sdSphere(vec3 p, float r) {',
+'    return length(p) - r;',
+'}',
+'',
+'float map(vec3 p) {',
+'    vec3 q = p;',
+'    q.xz = rot(u_time * 0.50) * q.xz;',
+'    q.xy = rot(u_time * 0.31) * q.xy;',
+'    float d = sdTorus(q, vec2(1.0, 0.38));',
+'    d = min(d, sdSphere(p, 0.45));',
+'    for (int i = 0; i < 3; i++) {           // orbiting satellites',
+'        float fi = float(i);',
+'        float a  = u_time * 1.2 + fi * 2.094;',
+'        vec3 o = vec3(cos(a), sin(a * 1.7) * 0.5, sin(a)) * 1.6;',
+'        d = min(d, sdSphere(p - o, 0.12));',
+'    }',
+'    return d;',
+'}',
+'',
+'vec3 normalAt(vec3 p) {',
+'    vec2 e = vec2(0.0015, 0.0);',
+'    return normalize(vec3(',
+'        map(p + e.xyy) - map(p - e.xyy),',
+'        map(p + e.yxy) - map(p - e.yxy),',
+'        map(p + e.yyx) - map(p - e.yyx)));',
+'}',
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'',
+'    vec3 ro = vec3(0.0, 0.0, -4.2);',
+'    float yaw   = u_time * 0.2 + u_mouse.x * 2.5;',
+'    float pitch = clamp(-0.3 + u_mouse.y * 0.8, -1.2, 1.2);',
+'    vec3 rd = normalize(vec3(uv, 1.7));',
+'    rd.xz = rot(yaw)   * rd.xz;',
+'    rd.yz = rot(pitch) * rd.yz;',
+'',
+'    vec3 bg = mix(vec3(0.05, 0.06, 0.10), vec3(0.10, 0.12, 0.18), uv.y + 0.5);',
+'',
+'    float t = 0.0;',
+'    bool hit = false;',
+'    for (int i = 0; i < 96; i++) {',
+'        vec3 p = ro + rd * t;',
+'        float d = map(p);',
+'        if (d < 0.001 * t + 0.0008) { hit = true; break; }',
+'        t += d * 0.9;',
+'        if (t > 12.0) break;',
+'    }',
+'',
+'    vec3 col = bg;',
+'    if (hit) {',
+'        vec3 p = ro + rd * t;',
+'        vec3 n = normalAt(p);',
+'        vec3 ldir = normalize(vec3(0.6, 0.8, -0.4));',
+'        float dif = clamp(dot(n, ldir), 0.0, 1.0);',
+'        float spe = pow(clamp(dot(reflect(rd, n), ldir), 0.0, 1.0), 40.0);',
+'        float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);',
+'        vec3 base = mix(vec3(0.85, 0.30, 0.45), vec3(0.25, 0.55, 0.95),',
+'                        0.5 + 0.5 * sin(p.z * 1.5 + u_time));',
+'        col = base * (0.15 + 0.85 * dif) + spe + fre * vec3(0.3, 0.5, 0.8);',
+'        col = mix(col, bg, smoothstep(4.0, 11.0, t)); // depth fade',
+'    }',
+'',
+'    col = pow(col, vec3(0.4545)); // gamma',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Fractal — Mandelbrot'] = HEAD + [
+'',
+'// Slow cyclic dive into Seahorse Valley, then back out.',
+'',
+'vec3 palette(float t) {',
+'    return 0.5 + 0.5 * cos(6.28318 * (t + vec3(0.0, 0.25, 0.5)));',
+'}',
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'',
+'    float k    = 0.5 - 0.5 * cos(u_time * 0.08);',
+'    float zoom = pow(2.0, k * 14.0);',
+'    vec2 center = mix(vec2(-0.6, 0.0), vec2(-0.74543, 0.11301), k);',
+'',
+'    vec2 c = center + uv / zoom;',
+'',
+'    vec2 z = vec2(0.0);',
+'    float n = -1.0;',
+'    for (int i = 0; i < 200; i++) {',
+'        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;',
+'        if (dot(z, z) > 256.0) { n = float(i); break; }',
+'    }',
+'',
+'    vec3 col;',
+'    if (n < 0.0) {',
+'        col = vec3(0.02, 0.02, 0.05); // interior',
+'    } else {',
+'        float sn = n - log2(log2(dot(z, z))) + 4.0; // smooth iteration count',
+'        col = palette(sn * 0.015 + u_time * 0.03);',
+'    }',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Voronoi Cells'] = HEAD + [
+'',
+'vec2 hash2(vec2 p) {',
+'    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));',
+'    return fract(sin(p) * 43758.5453);',
+'}',
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'',
+'    vec2 p  = uv * 4.0;',
+'    vec2 ip = floor(p);',
+'    vec2 fp = fract(p);',
+'',
+'    // first pass: closest animated feature point',
+'    float md = 8.0;',
+'    vec2 mp = vec2(0.0);',
+'    for (int j = -1; j <= 1; j++)',
+'    for (int i = -1; i <= 1; i++) {',
+'        vec2 g = vec2(float(i), float(j));',
+'        vec2 o = hash2(ip + g);',
+'        o = 0.5 + 0.4 * sin(u_time * 0.8 + 6.2831 * o);',
+'        float d = length(g + o - fp);',
+'        if (d < md) { md = d; mp = g + o; }',
+'    }',
+'',
+'    // second pass: distance to cell borders',
+'    float edges = 8.0;',
+'    for (int j = -1; j <= 1; j++)',
+'    for (int i = -1; i <= 1; i++) {',
+'        vec2 g = vec2(float(i), float(j));',
+'        vec2 o = hash2(ip + g);',
+'        o = 0.5 + 0.4 * sin(u_time * 0.8 + 6.2831 * o);',
+'        vec2 r = g + o - fp;',
+'        if (dot(mp - r, mp - r) > 0.00001) {',
+'            edges = min(edges, dot(0.5 * (mp + r), normalize(mp - r)));',
+'        }',
+'    }',
+'',
+'    vec3 col = mix(vec3(0.08, 0.10, 0.16), vec3(0.35, 0.75, 0.85),',
+'                   1.0 - smoothstep(0.0, 1.2, md));',
+'    col = mix(col, vec3(0.95, 0.98, 1.0), 1.0 - smoothstep(0.00, 0.05, md));',
+'    col = mix(col, vec3(0.02, 0.03, 0.05), 1.0 - smoothstep(0.01, 0.05, edges));',
+'    col += 0.15 * exp(-6.0 * length(uv - u_mouse)); // faint glow at pointer',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Infinite Tunnel'] = HEAD + [
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'',
+'    float r = length(uv);',
+'    float a = atan(uv.y, uv.x);',
+'',
+'    float depth = 0.35 / max(r, 0.0001) + u_time * 1.2;',
+'    float angle = a / 3.14159 + 0.5 * u_mouse.x;',
+'',
+'    float checker = mod(floor(depth * 2.0) + floor(angle * 8.0), 2.0);',
+'',
+'    vec3 colA = vec3(0.90, 0.35, 0.55);',
+'    vec3 colB = vec3(0.20, 0.25, 0.60);',
+'    vec3 col  = mix(colB, colA, checker);',
+'    col *= 0.55 + 0.45 * sin(depth * 6.2831);',
+'',
+'    // light at the end of the tunnel',
+'    float glow = exp(-r * 4.0) * (0.6 + 0.4 * sin(u_time * 2.0));',
+'    col += vec3(1.0, 0.9, 0.7) * glow * smoothstep(0.0, 0.4, r);',
+'',
+'    // fog toward the vanishing point, dim toward the rim',
+'    col = mix(col, vec3(0.02, 0.02, 0.04), smoothstep(0.9, 0.05, r));',
+'    col *= 1.0 - 0.3 * smoothstep(0.8, 1.6, r);',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Metaballs'] = HEAD + [
+'',
+'float blob(vec2 p, vec2 c, float rr) {',
+'    vec2 d = p - c;',
+'    return rr * rr / max(dot(d, d), 0.000001);',
+'}',
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'    float t = u_time;',
+'',
+'    float f = 0.0;',
+'    f += blob(uv, vec2(sin(t * 1.1) * 0.7, cos(t * 0.9) * 0.45), 0.28);',
+'    f += blob(uv, vec2(sin(t * 0.7 + 2.1) * 0.8, sin(t * 1.3 + 1.0) * 0.5), 0.22);',
+'    f += blob(uv, vec2(cos(t * 1.4) * 0.6, sin(t * 0.8 + 4.2) * 0.55), 0.24);',
+'    f += blob(uv, vec2(sin(t * 0.5 + 5.0) * 0.9, cos(t * 1.6 + 2.5) * 0.3), 0.18);',
+'    f += blob(uv, u_mouse * 0.9, 0.30); // one ball follows the pointer',
+'',
+'    float edge = smoothstep(0.9, 1.1, f);',
+'    vec3 inner = mix(vec3(0.15, 0.45, 0.95), vec3(0.95, 0.45, 0.75),',
+'                     0.5 + 0.5 * sin(f * 3.0 - t));',
+'    float rim = smoothstep(0.75, 1.0, f) * (1.0 - edge);',
+'',
+'    vec3 col = mix(vec3(0.04, 0.05, 0.09), inner, edge);',
+'    col += rim * vec3(0.6, 0.9, 1.0) * 0.6;',
+'    col += inner * 0.12 * clamp(f, 0.0, 1.0); // soft field glow',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+PRES['Blank Template'] = HEAD + [
+'',
+'void main() {',
+'    vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;',
+'',
+'    vec3 col = 0.5 + 0.5 * cos(u_time + uv.xyx + vec3(0.0, 2.0, 4.0));',
+'',
+'    gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+var DEFAULT_PRESET = 'Plasma';
+
+/* ============================================================
+ * DOM
+ * ============================================================ */
+
+var $ = function(id){ return document.getElementById(id); };
+var canvas    = $('glc');
+var right     = $('right');
+var srcEl     = $('src');
+var hlEl      = $('hl');
+var gutterEl  = $('gutter');
+var errbar    = $('errbar');
+var errList   = $('errList');
+var statusEl  = $('status');
+var metaEl    = $('meta');
+var fpsEl     = $('fps');
+var presetSel = $('presetSel');
+var btnPlay   = $('btnPlay');
+var btnReset  = $('btnReset');
+var btnShot   = $('btnShot');
+var btnFull   = $('btnFull');
+var btnCompile= $('btnCompile');
+var autoChk   = $('autoChk');
+var divider   = $('divider');
+var leftPane  = $('left');
+var splitPane = $('split');
+var glfail    = $('glfail');
+
+function esc(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ============================================================
+ * WebGL core
+ * ============================================================ */
+
+var VERT_SRC = 'attribute vec2 p;\nvoid main(){ gl_Position = vec4(p, 0.0, 1.0); }';
+var gl = null;
+var program = null;
+var uni = { res:null, time:null, mouse:null };
+var W = 1, H = 1;
+
+function initGL(){
+  var opts = { antialias:false, alpha:false, depth:false, stencil:false,
+               preserveDrawingBuffer:false };
+  gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+  if (!gl){ glfail.hidden = false; return false; }
+  initBuffer();
+  canvas.addEventListener('webglcontextlost', function(e){
+    e.preventDefault();
+    setStatus('err', 'WebGL context lost — waiting to restore…');
+  });
+  canvas.addEventListener('webglcontextrestored', function(){
+    initBuffer();
+    compileNow();
+  });
+  return true;
+}
+
+function initBuffer(){
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER,
+    new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+}
+
+function buildProgram(fragSrc){
+  var vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, VERT_SRC);
+  gl.compileShader(vs);
+  if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)){
+    var vlog = gl.getShaderInfoLog(vs);
+    gl.deleteShader(vs);
+    return { prog:null, log:vlog || 'vertex shader compile failed' };
+  }
+  var fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, fragSrc);
+  gl.compileShader(fs);
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)){
+    var flog = gl.getShaderInfoLog(fs);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    return { prog:null, log:flog || 'fragment shader compile failed' };
+  }
+  var p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.bindAttribLocation(p, 0, 'p');
+  gl.linkProgram(p);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    var llog = gl.getProgramInfoLog(p);
+    gl.deleteProgram(p);
+    return { prog:null, log:llog || 'program link failed' };
+  }
+  return { prog:p, log:null };
+}
+
+function parseLog(raw){
+  var out = [];
+  String(raw).split(/\r?\n/).forEach(function(line){
+    var m = line.match(/ERROR:\s*\d+:(\d+):\s*(.*)/i);
+    if (m) out.push({ line: parseInt(m[1], 10), msg: m[2] || '' });
+  });
+  if (!out.length && String(raw).trim()){
+    out.push({ line: 0, msg: String(raw).trim().split(/\r?\n/)[0] });
+  }
+  return out.slice(0, 10);
+}
+
+function showErrors(list){
+  errList.innerHTML = list.map(function(e){
+    return '<li data-line="' + e.line + '">' +
+      '<span class="lnum">' + (e.line > 0 ? 'line ' + e.line : 'shader') + '</span>' +
+      esc(e.msg) + '</li>';
+  }).join('');
+  errbar.hidden = false;
+}
+
+function clearErrors(){
+  errbar.hidden = true;
+  errList.innerHTML = '';
+}
+
+function setStatus(kind, text){
+  statusEl.className = kind;
+  statusEl.textContent = text;
+}
+
+function compileNow(){
+  if (!gl){ setStatus('err', 'no WebGL context'); return; }
+  var t0 = performance.now();
+  var res = buildProgram(srcEl.value);
+  var ms = (performance.now() - t0).toFixed(1);
+  if (res.prog){
+    if (program) gl.deleteProgram(program);
+    program = res.prog;
+    uni.res   = gl.getUniformLocation(program, 'u_resolution');
+    uni.time  = gl.getUniformLocation(program, 'u_time');
+    uni.mouse = gl.getUniformLocation(program, 'u_mouse');
+    clearErrors();
+    setStatus('ok', '\u2714 compiled in ' + ms + ' ms');
+  } else {
+    showErrors(parseLog(res.log));
+    setStatus('err', '\u2716 compile failed \u2014 last working shader still running');
+  }
+}
+
+/* ============================================================
+ * Editor: highlight, gutter, scroll sync
+ * ============================================================ */
+
+var KW = {};
+'uniform varying attribute precision highp mediump lowp const void bool int float \
+vec2 vec3 vec4 ivec2 ivec3 ivec4 bvec2 bvec3 bvec4 mat2 mat3 mat4 \
+sampler2D samplerCube struct if else for while do break continue return \
+in out inout discard true false'.split(/\s+/).forEach(function(w){ KW[w] = 1; });
+
+var FN = {};
+'sin cos tan asin acos atan pow exp log exp2 log2 sqrt inversesqrt abs sign \
+floor ceil fract mod min max clamp mix step smoothstep length distance dot \
+cross normalize faceforward reflect refract matrixCompMult texture2D textureCube'
+.split(/\s+/).forEach(function(w){ FN[w] = 1; });
+
+var TOK = /((?:\/\/[^\n]*)|(?:\/\*[\s\S]*?\*\/))|(#[^\n]*)|([A-Za-z_]\w*)|((?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?)|([\s\S])/g;
+
+function highlight(code){
+  var out = '', m;
+  TOK.lastIndex = 0;
+  while ((m = TOK.exec(code)) !== null){
+    if (m[1] !== undefined){
+      out += '<span class="tk-cm">' + esc(m[1]) + '</span>';
+    } else if (m[2] !== undefined){
+      out += '<span class="tk-pp">' + esc(m[2]) + '</span>';
+    } else if (m[3] !== undefined){
+      var t = m[3];
+      var cls = FN[t] ? 'tk-fn' : (KW[t] ? 'tk-kw' : '');
+      out += cls ? '<span class="' + cls + '">' + esc(t) + '</span>' : esc(t);
+    } else if (m[4] !== undefined){
+      out += '<span class="tk-num">' + esc(m[4]) + '</span>';
+    } else {
+      out += esc(m[5]);
+    }
+  }
+  return out + '\n';
+}
+
+var lastLines = -1;
+
+function refreshEditor(){
+  hlEl.innerHTML = highlight(srcEl.value);
+  var n = srcEl.value.split('\n').length;
+  if (n !== lastLines){
+    lastLines = n;
+    var h = '';
+    for (var i = 1; i <= n; i++) h += '<span>' + i + '</span>';
+    gutterEl.innerHTML = h;
+  }
+  syncScroll();
+}
+
+function syncScroll(){
+  hlEl.scrollTop = srcEl.scrollTop;
+  hlEl.scrollLeft = srcEl.scrollLeft;
+  gutterEl.scrollTop = srcEl.scrollTop;
+}
+
+srcEl.addEventListener('scroll', syncScroll);
+
+function jumpToLine(n){
+  var lines = srcEl.value.split('\n');
+  if (n < 1 || n > lines.length) return;
+  var idx = 0;
+  for (var i = 0; i < n - 1; i++) idx += lines[i].length + 1;
+  var end = idx + lines[n - 1].length;
+  srcEl.focus();
+  srcEl.setSelectionRange(idx, end);
+  var lh = parseFloat(getComputedStyle(srcEl).lineHeight) || 20;
+  srcEl.scrollTop = Math.max(0, (n - 3) * lh);
+  refreshEditor();
+}
+
+errList.addEventListener('click', function(e){
+  var li = e.target.closest('li');
+  if (!li) return;
+  var n = parseInt(li.getAttribute('data-line'), 10);
+  if (n > 0) jumpToLine(n);
+});
+
+/* editor keyboard: Tab inserts spaces, Shift+Tab outdents,
+   Enter keeps indentation (all undo-friendly via setRangeText) */
+srcEl.addEventListener('keydown', function(e){
+  if (e.key === 'Tab'){
+    e.preventDefault();
+    var s = srcEl.selectionStart, en = srcEl.selectionEnd;
+    if (e.shiftKey){
+      var ls = srcEl.value.lastIndexOf('\n', s - 1) + 1;
+      var m2 = /^ {1,2}/.exec(srcEl.value.slice(ls));
+      if (m2) srcEl.setRangeText('', ls, ls + m2[0].length, 'preserve');
+    } else {
+      srcEl.setRangeText('  ', s, en, 'end');
+    }
+    refreshEditor();
+    scheduleCompile();
+    persistSoon();
+  } else if (e.key === 'Enter'){
+    var v = srcEl.value;
+    var cs = srcEl.selectionStart;
+    var lstart = v.lastIndexOf('\n', cs - 1) + 1;
+    var ind = /^[ \t]*/.exec(v.slice(lstart))[0];
+    var extra = /[{(]\s*$/.test(v.slice(lstart, cs)) ? '  ' : '';
+    if (ind.length || extra){
+      e.preventDefault();
+      srcEl.setRangeText('\n' + ind + extra, cs, srcEl.selectionEnd, 'end');
+      refreshEditor();
+      scheduleCompile();
+      persistSoon();
+    }
+  }
+});
+
+/* ============================================================
+ * Compile scheduling + persistence
+ * ============================================================ */
+
+var compileTimer = null;
+
+function scheduleCompile(){
+  if (!autoChk.checked) return;
+  clearTimeout(compileTimer);
+  compileTimer = setTimeout(function(){ compileNow(); persist(); }, 350);
+}
+
+var persistTimer = null;
+function persistSoon(){
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persist, 600);
+}
+
+function persist(){
+  try {
+    localStorage.setItem('shpg.state',
+      JSON.stringify({ src: srcEl.value, preset: presetSel.value }));
+  } catch (e) { /* storage unavailable (e.g. some file:// configs) */ }
+}
+
+function restoreState(){
+  try {
+    var raw = localStorage.getItem('shpg.state');
+    if (!raw) return false;
+    var st = JSON.parse(raw);
+    if (typeof st.src !== 'string' || !st.src.trim()) return false;
+    srcEl.value = st.src;
+    if (st.preset && PRES[st.preset]) presetSel.value = st.preset;
+    return true;
+  } catch (e) { return false; }
+}
+
+function loadPreset(name){
+  presetSel.value = name;
+  srcEl.value = PRES[name];
+  lastLines = -1;
+  refreshEditor();
+  compileNow();
+  persist();
+}
+
+Object.keys(PRES).forEach(function(name){
+  var opt = document.createElement('option');
+  opt.value = name;
+  opt.textContent = name;
+  presetSel.appendChild(opt);
+});
+presetSel.value = DEFAULT_PRESET;
+
+presetSel.addEventListener('change', function(){ loadPreset(presetSel.value); });
+
+srcEl.addEventListener('input', function(){
+  refreshEditor();
+  scheduleCompile();
+  persistSoon();
+});
+
+btnCompile.addEventListener('click', function(){
+  compileNow();
+  persist();
+});
+
+/* ============================================================
+ * Playback controls
+ * ============================================================ */
+
+var playing = true;
+var simTime = 0;
+
+function togglePlay(){
+  playing = !playing;
+  btnPlay.innerHTML = playing ? '&#9208; Pause' : '&#9654; Play';
+}
+btnPlay.addEventListener('click', togglePlay);
+
+btnReset.addEventListener('click', function(){ simTime = 0; });
+
+btnShot.addEventListener('click', function(){
+  drawFrame(); // fresh buffer right before reading it
+  try {
+    var a = document.createElement('a');
+    a.download = 'shader-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch (e) {
+    setStatus('err', 'PNG export failed: ' + e.message);
+  }
+});
+
+btnFull.addEventListener('click', function(){
+  if (document.fullscreenElement){
+    document.exitFullscreen();
+  } else if (right.requestFullscreen){
+    right.requestFullscreen();
+  }
+});
+
+window.addEventListener('keydown', function(e){
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+    e.preventDefault();
+    compileNow();
+    return;
+  }
+  if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.altKey){
+    var t = e.target.tagName;
+    if (t !== 'TEXTAREA' && t !== 'SELECT' && t !== 'BUTTON' && t !== 'INPUT'){
+      e.preventDefault();
+      togglePlay();
+    }
+  }
+});
+
+/* ============================================================
+ * Splitter
+ * ============================================================ */
+
+var stackMQ = window.matchMedia('(max-width:900px)');
+var dragging = false;
+
+function resetSplit(){
+  leftPane.style.flexBasis = '';
+  leftPane.style.height = '';
+}
+divider.addEventListener('dblclick', resetSplit);
+if (stackMQ.addEventListener) stackMQ.addEventListener('change', resetSplit);
+
+divider.addEventListener('pointerdown', function(e){
+  dragging = true;
+  divider.setPointerCapture(e.pointerId);
+  document.body.classList.add('dragging');
+});
+window.addEventListener('pointermove', function(e){
+  if (!dragging) return;
+  var r = splitPane.getBoundingClientRect();
+  if (!stackMQ.matches){
+    var px = Math.min(0.8, Math.max(0.2, (e.clientX - r.left) / r.width));
+    leftPane.style.height = '';
+    leftPane.style.flexBasis = (px * 100) + '%';
+  } else {
+    var py = Math.min(0.75, Math.max(0.22, (e.clientY - r.top) / r.height));
+    leftPane.style.flexBasis = '';
+    leftPane.style.height = (py * 100) + '%';
+  }
+});
+window.addEventListener('pointerup', function(){
+  dragging = false;
+  document.body.classList.remove('dragging');
+});
+
+/* ============================================================
+ * Pointer -> u_mouse
+ * ============================================================ */
+
+var mouseX = 0, mouseY = 0;
+right.addEventListener('pointermove', function(e){
+  var r = right.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  mouseX = ((e.clientX - r.left) / r.width) * 2 - 1;
+  mouseY = 1 - ((e.clientY - r.top) / r.height) * 2;
+});
+
+/* ============================================================
+ * Render loop
+ * ============================================================ */
+
+function resizeCanvas(){
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  var w = Math.max(1, Math.round(right.clientWidth * dpr));
+  var h = Math.max(1, Math.round(right.clientHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h){
+    canvas.width = w;
+    canvas.height = h;
+    if (gl) gl.viewport(0, 0, w, h);
+  }
+  W = w; H = h;
+}
+
+function drawFrame(){
+  if (!gl) return;
+  resizeCanvas();
+  gl.clearColor(0.02, 0.03, 0.05, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (!program) return;
+  gl.useProgram(program);
+  if (uni.res)   gl.uniform2f(uni.res, W, H);
+  if (uni.time)  gl.uniform1f(uni.time, simTime);
+  if (uni.mouse) gl.uniform2f(uni.mouse, mouseX, mouseY);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+var lastT = performance.now();
+var fpsFrames = 0;
+var fpsAccum = 0;
+
+function loop(now){
+  requestAnimationFrame(loop);
+  var dt = Math.min(0.1, (now - lastT) / 1000);
+  lastT = now;
+  if (playing) simTime += dt;
+  fpsFrames++;
+  fpsAccum += dt;
+  if (fpsAccum >= 0.5){
+    fpsEl.textContent = Math.round(fpsFrames / fpsAccum) + ' fps';
+    fpsFrames = 0;
+    fpsAccum = 0;
+  }
+  drawFrame();
+  metaEl.textContent = W + '\u00d7' + H + ' \u00b7 t=' + simTime.toFixed(1) + 's';
+}
+
+/* ============================================================
+ * Init
+ * ============================================================ */
+
+if (initGL()){
+  if (!restoreState()){
+    presetSel.value = DEFAULT_PRESET;
+    srcEl.value = PRES[DEFAULT_PRESET];
+    lastLines = -1;
+  }
+  refreshEditor();
+  compileNow();
+  requestAnimationFrame(loop);
+} else {
+  // No WebGL: still give users a working editor with the default shader.
+  srcEl.value = PRES[DEFAULT_PRESET];
+  refreshEditor();
+  setStatus('err', 'WebGL unavailable \u2014 editor only');
+}
 
 })();
 </script>

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>First-Person Rollercoaster</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+  #c { display: block; width: 100%; height: 100%; }
+  #hud {
+    position: fixed; left: 14px; bottom: 12px;
+    font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    color: #eaf6ff; text-shadow: 0 1px 3px rgba(0,0,0,.8);
+    pointer-events: none; user-select: none;
+  }
+  #hud b { color: #7fdfff; }
+  #title {
+    position: fixed; left: 14px; top: 12px;
+    font: 600 15px/1.3 ui-monospace, Menlo, Consolas, monospace;
+    color: #eaf6ff; text-shadow: 0 1px 3px rgba(0,0,0,.8);
+    pointer-events: none; user-select: none;
+  }
+  #speed { color: #ffd166; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title">FIRST-PERSON ROLLERCOASTER</div>
+<div id="hud">
+  speed <span id="speed">0</span> km/h &nbsp;·&nbsp; <b>▲</b> looking ahead along the rails<br>
+  continuous ride · reload page to restart
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8ec5ff);
+scene.fog = new THREE.Fog(0x9fd0ff, 120, 520);
+
+const camera = new THREE.PerspectiveCamera(72, 1, 0.1, 2000);
+
+// ---- Lighting ----
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x4a6b3a, 0.85);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
+sun.position.set(120, 200, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 10;
+sun.shadow.camera.far = 600;
+sun.shadow.camera.left = -260;
+sun.shadow.camera.right = 260;
+sun.shadow.camera.top = 260;
+sun.shadow.camera.bottom = -260;
+scene.add(sun);
+
+// ---- Ground ----
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(900, 64),
+  new THREE.MeshStandardMaterial({ color: 0x5b8a3c, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// subtle ground grid for speed sensation
+const grid = new THREE.GridHelper(1600, 160, 0x3c6b28, 0x3c6b28);
+grid.material.opacity = 0.25;
+grid.material.transparent = true;
+scene.add(grid);
+
+// ---- Build the track curve ----
+// A looping circuit with hills, a dip, and a vertical loop.
+const pts = [
+  new THREE.Vector3(  0,   8,    0),
+  new THREE.Vector3( 60,  28,  -40),
+  new THREE.Vector3(110,  10,  -90),
+  new THREE.Vector3( 60,   4, -150),
+  new THREE.Vector3(-20,  14, -170),
+  new THREE.Vector3(-90,   3, -150),
+  new THREE.Vector3(-130, 18, -90),
+  // vertical loop around (-150, 30, -30)
+  new THREE.Vector3(-150, 30, -30),
+  new THREE.Vector3(-150, 55, -10),
+  new THREE.Vector3(-150, 30,  10),
+  new THREE.Vector3(-160,  8, -25),
+  new THREE.Vector3(-120,  10,  30),
+  new THREE.Vector3(-40,  40,   60),
+  new THREE.Vector3( 40,  12,   70),
+  new THREE.Vector3( 90,   6,   40),
+  new THREE.Vector3( 70,  30,  -10),
+  new THREE.Vector3( 20,  14,  -20),
+  new THREE.Vector3(  0,   8,    0),
+];
+
+// Make it a closed smooth curve
+const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+
+// ---- Rail geometry (two tubes + ties) ----
+const TRACK_W = 2.2;
+function railTube(offsetX) {
+  const railPts = [];
+  const N = 1400;
+  const up = new THREE.Vector3();
+  const tmp = new THREE.Vector3();
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const p = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    // binormal-ish sideways vector
+    tmp.set(0, 1, 0).cross(tan).normalize();
+    up.copy(tmp).cross(tan).normalize();
+    p.addScaledVector(tmp, offsetX);
+    railPts.push(p);
+  }
+  const railCurve = new THREE.CatmullRomCurve3(railPts, true);
+  const geo = new THREE.TubeGeometry(railCurve, 1400, 0.22, 8, true);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xd23b3b, metalness: 0.6, roughness: 0.35 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  return mesh;
+}
+scene.add(railTube(-TRACK_W));
+scene.add(railTube(TRACK_W));
+
+// cross ties
+const tieMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.9 });
+const tieGeo = new THREE.BoxGeometry(TRACK_W * 2 + 0.6, 0.25, 0.5);
+const tieCount = 260;
+const tieInst = new THREE.InstancedMesh(tieGeo, tieMat, tieCount);
+tieInst.castShadow = true;
+{
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const pos = new THREE.Vector3();
+  const tan = new THREE.Vector3();
+  const side = new THREE.Vector3();
+  const upv = new THREE.Vector3();
+  for (let i = 0; i < tieCount; i++) {
+    const t = i / tieCount;
+    pos.copy(curve.getPointAt(t));
+    tan.copy(curve.getTangentAt(t)).normalize();
+    side.set(0, 1, 0).cross(tan).normalize();
+    upv.copy(side).cross(tan).normalize();
+    const sc = curve.getTangentAt(t); // not used, just orient
+    m.makeBasis(side, upv, tan);
+    m.setPosition(pos);
+    tieInst.setMatrixAt(i, m);
+  }
+  tieInst.instanceMatrix.needsUpdate = true;
+}
+scene.add(tieInst);
+
+// ---- Scenery: scattered trees & rocks ----
+function makeTree(x, z) {
+  const g = new THREE.Group();
+  const h = 6 + Math.random() * 8;
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 0.7, h, 6),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 1 })
+  );
+  trunk.position.y = h / 2;
+  trunk.castShadow = true;
+  g.add(trunk);
+  const crown = new THREE.Mesh(
+    new THREE.ConeGeometry(2.6 + Math.random() * 1.5, h * 0.9, 7),
+    new THREE.MeshStandardMaterial({ color: 0x2f7d32, roughness: 1 })
+  );
+  crown.position.y = h + h * 0.3;
+  crown.castShadow = true;
+  g.add(crown);
+  g.position.set(x, 0, z);
+  return g;
+}
+function makeRock(x, z) {
+  const r = 1 + Math.random() * 2.5;
+  const m = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(r, 0),
+    new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 1 })
+  );
+  m.position.set(x, r * 0.4, z);
+  m.rotation.set(Math.random(), Math.random(), Math.random());
+  m.castShadow = true;
+  return m;
+}
+const scatter = new THREE.Group();
+for (let i = 0; i < 220; i++) {
+  const a = Math.random() * Math.PI * 2;
+  const rad = 40 + Math.random() * 360;
+  const x = Math.cos(a) * rad;
+  const z = Math.sin(a) * rad;
+  // keep clear of the track center
+  if (Math.hypot(x, z) < 35) continue;
+  scatter.add(Math.random() > 0.25 ? makeTree(x, z) : makeRock(x, z));
+}
+scene.add(scatter);
+
+// floating clouds (billboard-ish spheres)
+const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.9 });
+for (let i = 0; i < 26; i++) {
+  const cl = new THREE.Group();
+  const blobs = 3 + Math.floor(Math.random() * 3);
+  for (let b = 0; b < blobs; b++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(8 + Math.random() * 10, 8, 8), cloudMat);
+    s.position.set((Math.random() - .5) * 30, (Math.random() - .5) * 6, (Math.random() - .5) * 18);
+    cl.add(s);
+  }
+  cl.position.set((Math.random() - .5) * 700, 110 + Math.random() * 120, (Math.random() - .5) * 700);
+  scene.add(cl);
+}
+
+// ---- Camera ride rig (first person on the rails) ----
+const up = new THREE.Vector3(0, 1, 0);
+const eyeOffset = new THREE.Vector3(0, 1.6, 0); // sit just above the rails
+const fwdLook = new THREE.Vector3();
+const side = new THREE.Vector3();
+const trueUp = new THREE.Vector3();
+const pos = new THREE.Vector3();
+const look = new THREE.Vector3();
+
+const speedEl = document.getElementById('speed');
+
+const clock = new THREE.Clock();
+let t = 0;
+const RIDE_SPEED = 0.045; // fraction of loop per second
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  t = (t + dt * RIDE_SPEED) % 1;
+
+  // position
+  pos.copy(curve.getPointAt(t));
+  pos.add(eyeOffset);
+
+  // tangent forward
+  fwdLook.copy(curve.getTangentAt(t)).normalize();
+
+  // orientation: side = worldUp x forward, trueUp = side x forward
+  side.copy(up).cross(fwdLook).normalize();
+  trueUp.copy(side).cross(fwdLook).normalize();
+
+  camera.position.copy(pos);
+
+  // look slightly ahead and up the track for a thrilling forward view
+  look.copy(pos).addScaledVector(fwdLook, 6).addScaledVector(trueUp, 1.2);
+  camera.up.copy(trueUp);
+  camera.lookAt(look);
+
+  // a little camera shake for speed feel
+  const shake = 0.04;
+  camera.position.x += (Math.random() - .5) * shake;
+  camera.position.y += (Math.random() - .5) * shake;
+
+  // speed readout (km/h-ish, scaled)
+  const kmh = Math.round(40 + 90 * (0.6 + 0.4 * Math.sin(t * Math.PI * 6)));
+  speedEl.textContent = kmh;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

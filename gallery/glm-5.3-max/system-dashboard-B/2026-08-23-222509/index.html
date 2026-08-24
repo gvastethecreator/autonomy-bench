@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>node-07 · system telemetry</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%235eb1ff'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#10141d; --panel2:#0c1017;
+    --border:#1d2433; --border2:#2a3346;
+    --text:#dde4f0; --dim:#8a94ac; --faint:#5a6479;
+    --blue:#5eb1ff; --cyan:#37d4c5; --green:#3fd68b; --amber:#ffc24b; --red:#ff6b6b; --violet:#a58cff;
+    --mono:ui-monospace,'Cascadia Mono','JetBrains Mono',Consolas,'SF Mono',Menlo,monospace;
+    --sans:-apple-system,'Segoe UI',Inter,Roboto,'Helvetica Neue',Arial,sans-serif;
+    --rad:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1100px 480px at 50% -12%, rgba(94,177,255,.055), transparent 70%),
+      var(--bg);
+    color:var(--text); font-family:var(--sans); font-size:13px; line-height:1.45;
+    padding:18px 20px 26px; -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:rgba(94,177,255,.28)}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#1d2433;border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:#2a3346}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  button{font-family:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  button:focus-visible,.lg:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:6px}
+
+  .app{max-width:1480px;margin:0 auto;display:flex;flex-direction:column;gap:13px}
+
+  /* ---------- header ---------- */
+  header.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:11px}
+  .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,#16202f,#0e1420);
+    border:1px solid var(--border2);display:grid;place-items:center;color:var(--blue);flex:none}
+  .brand h1{font-size:15px;font-weight:650;letter-spacing:.01em}
+  .brand .sub{font-size:11px;color:var(--faint);font-family:var(--mono)}
+  .hsep{width:1px;height:26px;background:var(--border);flex:none}
+
+  .pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:99px;
+    border:1px solid var(--border);background:var(--panel2);font-size:11px;font-weight:600;letter-spacing:.05em}
+  .pill .dot{width:7px;height:7px;border-radius:99px;background:var(--green);flex:none}
+  .pill.ok{color:var(--green);border-color:rgba(63,214,139,.3)}
+  .pill.ok .dot{box-shadow:0 0 0 0 rgba(63,214,139,.5);animation:ping 2.2s ease-out infinite}
+  .pill.warn{color:var(--amber);border-color:rgba(255,194,75,.35)}
+  .pill.warn .dot{background:var(--amber)}
+  .pill.err{color:var(--red);border-color:rgba(255,107,107,.4)}
+  .pill.err .dot{background:var(--red);animation:blink 1s steps(2,start) infinite}
+  @keyframes ping{0%{box-shadow:0 0 0 0 rgba(63,214,139,.45)}70%{box-shadow:0 0 0 7px rgba(63,214,139,0)}100%{box-shadow:0 0 0 0 rgba(63,214,139,0)}}
+  @keyframes blink{50%{opacity:.25}}
+  .live{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.14em;color:var(--green)}
+  .eq{display:flex;gap:2px;align-items:flex-end;height:11px}
+  .eq i{width:3px;height:11px;border-radius:1px;background:var(--green);transform-origin:bottom;animation:eq 1.1s ease-in-out infinite}
+  .eq i:nth-child(2){animation-delay:.18s}.eq i:nth-child(3){animation-delay:.36s}
+  @keyframes eq{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
+  body.paused .eq i{animation:none;transform:scaleY(.3);background:var(--amber)}
+  body.paused .live{color:var(--amber)}
+
+  .hspace{flex:1}
+  .clockbox{text-align:right;line-height:1.25}
+  .clockbox .clock{font-family:var(--mono);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+  .clockbox .cdate{font-size:10.5px;color:var(--faint);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
+
+  .btn{height:30px;min-width:34px;padding:0 11px;border-radius:8px;border:1px solid var(--border2);
+    background:var(--panel);color:var(--dim);font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;gap:7px;transition:.15s}
+  .btn:hover{color:var(--text);border-color:#38445c;background:#141a27}
+  .btn svg{flex:none}
+
+  /* ---------- KPI tiles ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px}
+  .tile{background:var(--panel);border:1px solid var(--border);border-radius:var(--rad);padding:12px 14px 10px;
+    position:relative;overflow:hidden;transition:border-color .2s}
+  .tile:hover{border-color:var(--border2)}
+  .tile-head{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+  .tile-head svg{color:var(--faint)}
+  .tile-head .delta{margin-left:auto;font-family:var(--mono);font-weight:500;font-size:10.5px;color:var(--faint);letter-spacing:0;text-transform:none}
+  .tile-val{margin-top:7px;font-family:var(--mono);font-size:27px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1;transition:color .3s}
+  .tile-val .unit{font-size:12px;color:var(--faint);font-weight:500;margin-left:4px}
+  .tile-sub{margin-top:2px;font-size:11px;color:var(--faint);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile canvas{position:absolute;left:0;right:0;bottom:0;width:100%;height:30px;opacity:.9;pointer-events:none}
+  .tile.hot .tile-val{color:var(--amber)} .tile.crit .tile-val{color:var(--red)}
+
+  /* ---------- grid & panels ---------- */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:13px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--rad);
+    display:flex;flex-direction:column;min-width:0;animation:rise .5s cubic-bezier(.2,.7,.3,1) both;animation-delay:var(--d,0s)}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .p-head{display:flex;align-items:center;gap:10px;padding:11px 14px 9px;flex-wrap:wrap}
+  .p-title{display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:var(--dim)}
+  .p-title::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--tick,var(--blue))}
+  .p-meta{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .p-meta b{font-weight:500;color:var(--dim)}
+  .p-meta .cm{color:var(--dim)}
+  .p-body{padding:0 14px 12px;flex:1;min-height:0}
+
+  .p-cpu{grid-column:span 8;--tick:var(--blue)}
+  .p-mem{grid-column:span 4;--tick:var(--violet)}
+  .p-net{grid-column:span 5;--tick:var(--cyan)}
+  .p-disk{grid-column:span 4;--tick:var(--amber)}
+  .p-svc{grid-column:span 3;--tick:var(--green)}
+  .p-procs{grid-column:span 8;--tick:var(--violet)}
+  .p-log{grid-column:span 4;--tick:var(--red)}
+
+  .chart-wrap{position:relative;margin:0 14px;flex:1;min-height:0}
+  .chart-wrap canvas{display:block;width:100%;height:100%;cursor:crosshair}
+  #ch-cpu{height:212px} #ch-mem{height:150px} #ch-net{height:148px} #ch-disk{height:148px}
+  .chart-tip{position:absolute;top:8px;left:0;display:none;pointer-events:none;z-index:5;
+    background:rgba(10,13,20,.94);border:1px solid var(--border2);border-radius:8px;padding:7px 10px;
+    font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--dim);white-space:nowrap;
+    box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .chart-tip .tt{color:var(--text);font-weight:600;margin-bottom:2px}
+  .chart-tip .row{display:flex;align-items:center;gap:6px}
+  .chart-tip .sw{width:7px;height:7px;border-radius:2px;flex:none}
+  .chart-tip .rv{margin-left:auto;color:var(--text);padding-left:12px}
+
+  .lg{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    padding:2.5px 9px;border-radius:99px;border:1px solid var(--border2);color:var(--faint);opacity:.5;transition:.15s}
+  .lg.on{opacity:1;color:var(--c,var(--text));border-color:color-mix(in srgb,var(--c,var(--text)) 40%,transparent);
+    background:color-mix(in srgb,var(--c,var(--text)) 8%,transparent)}
+  .lg:hover{opacity:.85}
+
+  /* cores strip */
+  .cores{display:flex;gap:9px;margin:10px 14px 13px;height:72px}
+  .core{flex:1;display:flex;flex-direction:column;gap:5px;min-width:0}
+  .cbar{flex:1;background:#0b0f17;border:1px solid var(--border);border-radius:6px;position:relative;overflow:hidden}
+  .cbar i{position:absolute;left:0;right:0;bottom:0;height:0%;border-radius:5px 5px 0 0;
+    background:linear-gradient(180deg,var(--blue),#3a7fd0);transition:height .45s cubic-bezier(.3,.8,.4,1),background .4s}
+  .core.hot .cbar i{background:linear-gradient(180deg,var(--amber),#d09a2a)}
+  .core.crit .cbar i{background:linear-gradient(180deg,var(--red),#c74848)}
+  .clabel{font-family:var(--mono);font-size:9.5px;color:var(--faint);text-align:center;letter-spacing:.04em}
+  .clabel b{color:var(--dim);font-weight:500}
+
+  /* memory breakdown */
+  .membar{height:9px;border-radius:5px;overflow:hidden;display:flex;background:#0b0f17;border:1px solid var(--border);margin-top:2px}
+  .membar i{display:block;height:100%;transition:width .6s cubic-bezier(.3,.8,.4,1)}
+  #mseg-used{background:linear-gradient(90deg,#8f6dff,var(--violet))}
+  #mseg-cache{background:color-mix(in srgb,var(--cyan) 60%,#0a0d13)}
+  .memrows{margin-top:9px;display:flex;flex-direction:column;gap:5px;font-family:var(--mono);font-size:11px}
+  .memrows .r{display:flex;align-items:center;gap:7px;color:var(--dim)}
+  .memrows .sw{width:8px;height:8px;border-radius:2.5px;flex:none}
+  .memrows .rv{margin-left:auto;color:var(--text)}
+
+  /* disk usage rows */
+  .du{display:flex;flex-direction:column;gap:7px;margin-top:9px}
+  .du .r{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .du .nm{width:64px;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+  .du .tr{flex:1;height:5px;border-radius:3px;background:#0b0f17;border:1px solid var(--border);overflow:hidden}
+  .du .tr i{display:block;height:100%;background:linear-gradient(90deg,#d9a634,var(--amber));transition:width .6s}
+  .du .pc{width:58px;text-align:right;color:var(--dim)}
+  .du .sz{width:74px;text-align:right;color:var(--faint)}
+
+  /* services */
+  .svc-list{display:flex;flex-direction:column;overflow-y:auto;max-height:214px;padding:0 6px 4px 2px}
+  .svc{display:flex;align-items:center;gap:9px;padding:7.5px 6px;border-bottom:1px solid rgba(255,255,255,.035)}
+  .svc:last-child{border-bottom:none}
+  .sd{width:8px;height:8px;border-radius:99px;background:var(--green);flex:none;box-shadow:0 0 6px rgba(63,214,139,.5)}
+  .svc.deg .sd{background:var(--amber);box-shadow:0 0 6px rgba(255,194,75,.6);animation:blink 1.2s steps(2,start) infinite}
+  .svc .nm{font-size:12px;font-weight:600;color:var(--text)}
+  .svc .in{flex:1;min-width:0}
+  .svc .ss{display:block;font-size:10px;color:var(--faint);font-family:var(--mono)}
+  .svc .lat{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .svc.deg .lat{color:var(--amber)}
+
+  /* process table */
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  thead th{position:sticky;top:0;background:var(--panel);z-index:2;text-align:left;font-size:10px;
+    letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:700;
+    padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+  thead th.sortable{cursor:pointer;user-select:none}
+  thead th.sortable:hover{color:var(--dim)}
+  thead th .si{font-size:8px;margin-left:3px;color:var(--blue)}
+  tbody td{padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.035);white-space:nowrap}
+  tbody tr:hover td{background:rgba(94,177,255,.045)}
+  tbody tr.flash td{animation:rowIn .8s ease-out}
+  @keyframes rowIn{0%{background:rgba(94,177,255,.18)}100%{background:transparent}}
+  td.pid,td.user{font-family:var(--mono);color:var(--faint);font-size:11px}
+  td.pname{color:var(--text)}
+  td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--text);font-size:11.5px}
+  .pc{display:inline-block;width:54px;height:4px;background:#161d2b;border-radius:2px;margin-left:9px;vertical-align:2px;overflow:hidden}
+  .pc i{display:block;height:100%;border-radius:2px;background:var(--blue);transition:width .5s}
+  .st{font-size:9.5px;padding:1.5px 8px;border-radius:99px;border:1px solid;letter-spacing:.04em;font-family:var(--mono)}
+  .st.run{color:var(--green);border-color:rgba(63,214,139,.3);background:rgba(63,214,139,.06)}
+  .st.slp{color:var(--faint);border-color:var(--border);background:transparent}
+  .p-scroll{overflow-y:auto;max-height:352px}
+
+  /* event log */
+  .log-list{overflow-y:auto;max-height:352px;padding-right:2px}
+  .le{display:grid;grid-template-columns:58px 46px 1fr;gap:8px;align-items:baseline;
+    padding:6.5px 8px;border-bottom:1px solid rgba(255,255,255,.035);font-size:11.5px;animation:leIn .35s ease-out}
+  @keyframes leIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .le .lt{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+  .le .lv{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.06em;text-align:center;
+    padding:1px 0;border-radius:4px;border:1px solid}
+  .sev-info .lv{color:var(--cyan);border-color:rgba(55,212,197,.3);background:rgba(55,212,197,.06)}
+  .sev-warn .lv{color:var(--amber);border-color:rgba(255,194,75,.35);background:rgba(255,194,75,.07)}
+  .sev-err  .lv{color:var(--red);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
+  .le .lm{color:var(--dim)} .sev-warn .lm{color:#e8d5a2} .sev-err .lm{color:#f0b5b5}
+  .logf{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:2.5px 9px;border-radius:99px;
+    border:1px solid var(--border2);color:var(--faint);opacity:.55;transition:.15s}
+  .logf.on{opacity:1;color:var(--text);border-color:var(--border2);background:#161c29}
+
+  footer{margin-top:4px;text-align:center;font-size:10.5px;color:var(--faint);font-family:var(--mono);letter-spacing:.04em}
+
+  @media (max-width:1180px){
+    .p-cpu{grid-column:span 12} .p-mem{grid-column:span 6} .p-net{grid-column:span 6}
+    .p-disk{grid-column:span 7} .p-svc{grid-column:span 5} .p-procs{grid-column:span 7} .p-log{grid-column:span 5}
+  }
+  @media (max-width:780px){
+    .grid > .panel{grid-column:span 12}
+    header.top{gap:10px}
+    .clockbox .clock{font-size:17px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= header ================= -->
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+      <div>
+        <h1>NODE-07 · System Telemetry</h1>
+        <div class="sub">edge-cluster/eu-west-1 · linux 6.8.4 · simulated feed</div>
+      </div>
+    </div>
+    <div class="hsep" aria-hidden="true"></div>
+    <div class="pill ok" id="statusPill"><span class="dot"></span><span id="statusText">ALL SYSTEMS NOMINAL</span></div>
+    <span class="mono" id="alertCount" style="font-size:10.5px;color:var(--faint)"></span>
+    <div class="live" id="liveChip"><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span><span id="liveText">LIVE</span></div>
+
+    <div class="hspace"></div>
+
+    <span class="mono" style="font-size:11px;color:var(--faint)">uptime <b id="uptime" style="color:var(--dim);font-weight:500">—</b></span>
+    <button class="btn" id="btnSpeed" title="Simulation speed" aria-label="Simulation speed">1×</button>
+    <button class="btn" id="btnPause" aria-label="Pause or resume the live feed">
+      <svg id="icoPause" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>
+      <svg id="icoPlay" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M7 4l13 8-13 8z"/></svg>
+      <span id="btnPauseText">Pause</span>
+    </button>
+    <div class="clockbox">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="cdate" id="cdate"></div>
+    </div>
+  </header>
+
+  <!-- ================= KPI row ================= -->
+  <section class="kpis" aria-label="Key metrics">
+    <div class="tile" id="t-cpu" style="--d:.02s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+        CPU <span class="delta" id="d-cpu"></span>
+      </div>
+      <div class="tile-val"><span id="v-cpu">0.0</span><span class="unit">%</span></div>
+      <div class="tile-sub" id="s-cpu">—</div>
+      <canvas id="spark-cpu"></canvas>
+    </div>
+    <div class="tile" id="t-mem" style="--d:.05s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 10v4M11 10v4M15 10v4M19 10v4"/></svg>
+        Memory <span class="delta" id="d-mem"></span>
+      </div>
+      <div class="tile-val"><span id="v-mem">0.0</span><span class="unit">GiB</span></div>
+      <div class="tile-sub" id="s-mem">—</div>
+      <canvas id="spark-mem"></canvas>
+    </div>
+    <div class="tile" id="t-net" style="--d:.08s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8V3M17 3l-3 3M17 3l3 3M7 16v5M7 21l-3-3M7 21l3-3"/><path d="M3 12h18" stroke-dasharray="2 3"/></svg>
+        Network in <span class="delta" id="d-net"></span>
+      </div>
+      <div class="tile-val"><span id="v-net">0.0</span><span class="unit">MB/s</span></div>
+      <div class="tile-sub" id="s-net">—</div>
+      <canvas id="spark-net"></canvas>
+    </div>
+    <div class="tile" id="t-disk" style="--d:.11s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5V12c0 1.7 3.6 3 8 3s8-1.3 8-3V5.5"/><path d="M4 12v6.5c0 1.7 3.6 3 8 3s8-1.3 8-3V12"/></svg>
+        Disk I/O <span class="delta" id="d-disk"></span>
+      </div>
+      <div class="tile-val"><span id="v-disk">0.0</span><span class="unit">MB/s</span></div>
+      <div class="tile-sub" id="s-disk">—</div>
+      <canvas id="spark-disk"></canvas>
+    </div>
+    <div class="tile" id="t-temp" style="--d:.14s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4a2 2 0 0 1 4 0v9.3a4.5 4.5 0 1 1-4 0z"/><circle cx="12" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg>
+        Package temp <span class="delta" id="d-temp"></span>
+      </div>
+      <div class="tile-val"><span id="v-temp">0.0</span><span class="unit">°C</span></div>
+      <div class="tile-sub" id="s-temp">—</div>
+      <canvas id="spark-temp"></canvas>
+    </div>
+    <div class="tile" id="t-proc" style="--d:.17s">
+      <div class="tile-head">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+        Processes <span class="delta" id="d-proc"></span>
+      </div>
+      <div class="tile-val"><span id="v-proc">0</span></div>
+      <div class="tile-sub" id="s-proc">—</div>
+      <canvas id="spark-proc"></canvas>
+    </div>
+  </section>
+
+  <!-- ================= main grid ================= -->
+  <section class="grid">
+
+    <!-- CPU -->
+    <div class="panel p-cpu" style="--d:.06s">
+      <div class="p-head">
+        <span class="p-title">Processor load</span>
+        <div class="p-meta">
+          <span id="lg-cpu" class="lgset" style="display:flex;gap:6px">
+            <button class="lg on" data-key="total"   style="--c:var(--blue)">total</button>
+            <button class="lg on" data-key="percore" style="--c:var(--dim)">per-core</button>
+          </span>
+          <span><b id="pm-cpu" class="cm">—</b></span>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-cpu"></canvas><div class="chart-tip"></div></div>
+      <div class="cores" id="cores" aria-label="Per-core load"></div>
+    </div>
+
+    <!-- Memory -->
+    <div class="panel p-mem" style="--d:.09s">
+      <div class="p-head">
+        <span class="p-title">Memory</span>
+        <div class="p-meta"><b id="pm-mem" class="cm">—</b></div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-mem"></canvas><div class="chart-tip"></div></div>
+      <div class="p-body">
+        <div class="membar" aria-label="Memory composition">
+          <i id="mseg-used"></i><i id="mseg-cache"></i><i id="mseg-free" style="background:transparent"></i>
+        </div>
+        <div class="memrows">
+          <div class="r"><span class="sw" style="background:var(--violet)"></span>used<span class="rv" id="m-used">—</span></div>
+          <div class="r"><span class="sw" style="background:color-mix(in srgb,var(--cyan) 60%,#0a0d13)"></span>page cache<span class="rv" id="m-cache">—</span></div>
+          <div class="r"><span class="sw" style="background:#232c3d"></span>swap<span class="rv" id="m-swap">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Network -->
+    <div class="panel p-net" style="--d:.12s">
+      <div class="p-head">
+        <span class="p-title">Network · eth0</span>
+        <div class="p-meta">
+          <span id="lg-net" class="lgset" style="display:flex;gap:6px">
+            <button class="lg on" data-key="rx" style="--c:var(--cyan)">in</button>
+            <button class="lg on" data-key="tx" style="--c:var(--violet)">out</button>
+          </span>
+          <span><b id="pm-net" class="cm">—</b></span>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-net"></canvas><div class="chart-tip"></div></div>
+      <div class="p-body" style="padding-top:9px">
+        <div class="memrows" style="margin-top:0;gap:4px">
+          <div class="r"><span class="sw" style="background:var(--cyan)"></span>received<span class="rv" id="n-rx">—</span></div>
+          <div class="r"><span class="sw" style="background:var(--violet)"></span>transmitted<span class="rv" id="n-tx">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disk -->
+    <div class="panel p-disk" style="--d:.15s">
+      <div class="p-head">
+        <span class="p-title">Disk I/O</span>
+        <div class="p-meta">
+          <span id="lg-disk" class="lgset" style="display:flex;gap:6px">
+            <button class="lg on" data-key="read"  style="--c:var(--blue)">read</button>
+            <button class="lg on" data-key="write" style="--c:var(--amber)">write</button>
+          </span>
+          <span><b id="pm-disk" class="cm">—</b></span>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="ch-disk"></canvas><div class="chart-tip"></div></div>
+      <div class="p-body">
+        <div class="du" id="duList">
+          <div class="r"><span class="nm">nvme0n1</span><span class="tr"><i id="du-b0" style="width:0%"></i></span><span class="pc mono" id="du-p0">—</span><span class="sz" id="du-s0">—</span></div>
+          <div class="r"><span class="nm">sda</span><span class="tr"><i id="du-b1" style="width:0%"></i></span><span class="pc mono" id="du-p1">—</span><span class="sz" id="du-s1">—</span></div>
+          <div class="r"><span class="nm">sdb</span><span class="tr"><i id="du-b2" style="width:0%"></i></span><span class="pc mono" id="du-p2">—</span><span class="sz" id="du-s2">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Services -->
+    <div class="panel p-svc" style="--d:.18s">
+      <div class="p-head"><span class="p-title">Services</span></div>
+      <div class="p-body svc-list" id="svcList"></div>
+    </div>
+
+    <!-- Processes -->
+    <div class="panel p-procs" style="--d:.21s">
+      <div class="p-head">
+        <span class="p-title">Processes</span>
+        <div class="p-meta"><b id="pm-procs" class="cm">—</b></div>
+      </div>
+      <div class="p-scroll">
+        <table aria-label="Process list">
+          <thead><tr>
+            <th data-k="pid" class="sortable">PID<span class="si"></span></th>
+            <th data-k="name" class="sortable">Process<span class="si"></span></th>
+            <th data-k="user" class="sortable">User<span class="si"></span></th>
+            <th data-k="cpu" class="sortable">CPU<span class="si"></span></th>
+            <th data-k="mem" class="sortable">Memory<span class="si"></span></th>
+            <th>State</th>
+          </tr></thead>
+          <tbody id="procBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Event log -->
+    <div class="panel p-log" style="--d:.24s">
+      <div class="p-head">
+        <span class="p-title">Event stream</span>
+        <div class="p-meta" id="logFilters" style="display:flex;gap:5px">
+          <button class="logf on" data-s="all">ALL</button>
+          <button class="logf" data-s="info">INFO</button>
+          <button class="logf" data-s="warn">WARN</button>
+          <button class="logf" data-s="err">ERROR</button>
+        </div>
+      </div>
+      <div class="p-body log-list" id="logList"></div>
+    </div>
+
+  </section>
+
+  <footer>simulated telemetry · generated entirely in-browser · no external requests · single file</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================== utils ============================== */
+var TAU = Math.PI*2;
+function $(s){ return document.querySelector(s); }
+function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function rand(a,b){ if(b===undefined){ b=a; a=0; } return a+Math.random()*(b-a); }
+function nrand(){ return (Math.random()+Math.random()+Math.random()-1.5); } // ~N(0,0.5)
+function pad2(n){ return (n<10?'0':'')+n; }
+function niceMax(v){
+  if(v<=0) return 1;
+  var p = Math.pow(10, Math.floor(Math.log10(v))), n = v/p;
+  return (n<=1?1: n<=2?2: n<=2.5?2.5: n<=5?5:10)*p;
+}
+function fmtMBs(v){ return v>=100 ? v.toFixed(0) : v>=10 ? v.toFixed(1) : v.toFixed(2); }
+function fmtGiB(v){ return v>=100 ? v.toFixed(0) : v.toFixed(1); }
+var MONO = 'ui-monospace, Consolas, Menlo, monospace';
+var CSS = getComputedStyle(document.documentElement);
+function col(name){ return CSS.getPropertyValue(name).trim(); }
+var C = { grid:'rgba(255,255,255,0.045)', grid0:'rgba(255,255,255,0.10)', tick:'rgba(255,255,255,0.035)',
+          faint: col('--faint'), blue:col('--blue'), cyan:col('--cyan'), violet:col('--violet'),
+          amber:col('--amber'), red:col('--red'), green:col('--green'), dim:col('--dim') };
+
+/* ============================== clock anchors ============================== */
+var SAMPLE_MS = 500, SPAN = 60000, WINDOW = 122;   // ~60 s of history
+var BOOT_OFF  = 14*86400e3 + 6*3600e3 + 23*60e3 + 11e3; // uptime at page load
+var ANCHOR = Date.now() - (WINDOW-1)*SAMPLE_MS;    // sample t=0 maps here
+function wall(t){ return new Date(ANCHOR + t); }
+function fmtClock(t){ var d=wall(t); return pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds()); }
+function fmtUptime(ms){
+  var s=Math.floor(ms/1000), d=Math.floor(s/86400); s-=d*86400;
+  var h=Math.floor(s/3600); s-=h*3600; var m=Math.floor(s/60); s-=m*60;
+  return d+'d '+pad2(h)+':'+pad2(m)+':'+pad2(s);
+}
+
+/* ============================== simulation state ============================== */
+var SIM = { t:0, nextSample:0, paused:false, speed:1 };
+var S = {
+  cores: [], cache:7.0, swap:1.15, temp:46,
+  load1:1.2, load5:1.15, load15:1.05,
+  netRx:2.0, netTx:1.0, dRd:1.4, dWr:0.7,
+  totRx: rand(820,880)*1024, totTx: rand(410,450)*1024,  // MB
+  burst:null, burstBytes:0, lastErrT:-1e9
+};
+for(var ci=0; ci<8; ci++) S.cores.push({ v:rand(15,35), mean:rand(20,40), spike:0 });
+
+var PROCS = [
+  [1,'systemd','root',0.3,11],[412,'nginx (4 workers)','www-data',2.1,88],
+  [587,'redis-server','redis',1.3,214],[612,'postgres (12 conn)','postgres',5.8,1843],
+  [655,'systemd-journald','root',0.6,96],[2841,'sshd','root',0.1,8],
+  [2917,'cron','root',0.1,5],[6025,'node /srv/api','app',7.9,517],
+  [6102,'node ws-gateway','app',3.2,262],[7420,'python worker-queue','app',4.9,376],
+  [7581,'java stream-jobs','app',4.2,1387],[8011,'dockerd','root',1.6,338],
+  [8044,'containerd-shim','root',0.8,119],[9321,'prometheus','prom',0.7,241],
+  [9580,'grafana-server','grafana',1.1,298],[10233,'vector-agent','vector',0.9,151]
+].map(function(p){ return { pid:p[0], name:p[1], user:p[2], baseCpu:p[3], baseMem:p[4],
+  cpu:p[3], mem:p[4], threads:Math.round(rand(4,16)), row:null }; });
+
+var SERVICES = [
+  { n:'api-gateway', up:'41d', lat:12,  base:12 },
+  { n:'nginx',       up:'41d', lat:1,   base:1,  suffix:'ok' },
+  { n:'postgresql',  up:'12d', lat:3,   base:3,  suffix:'42 conn' },
+  { n:'redis',       up:'12d', lat:0,   base:0,  suffix:'hit 97%' },
+  { n:'worker-queue',up:'3d',  lat:24,  base:24 },
+  { n:'cron',        up:'41d', lat:0,   base:0,  suffix:'next 00:00' }
+];
+SERVICES.forEach(function(s){ s.degUntil=0; s.el=null; });
+
+var INFO_POOL = [
+  'healthcheck: 12/12 endpoints ok (p99 41ms)',
+  'metrics buffer flushed · 2,184 points committed',
+  'GC pause 38ms in node /srv/api (heap 412MB)',
+  'TLS handshake rate 142/s · session reuse 81%',
+  'cron: logrotate completed, reclaimed 210MB',
+  'kernel: TCP retransmit rate 0.02% on eth0',
+  'redis cache hit ratio 97.2% over last 5m',
+  'postgres: autovacuum finished on events (0.4s)',
+  'vector-agent: shipped 3.1k log lines',
+  'conntrack table 4,812/262,144 entries',
+  'kubelet probe passed (readiness 1/1)',
+  'nftables ruleset reloaded (no interruptions)'
+];
+var ERR_POOL = [
+  'upstream timeout: auth-api p99 1.24s (retrying)',
+  'connection reset by peer: replica euw1-db-03',
+  'ECONNREFUSED: sidecar metrics port 5570',
+  'slow query: SELECT ... events (2.8s, seq scan)'
+];
+var REC_POOL = [
+  'recovered: auth-api latency back to baseline',
+  'replica euw1-db-03 reattached, streaming lag 0',
+  'sidecar restarted, metrics port healthy again',
+  'query plan corrected after ANALYZE (12ms)'
+];
+
+var events = [];          // {t, sev, msg}
+var pending = [];         // scheduled events
+var cooldown = {};        // key -> last t
+var logFilter = 'all';
+var lastInfoT = -20000, nextInfoGap = 8000, lastErrGapT = 0, errGap = rand(90,160)*1000;
+var rsync = null;
+
+function emit(t, sev, msg){
+  events.unshift({ t:t, sev:sev, msg:msg });
+  if(events.length>80) events.pop();
+  logDirty = true;
+  if(sev==='err') S.lastErrT = t;
+}
+
+/* ============================== charts ============================== */
+var CHARTS = [];
+function Chart(canvas, cfg){
+  this.cv = canvas; this.ctx = canvas.getContext('2d');
+  this.cfg = cfg; this.data = [];
+  this.vis = {}; cfg.series.forEach(function(s){ this.vis[s.tog||s.key]=true; }, this);
+  this.maxV = cfg.maxFixed ? cfg.maxFixed*0.75 : 8;
+  this.hoverI = -1; this.w=0; this.h=0;
+  this.wrap = canvas.parentElement;
+  this.tip = this.wrap.querySelector('.chart-tip');
+  var self = this;
+  this.ro = new ResizeObserver(function(){ self.resize(); });
+  this.ro.observe(this.wrap);
+  this.wrap.addEventListener('mousemove', function(e){ self.onMove(e); });
+  this.wrap.addEventListener('mouseleave', function(){ self.hoverI=-1; self.hideTip(); });
+  this.resize();
+  CHARTS.push(this);
+}
+Chart.prototype.resize = function(){
+  var r = this.wrap.getBoundingClientRect(), dpr = window.devicePixelRatio||1;
+  this.w = r.width; this.h = r.height;
+  if(this.w<2||this.h<2) return;
+  this.cv.width = Math.round(this.w*dpr); this.cv.height = Math.round(this.h*dpr);
+  this.ctx.setTransform(dpr,0,0,dpr,0,0);
+};
+Chart.prototype.push = function(t, vals){
+  vals.t = t; this.data.push(vals);
+  if(this.data.length>WINDOW+6) this.data.shift();
+};
+Chart.prototype.on = function(k){ return this.vis[k]!==false; };
+Chart.prototype.onMove = function(e){
+  var r = this.wrap.getBoundingClientRect(), x = e.clientX - r.left;
+  var P=this.pads||{l:40,r:8}; var iw=this.w-P.l-P.r;
+  if(!this.data.length || x<P.l || x>this.w-P.r || iw<=0){ this.hoverI=-1; this.hideTip(); return; }
+  var now=SIM.t, t0=now-SPAN, tAt = t0 + (x-P.l)/iw*SPAN;
+  var best=-1, bd=1e18;
+  for(var i=0;i<this.data.length;i++){
+    var d=Math.abs(this.data[i].t-tAt); if(d<bd){ bd=d; best=i; }
+  }
+  this.hoverI=best;
+};
+Chart.prototype.hideTip = function(){ if(this.tip) this.tip.style.display='none'; };
+Chart.prototype.val = function(d,k){ return d[k]||0; };
+Chart.prototype.draw = function(now){
+  var ctx=this.ctx; if(!this.w||this.w<2||!this.data.length) return;
+  var W=this.w, H=this.h;
+  var P = this.pads = { l:42, r:10, t:10, b:18 };
+  var iw=W-P.l-P.r, ih=H-P.t-P.b;
+  var span = this.cfg.span||SPAN, t0=now-span;
+  ctx.clearRect(0,0,W,H);
+
+  /* scale */
+  var target;
+  if(this.cfg.maxFixed) target = this.cfg.maxFixed;
+  else{
+    var m=1e-9;
+    for(var i=0;i<this.data.length;i++){
+      var d=this.data[i];
+      for(var si=0;si<this.cfg.series.length;si++){
+        var s=this.cfg.series[si];
+        if(!this.on(s.tog||s.key)) continue;
+        var v=this.val(d,s.key); if(v>m) m=v;
+      }
+    }
+    target = niceMax(m*1.18);
+  }
+  this.maxV = target>this.maxV ? target : Math.max(target, lerp(this.maxV,target,0.05));
+  var MAX = Math.max(this.maxV,1e-9);
+  var X=function(t){ return P.l+((t-t0)/span)*iw; };
+  var Y=function(v){ return P.t+ih-(v/MAX)*ih; };
+  var data=this.data, n=data.length;
+
+  /* horizontal grid */
+  ctx.font='10px '+MONO;
+  for(var g=0; g<=4; g++){
+    var gv=MAX*g/4, gy=Y(gv);
+    ctx.strokeStyle = g===0 ? C.grid0 : C.grid;
+    ctx.beginPath(); ctx.moveTo(P.l,gy+.5); ctx.lineTo(W-P.r,gy+.5); ctx.stroke();
+    ctx.fillStyle=C.faint; ctx.textAlign='right';
+    ctx.fillText(this.cfg.axis(gv), P.l-6, gy+3);
+  }
+  /* time ticks */
+  ctx.textAlign='center';
+  var step=15000;
+  for(var t=Math.ceil(t0/step)*step; t<=now; t+=step){
+    var gx=X(t); if(gx<P.l-1||gx>W-P.r+1) continue;
+    ctx.strokeStyle=C.tick;
+    ctx.beginPath(); ctx.moveTo(gx+.5,P.t); ctx.lineTo(gx+.5,P.t+ih); ctx.stroke();
+    ctx.fillStyle=C.faint; ctx.fillText(fmtClock(t), gx, H-5);
+  }
+
+  var i, j, s2, x, y;
+  if(this.cfg.stacked){
+    var layers = this.cfg.series.filter(function(s){ return this.on(s.tog||s.key); }, this);
+    for(var li=0; li<layers.length; li++){
+      s2 = layers[li];
+      /* cumulative area */
+      ctx.beginPath();
+      var run=0, firstX=-1;
+      for(i=0;i<n;i++){
+        run=0; for(j=0;j<=li;j++) run+=this.val(data[i],layers[j].key);
+        x=X(data[i].t); y=Y(run);
+        if(i===0){ ctx.moveTo(x,y); firstX=x; } else ctx.lineTo(x,y);
+      }
+      ctx.lineTo(X(data[n-1].t),P.t+ih); ctx.lineTo(firstX,P.t+ih); ctx.closePath();
+      ctx.fillStyle=s2.fill||'rgba(255,255,255,.06)'; ctx.fill();
+      /* boundary line */
+      ctx.beginPath();
+      for(i=0;i<n;i++){
+        run=0; for(j=0;j<=li;j++) run+=this.val(data[i],layers[j].key);
+        x=X(data[i].t); y=Y(run);
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle=s2.color; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  } else {
+    for(var k=0;k<this.cfg.series.length;k++){
+      s2=this.cfg.series[k];
+      if(!this.on(s2.tog||s2.key)) continue;
+      if(s2.fill){
+        ctx.beginPath();
+        for(i=0;i<n;i++){
+          x=X(data[i].t); y=Y(this.val(data[i],s2.key));
+          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.lineTo(X(data[n-1].t),P.t+ih); ctx.lineTo(X(data[0].t),P.t+ih); ctx.closePath();
+        ctx.fillStyle=s2.fill; ctx.fill();
+      }
+      ctx.beginPath();
+      for(i=0;i<n;i++){
+        x=X(data[i].t); y=Y(this.val(data[i],s2.key));
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle=s2.color; ctx.lineWidth=s2.width||2;
+      if(s2.dash) ctx.setLineDash(s2.dash);
+      ctx.lineJoin='round'; ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
+  /* hover */
+  var tipShown=false;
+  if(this.hoverI>=0 && this.hoverI<n && this.tip){
+    var hd=data[this.hoverI], hx=X(hd.t);
+    if(hx>=P.l && hx<=W-P.r){
+      ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(hx+.5,P.t); ctx.lineTo(hx+.5,P.t+ih); ctx.stroke();
+      var dots=[];
+      if(this.cfg.stacked){
+        var lay=this.cfg.series.filter(function(s){ return this.on(s.tog||s.key); },this);
+        var cum=0;
+        for(j=0;j<lay.length;j++){ cum+=this.val(hd,lay[j].key); dots.push({v:cum,c:lay[j].color}); }
+      } else {
+        for(k=0;k<this.cfg.series.length;k++){
+          s2=this.cfg.series[k]; if(!this.on(s2.tog||s2.key)) continue;
+          dots.push({v:this.val(hd,s2.key),c:s2.color});
+        }
+      }
+      for(i=0;i<dots.length;i++){
+        ctx.beginPath(); ctx.arc(hx,Y(dots[i].v),3.2,0,TAU);
+        ctx.fillStyle=dots[i].c; ctx.fill();
+        ctx.strokeStyle='#0a0d13'; ctx.lineWidth=1.5; ctx.stroke();
+      }
+      var html='<div class="tt">'+fmtClock(hd.t)+'</div>'+this.cfg.tip(hd);
+      this.tip.innerHTML=html; this.tip.style.display='block';
+      var tw=this.tip.offsetWidth, ww=this.wrap.clientWidth;
+      this.tip.style.left=clamp(hx+14,4,ww-tw-6)+'px';
+      tipShown=true;
+    }
+  }
+  if(!tipShown) this.hideTip();
+};
+
+/* sparkline */
+function Spark(canvas, color){
+  this.cv=canvas; this.ctx=canvas.getContext('2d'); this.data=[]; this.color=color;
+  var self=this;
+  new ResizeObserver(function(){ self.resize(); }).observe(canvas.parentElement||canvas);
+  this.resize();
+  CHARTS.push(this);
+}
+Spark.prototype.resize=function(){
+  var r=this.cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  this.w=r.width; this.h=r.height;
+  if(this.w<2) return;
+  this.cv.width=Math.round(this.w*dpr); this.cv.height=Math.round(this.h*dpr);
+  this.ctx.setTransform(dpr,0,0,dpr,0,0);
+};
+Spark.prototype.push=function(v){ this.data.push(v); if(this.data.length>90) this.data.shift(); };
+Spark.prototype.draw=function(){
+  if(!this.w||this.w<2||this.data.length<2) return;
+  var ctx=this.ctx, n=this.data.length, m=1e-9, i;
+  for(i=0;i<n;i++) if(this.data[i]>m) m=this.data[i];
+  m*=1.25; if(m<=0) m=1;
+  ctx.clearRect(0,0,this.w,this.h);
+  var X=function(i){ return (i/(n-1))*(self.w-2)+1; };
+  var Y=function(v){ return self.h-2-(v/m)*(self.h-4); };
+  var self=this;
+  ctx.beginPath();
+  for(i=0;i<n;i++){ var x=X(i),y=Y(self.data[i]); if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.strokeStyle=this.color; ctx.lineWidth=1.4; ctx.lineJoin='round'; ctx.stroke();
+  ctx.lineTo(X(n-1),this.h); ctx.lineTo(X(0),this.h); ctx.closePath();
+  ctx.globalAlpha=0.12; ctx.fillStyle=this.color; ctx.fill(); ctx.globalAlpha=1;
+};
+
+/* ============================== build charts ============================== */
+var chCpu = new Chart($('#ch-cpu'), {
+  maxFixed:100, axis:function(v){ return Math.round(v)+'%'; },
+  series:[ {key:'total', color:C.blue, fill:'rgba(94,177,255,.10)', width:2} ]
+    .concat(Array.from({length:8},function(_,i){
+      return { key:'c'+i, color:'rgba(94,177,255,.28)', width:1, tog:'percore' };
+    })),
+  tip:function(d){
+    return '<div class="row"><span class="sw" style="background:'+C.blue+'"></span>total<span class="rv">'+d.total.toFixed(1)+'%</span></div>'+
+           '<div class="row"><span style="color:'+C.faint+'">cores</span><span class="rv">'+d.min.toFixed(0)+' – '+d.max.toFixed(0)+'%</span></div>';
+  }
+});
+var chMem = new Chart($('#ch-mem'), {
+  maxFixed:32, axis:function(v){ return Math.round(v); }, stacked:true,
+  series:[
+    {key:'used',  color:C.violet, fill:'rgba(165,140,255,.14)'},
+    {key:'cache', color:C.cyan,   fill:'rgba(55,212,197,.12)'}
+  ],
+  tip:function(d){
+    var tot=d.used+d.cache;
+    return '<div class="row"><span class="sw" style="background:'+C.violet+'"></span>used<span class="rv">'+d.used.toFixed(1)+' GiB</span></div>'+
+           '<div class="row"><span class="sw" style="background:'+C.cyan+'"></span>cache<span class="rv">'+d.cache.toFixed(1)+' GiB</span></div>'+
+           '<div class="row"><span style="color:'+C.faint+'">free</span><span class="rv">'+(32-tot).toFixed(1)+' GiB</span></div>';
+  }
+});
+var chNet = new Chart($('#ch-net'), {
+  axis:function(v){ return v>=10?Math.round(v):v.toFixed(1); },
+  series:[
+    {key:'rx', color:C.cyan,   fill:'rgba(55,212,197,.12)'},
+    {key:'tx', color:C.violet, fill:'rgba(165,140,255,.08)'}
+  ],
+  tip:function(d){
+    return '<div class="row"><span class="sw" style="background:'+C.cyan+'"></span>in<span class="rv">'+fmtMBs(d.rx)+' MB/s</span></div>'+
+           '<div class="row"><span class="sw" style="background:'+C.violet+'"></span>out<span class="rv">'+fmtMBs(d.tx)+' MB/s</span></div>';
+  }
+});
+var chDisk = new Chart($('#ch-disk'), {
+  axis:function(v){ return v>=10?Math.round(v):v.toFixed(1); },
+  series:[
+    {key:'read',  color:C.blue,  fill:'rgba(94,177,255,.10)'},
+    {key:'write', color:C.amber, fill:'rgba(255,194,75,.08)'}
+  ],
+  tip:function(d){
+    return '<div class="row"><span class="sw" style="background:'+C.blue+'"></span>read<span class="rv">'+fmtMBs(d.read)+' MB/s</span></div>'+
+           '<div class="row"><span class="sw" style="background:'+C.amber+'"></span>write<span class="rv">'+fmtMBs(d.write)+' MB/s</span></div>';
+  }
+});
+var sparks = {
+  cpu:  new Spark($('#spark-cpu'),  C.blue),
+  mem:  new Spark($('#spark-mem'),  C.violet),
+  net:  new Spark($('#spark-net'),  C.cyan),
+  disk: new Spark($('#spark-disk'), C.amber),
+  temp: new Spark($('#spark-temp'), '#ff9d6b'),
+  proc: new Spark($('#spark-proc'), C.green)
+};
+
+/* legend toggles */
+Array.prototype.forEach.call(document.querySelectorAll('.lgset'), function(set){
+  set.addEventListener('click', function(e){
+    var b=e.target.closest('.lg'); if(!b) return;
+    b.classList.toggle('on');
+    var key=b.dataset.key, chart=CHARTS.filter(function(c){ return c.cfg && c.vis && key in c.vis; })[0];
+    if(chart) chart.vis[key] = b.classList.contains('on');
+  });
+});
+
+/* ============================== static-ish DOM ============================== */
+/* cores */
+var coreEls = [];
+(function(){
+  var host=$('#cores');
+  for(var i=0;i<8;i++){
+    var d=document.createElement('div'); d.className='core';
+    d.innerHTML='<div class="cbar"><i></i></div><div class="clabel"><b>c'+i+'</b> <span>0</span></div>';
+    host.appendChild(d);
+    coreEls.push({ el:d, fill:d.querySelector('i'), num:d.querySelector('.clabel span') });
+  }
+})();
+
+/* services */
+(function(){
+  var host=$('#svcList');
+  SERVICES.forEach(function(s){
+    var d=document.createElement('div'); d.className='svc';
+    d.innerHTML='<span class="sd"></span><div class="in"><span class="nm">'+s.n+'</span><span class="ss"></span></div><span class="lat"></span>';
+    host.appendChild(d); s.el=d; s.ss=d.querySelector('.ss'); s.latEl=d.querySelector('.lat');
+  });
+})();
+
+/* process rows */
+var procRows = {};
+(function(){
+  var tb=$('#procBody');
+  PROCS.forEach(function(p){ p.row = makeRow(p, false); procRows[p.pid]=p.row; tb.appendChild(p.row); });
+})();
+function makeRow(p, flash){
+  var tr=document.createElement('tr');
+  if(flash) tr.className='flash';
+  tr.innerHTML='<td class="pid">'+p.pid+'</td><td class="pname"></td><td class="user">'+p.user+'</td>'+
+    '<td class="num"><span class="nv"></span><span class="pc"><i></i></span></td>'+
+    '<td class="num mv"></td><td><span class="st run">running</span></td>';
+  tr.querySelector('.pname').textContent=p.name;
+  return tr;
+}
+var sortKey='cpu', sortDir=-1;
+Array.prototype.forEach.call(document.querySelectorAll('thead th.sortable'), function(th){
+  th.addEventListener('click', function(){
+    var k=th.dataset.k;
+    if(k===sortKey) sortDir*=-1; else { sortKey=k; sortDir=(k==='name'||k==='user')?1:-1; }
+    Array.prototype.forEach.call(document.querySelectorAll('thead th .si'), function(sp){ sp.textContent=''; });
+    th.querySelector('.si').textContent = sortDir>0?'\u25B4':'\u25BE';
+    procDirty=true;
+  });
+});
+var procDirty=true;
+
+/* log */
+var logDirty=true;
+$('#logFilters').addEventListener('click', function(e){
+  var b=e.target.closest('.logf'); if(!b) return;
+  Array.prototype.forEach.call(this.querySelectorAll('.logf'), function(x){ x.classList.remove('on'); });
+  b.classList.add('on'); logFilter=b.dataset.s; logDirty=true;
+});
+function renderLog(){
+  if(!logDirty) return; logDirty=false;
+  var host=$('#logList'); host.innerHTML='';
+  events.forEach(function(ev){
+    if(logFilter!=='all' && ev.sev!==logFilter) return;
+    var d=document.createElement('div');
+    d.className='le sev-'+ev.sev;
+    d.innerHTML='<span class="lt">'+fmtClock(ev.t)+'</span><span class="lv">'+ev.sev.toUpperCase()+'</span><span class="lm"></span>';
+    d.querySelector('.lm').textContent=ev.msg;
+    host.appendChild(d);
+  });
+}
+
+/* disk usage (slow drift) */
+var DISKS=[{p:41.2,size:'1.9/4.0T'},{p:67.8,size:'3.3/5.0T'},{p:22.6,size:'1.1/5.0T'}];
+function renderDisks(){
+  for(var i=0;i<3;i++){
+    $('#du-b'+i).style.width=DISKS[i].p.toFixed(1)+'%';
+    $('#du-p'+i).textContent=DISKS[i].p.toFixed(1)+'%';
+    $('#du-s'+i).textContent=DISKS[i].size;
+  }
+}
+
+/* ============================== KPI display smoothing ============================== */
+var kpi = { cpu:{cur:0,tgt:0}, mem:{cur:8,tgt:8}, net:{cur:2,tgt:2}, disk:{cur:2,tgt:2},
+            temp:{cur:45,tgt:45}, proc:{cur:16,tgt:16} };
+var kpiHist = { cpu:[], mem:[], net:[], disk:[], temp:[], proc:[] };
+
+/* ============================== sampler ============================== */
+var lastSvcDeg = 0;
+function sampleAt(t){
+  var dt = SAMPLE_MS/1000;
+
+  /* burst lifecycle */
+  if(S.burst){
+    S.burst.age += SAMPLE_MS;
+    if(S.burst.age >= S.burst.dur){
+      emit(t,'info','burst completed · '+S.burstBytes.toFixed(1)+' GiB transferred in '+(S.burst.dur/1000).toFixed(0)+'s');
+      S.burst=null;
+      if(rsync){ var rr=rsync; rsync=null; if(rr.row){ rr.row.remove(); } delete procRows[rr.pid]; procDirty=true; }
+    }
+  } else if(Math.random()<0.006){
+    S.burst={ dur:rand(7000,16000), age:0, amp:rand(0.7,1) }; S.burstBytes=0;
+    emit(t,'info','io burst started · rsync backup-sync attached to nvme0n1');
+    rsync={ pid:12044, name:'rsync backup-sync', user:'root', baseCpu:26, baseMem:64,
+            cpu:26, mem:64, threads:2, row:null, transient:true };
+    rsync.row=makeRow(rsync,true); procRows[rsync.pid]=rsync.row; $('#procBody').appendChild(rsync.row);
+    procDirty=true;
+  }
+  var env = S.burst ? Math.sin(Math.PI*S.burst.age/S.burst.dur)*S.burst.amp : 0;
+
+  /* cores */
+  var sum=0, cmin=1e9, cmax=-1e9;
+  for(var i=0;i<8;i++){
+    var c=S.cores[i];
+    if(c.spike>0){ c.spike-=SAMPLE_MS; c.v+=(88-c.v)*0.22; }
+    else{
+      c.v += (c.mean-c.v)*0.05 + nrand()*7 + env*rand(8,26);
+      if(Math.random()<0.004) c.spike=rand(2500,6000);
+    }
+    c.v=clamp(c.v,0.4,99.6);
+    if(c.v<cmin)cmin=c.v; if(c.v>cmax)cmax=c.v;
+    sum+=c.v;
+  }
+  var cpu=sum/8;
+
+  /* memory */
+  S.cache += (7.2+env*1.6-S.cache)*0.04 + (Math.random()-0.5)*0.28;
+  S.cache = clamp(S.cache,2,14);
+  S.swap += (1.15-S.swap)*0.02 + (Math.random()-0.5)*0.02;
+  var memSum=0, thr=0;
+  var all = rsync ? PROCS.concat([rsync]) : PROCS;
+  for(var pi=0;pi<all.length;pi++){
+    var p=all[pi];
+    p.mem = clamp(p.mem+(p.baseMem-p.mem)*0.02+(Math.random()-0.5)*8, 16, 4200);
+    memSum+=p.mem;
+    p.cpu = clamp(p.baseCpu*(0.55+(cpu/100)*1.25)*(0.65+Math.random()*0.75) + (p.transient?env*rand(8,22):0), 0, 99.7);
+    if(Math.random()<0.04) p.threads=clamp(p.threads+(Math.random()<0.5?-1:1),2,24);
+    thr+=p.threads;
+  }
+  var usedGB = 2.35 + memSum/1024 + env*0.4;
+  var committed = usedGB + S.cache;
+
+  /* network & disk */
+  S.netRx += (2.2-S.netRx)*0.06 + (Math.random()-0.5)*0.9; S.netRx=clamp(S.netRx,0.05,8);
+  S.netTx += (1.1-S.netTx)*0.06 + (Math.random()-0.5)*0.5; S.netTx=clamp(S.netTx,0.02,5);
+  var rx = Math.max(0.03, S.netRx + env*rand(26,64));
+  var tx = Math.max(0.02, S.netTx + env*rand(6,18));
+  S.dRd += (1.4-S.dRd)*0.06 + (Math.random()-0.5)*0.7; S.dRd=clamp(S.dRd,0.02,5);
+  S.dWr += (0.7-S.dWr)*0.06 + (Math.random()-0.5)*0.4; S.dWr=clamp(S.dWr,0.01,4);
+  var rd = Math.max(0.01, S.dRd + env*rand(45,160));
+  var wr = Math.max(0.01, S.dWr + env*rand(12,42));
+  S.totRx += rx*dt;
+  S.totTx += tx*dt;
+  if(S.burst) S.burstBytes += rx*dt/1024; /* GiB */
+
+  /* thermals */
+  var tTarget = 36 + cpu*0.42 + env*6;
+  S.temp += (tTarget-S.temp)*0.05 + (Math.random()-0.5)*0.3;
+  S.temp = clamp(S.temp,30,92);
+  var fan = Math.round((900+Math.max(0,S.temp-42)*85)/10)*10;
+
+  /* load averages */
+  var inst = cpu/100*8;
+  S.load1 += (inst-S.load1)*0.18;
+  S.load5 += (inst-S.load5)*0.05;
+  S.load15 += (inst-S.load15)*0.015;
+
+  /* disk drift */
+  DISKS[0].p += 0.0006*(1+env*3); DISKS[1].p += 0.0004*(1+env*2); DISKS[2].p += 0.0002;
+
+  /* ---- push to charts ---- */
+  var cv={total:cpu}; for(i=0;i<8;i++) cv['c'+i]=S.cores[i].v; cv.min=cmin; cv.max=cmax;
+  chCpu.push(t,cv);
+  chMem.push(t,{used:usedGB,cache:S.cache});
+  chNet.push(t,{rx:rx,tx:tx});
+  chDisk.push(t,{read:rd,write:wr});
+  sparks.cpu.push(cpu); sparks.mem.push(usedGB); sparks.net.push(rx);
+  sparks.disk.push(rd+wr); sparks.temp.push(S.temp); sparks.proc.push(all.length);
+
+  /* KPI targets + histories */
+  kpi.cpu.tgt=cpu; kpi.mem.tgt=usedGB; kpi.net.tgt=rx; kpi.disk.tgt=rd+wr;
+  kpi.temp.tgt=S.temp; kpi.proc.tgt=all.length;
+  var K={cpu:cpu,mem:usedGB,net:rx,disk:rd+wr,temp:S.temp,proc:all.length};
+  for(var kk in K){ kpiHist[kk].push(K[kk]); if(kpiHist[kk].length>WINDOW) kpiHist[kk].shift(); }
+
+  /* ---- thresholds ---- */
+  function cool(key,ms){ if(t-(cooldown[key]||-1e9) < ms) return false; cooldown[key]=t; return true; }
+  if(cpu>91 && cool('cpu',35000)) emit(t,'warn','cpu saturation: '+cpu.toFixed(0)+'% across 8 cores (load '+S.load1.toFixed(2)+')');
+  if(S.temp>84 && cool('tmp',50000)) emit(t,'warn','package temperature '+S.temp.toFixed(0)+'°C — thermal throttling risk');
+  if(committed>29.5 && cool('mem',80000)) emit(t,'err','memory pressure: '+committed.toFixed(1)+' GiB of 32 GiB committed');
+
+  /* ---- ambient events ---- */
+  if(t-lastInfoT > nextInfoGap){
+    lastInfoT=t; nextInfoGap=rand(7000,14000);
+    emit(t,'info',INFO_POOL[Math.floor(Math.random()*INFO_POOL.length)]);
+  }
+  if(t-lastErrGapT > errGap){
+    lastErrGapT=t; errGap=rand(110,220)*1000;
+    var idx=Math.floor(Math.random()*ERR_POOL.length);
+    emit(t,'err',ERR_POOL[idx]);
+    pending.push({t:t+rand(9000,16000),sev:'info',msg:REC_POOL[idx]});
+  }
+  pending = pending.filter(function(pe){ if(pe.t<=t){ emit(t,pe.sev,pe.msg); return false; } return true; });
+
+  /* ---- services ---- */
+  var nowDeg=0;
+  SERVICES.forEach(function(sv){
+    if(sv.degUntil>t){ nowDeg++; sv.lat=lerp(sv.lat,rand(280,420),0.3); }
+    else if(sv.degUntil>0 && sv.degUntil<=t){ sv.degUntil=0; sv.lat=sv.base;
+      emit(t,'info','recovered: '+sv.n+' healthy (latency '+sv.base+'ms)'); }
+    else if(Math.random()<0.0016 && t>20000){
+      sv.degUntil=t+rand(9000,20000);
+      emit(t,'warn',sv.n+' degraded — latency '+rand(280,420).toFixed(0)+'ms, probes failing');
+    }
+    else sv.lat=clamp(lerp(sv.lat,sv.base+rand(-2,3),0.25),0,999);
+  });
+  lastSvcDeg=nowDeg;
+
+  /* ---- panel updates ---- */
+  renderCores();
+  renderDisks();
+  renderServices();
+  renderProcTable(all,thr,cpu);
+  renderPanels(usedGB,committed,rx,tx,rd,wr,fan,all.length,thr);
+  renderStatus(t,nowDeg);
+}
+
+/* ============================== renderers ============================== */
+function renderCores(){
+  for(var i=0;i<8;i++){
+    var v=S.cores[i].v, ce=coreEls[i];
+    ce.fill.style.height=v.toFixed(1)+'%';
+    ce.num.textContent=v.toFixed(0);
+    ce.el.className='core'+(v>92?' crit':v>78?' hot':'');
+  }
+}
+function renderServices(){
+  SERVICES.forEach(function(s){
+    var deg=s.degUntil>SIM.t;
+    s.el.className='svc'+(deg?' deg':'');
+    var sub='up '+s.up+(deg?' · probes failing':'');
+    s.ss.textContent=sub;
+    s.latEl.textContent=(s.suffix&&s.base===0)? s.suffix : s.lat.toFixed(0)+'ms';
+  });
+}
+function renderProcTable(all,thr,cpu){
+  var list=all.slice();
+  list.sort(function(a,b){
+    var va=a[sortKey], vb=b[sortKey];
+    if(typeof va==='string') return va.localeCompare(vb)*sortDir;
+    return (va-vb)*sortDir;
+  });
+  var tb=$('#procBody');
+  var frag=document.createDocumentFragment();
+  list.forEach(function(p){ frag.appendChild(p.row); });
+  tb.appendChild(frag);
+  procDirty=false;
+  list.forEach(function(p){
+    var nv=p.row.querySelector('.nv'); nv.textContent=p.cpu.toFixed(1);
+    p.row.querySelector('.pc i').style.width=clamp(p.cpu,0,100)+'%';
+    var mv=p.row.querySelector('.mv');
+    mv.textContent = p.mem>=1024 ? (p.mem/1024).toFixed(2)+' GiB' : p.mem.toFixed(0)+' MB';
+    var st=p.row.querySelector('.st');
+    var run = p.cpu>1.2 || Math.random()<0.3;
+    st.textContent = run?'running':'sleeping';
+    st.className = 'st '+(run?'run':'slp');
+  });
+  $('#pm-procs').textContent = all.length+' procs · '+thr+' threads · load '+
+    S.load1.toFixed(2)+' '+S.load5.toFixed(2)+' '+S.load15.toFixed(2);
+}
+function fmtGiBTot(mb){
+  var g=mb/1024;
+  return g>=1024 ? (g/1024).toFixed(2)+' TiB' : g.toFixed(0)+' GiB';
+}
+function renderPanels(used,committed,rx,tx,rd,wr,fan,nproc,thr){
+  var h=kpiHist;
+  function delta(k,dg){ var a=h[k]; if(a.length<61) return '';
+    var d=a[a.length-1]-a[a.length-61];
+    return (d>=0?'+':'')+d.toFixed(dg); }
+  $('#d-cpu').textContent=delta('cpu',1);  $('#d-mem').textContent=delta('mem',1);
+  $('#d-net').textContent=delta('net',1);  $('#d-disk').textContent=delta('disk',1);
+  $('#d-temp').textContent=delta('temp',1);$('#d-proc').textContent=delta('proc',0);
+
+  $('#s-cpu').textContent='8 cores · load '+S.load1.toFixed(2)+' / '+S.load5.toFixed(2);
+  $('#s-mem').textContent=(committed/32*100).toFixed(0)+'% of 32 GiB committed';
+  $('#s-net').textContent='out '+fmtMBs(tx)+' MB/s · '+fmtGiBTot(S.totTx)+' total';
+  $('#s-disk').textContent='r '+fmtMBs(rd)+' · w '+fmtMBs(wr)+' MB/s';
+  $('#s-temp').textContent='fan2 '+fan+' rpm';
+  $('#s-proc').textContent=thr+' threads · scheduler ok';
+
+  var cpuAvg = S.cores.reduce(function(a,c){ return a+c.v; },0)/8;
+  $('#t-cpu').className='tile'+(cpuAvg>92?' crit':cpuAvg>85?' hot':'');
+  $('#t-temp').className='tile'+(S.temp>85?' crit':S.temp>78?' hot':'');
+  $('#t-mem').className='tile'+(committed/32>0.92?' crit':committed/32>0.85?' hot':'');
+
+  $('#pm-cpu').textContent='avg '+cpuAvg.toFixed(1)+'%';
+  $('#pm-mem').textContent=(committed/32*100).toFixed(0)+'% committed';
+  $('#pm-net').textContent='in '+fmtMBs(rx)+' · out '+fmtMBs(tx)+' MB/s';
+  $('#pm-disk').textContent='r '+fmtMBs(rd)+' · w '+fmtMBs(wr)+' MB/s';
+
+  $('#mseg-used').style.width=(used/32*100).toFixed(1)+'%';
+  $('#mseg-cache').style.width=(S.cache/32*100).toFixed(1)+'%';
+  $('#m-used').textContent=used.toFixed(1)+' / 32 GiB';
+  $('#m-cache').textContent=S.cache.toFixed(1)+' GiB';
+  $('#m-swap').textContent=S.swap.toFixed(2)+' / 4.0 GiB';
+  $('#n-rx').textContent=fmtGiBTot(S.totRx);
+  $('#n-tx').textContent=fmtGiBTot(S.totTx);
+}
+function renderStatus(t,svcDeg){
+  var pill=$('#statusPill'), txt=$('#statusText'), ac=$('#alertCount');
+  var errActive = (t-S.lastErrT)<30000;
+  var cls='ok', label='ALL SYSTEMS NOMINAL';
+  if(errActive){ cls='err'; label='CRITICAL — INVESTIGATE'; }
+  else if(svcDeg>0){ cls='warn'; label='DEGRADED — '+svcDeg+' SERVICE'+(svcDeg>1?'S':''); }
+  pill.className='pill '+cls; txt.textContent=label;
+  var alerts = events.filter(function(e){ return (t-e.t)<30000 && e.sev!=='info'; }).length;
+  ac.textContent = alerts>0 ? alerts+' alert'+(alerts>1?'s':'')+' (30s)' : '';
+}
+
+/* ============================== main loop ============================== */
+var lastRT = performance.now(), lastSec=-1;
+function frame(rt){
+  var dt=Math.min(rt-lastRT,250); lastRT=rt;
+  if(!SIM.paused){
+    SIM.t += dt*SIM.speed;
+    var guard=0;
+    while(SIM.t>=SIM.nextSample && guard++<40){ sampleAt(SIM.nextSample); SIM.nextSample+=SAMPLE_MS; }
+  }
+
+  /* smooth KPI numbers */
+  var k=1-Math.exp(-dt/260);
+  kpi.cpu.cur=lerp(kpi.cpu.cur,kpi.cpu.tgt,k);
+  kpi.mem.cur=lerp(kpi.mem.cur,kpi.mem.tgt,k);
+  kpi.net.cur=lerp(kpi.net.cur,kpi.net.tgt,k);
+  kpi.disk.cur=lerp(kpi.disk.cur,kpi.disk.tgt,k);
+  kpi.temp.cur=lerp(kpi.temp.cur,kpi.temp.tgt,k);
+  kpi.proc.cur=lerp(kpi.proc.cur,kpi.proc.tgt,k);
+  $('#v-cpu').textContent=kpi.cpu.cur.toFixed(1);
+  $('#v-mem').textContent=kpi.mem.cur.toFixed(1);
+  $('#v-net').textContent=fmtMBs(kpi.net.cur);
+  $('#v-disk').textContent=fmtMBs(kpi.disk.cur);
+  $('#v-temp').textContent=kpi.temp.cur.toFixed(1);
+  $('#v-proc').textContent=Math.round(kpi.proc.cur);
+
+  /* header clock */
+  var w=wall(SIM.t);
+  if(Math.floor(SIM.t/1000)!==lastSec){
+    lastSec=Math.floor(SIM.t/1000);
+    $('#clock').textContent=pad2(w.getHours())+':'+pad2(w.getMinutes())+':'+pad2(w.getSeconds());
+    $('#cdate').textContent=w.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+    $('#uptime').textContent=fmtUptime(BOOT_OFF+SIM.t);
+  }
+
+  for(var i=0;i<CHARTS.length;i++) CHARTS[i].draw(SIM.t);
+  renderLog();
+  requestAnimationFrame(frame);
+}
+
+/* ============================== controls ============================== */
+var btnP=$('#btnPause');
+function setPaused(v){
+  SIM.paused=v;
+  document.body.classList.toggle('paused',v);
+  $('#icoPause').style.display=v?'none':'block';
+  $('#icoPlay').style.display=v?'block':'none';
+  $('#btnPauseText').textContent=v?'Resume':'Pause';
+  $('#liveText').textContent=v?'PAUSED':'LIVE';
+}
+btnP.addEventListener('click',function(){ setPaused(!SIM.paused); });
+var SPEEDS=[1,2,4];
+$('#btnSpeed').addEventListener('click',function(){
+  var i=(SPEEDS.indexOf(SIM.speed)+1)%SPEEDS.length;
+  SIM.speed=SPEEDS[i];
+  this.textContent=SIM.speed+'×';
+});
+document.addEventListener('keydown',function(e){
+  if(e.code==='Space' && (e.target===document.body)){ e.preventDefault(); setPaused(!SIM.paused); }
+});
+window.addEventListener('resize',function(){ CHARTS.forEach(function(c){ c.resize(); }); });
+
+/* ============================== boot ============================== */
+emit(0,'info','telemetry link established · node-07.edge-euw1');
+emit(400,'info','subscribed to 42 metric streams (500ms cadence)');
+emit(1200,'info','dashboard attached · retention window 60s');
+for(var i=1;i<=WINDOW;i++) sampleAt(i*SAMPLE_MS);
+SIM.t=(WINDOW)*SAMPLE_MS; SIM.nextSample=(WINDOW+1)*SAMPLE_MS;
+document.querySelector('thead th[data-k="cpu"] .si').textContent='\u25BE';
+var w0=new Date(); $('#clock').textContent=pad2(w0.getHours())+':'+pad2(w0.getMinutes())+':'+pad2(w0.getSeconds());
+renderStatus(SIM.t,lastSvcDeg);
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

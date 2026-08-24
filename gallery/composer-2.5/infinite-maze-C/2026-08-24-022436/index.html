@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Luminous Depths — Infinite Maze</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #050510; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: fixed; inset: 0; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 10; transition: opacity 1.8s ease;
+  }
+  #overlay.hidden { opacity: 0; }
+  #overlay h1 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 200; font-size: clamp(1.4rem, 4vw, 2.6rem);
+    letter-spacing: 0.35em; text-transform: uppercase;
+    color: rgba(255, 220, 160, 0.92);
+    text-shadow: 0 0 40px rgba(255, 180, 80, 0.5), 0 0 80px rgba(120, 80, 255, 0.3);
+    margin-bottom: 0.6rem;
+  }
+  #overlay p {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.75rem; letter-spacing: 0.25em; text-transform: uppercase;
+    color: rgba(180, 170, 220, 0.55);
+  }
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(5, 5, 16, 0.65) 100%);
+  }
+  #scanlines {
+    position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0.04;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px);
+  }
+</style>
+</head>
+<body>
+<div id="overlay">
+  <h1>Luminous Depths</h1>
+  <p>Self-navigating infinite labyrinth</p>
+</div>
+<div id="vignette"></div>
+<div id="scanlines"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+/* ─── Config ─── */
+const CELL = 4;
+const WALL_H = 3.2;
+const WALL_T = 0.18;
+const VIEW_RADIUS = 5;
+const MOVE_SPEED = 3.8;
+const TURN_SPEED = 2.4;
+const FOG_NEAR = 6;
+const FOG_FAR = 38;
+
+/* ─── Deterministic hash ─── */
+function hash2(x, z) {
+  let h = (x * 374761393 + z * 668265263) ^ (x * 1274126177);
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+function rand01(x, z, salt = 0) {
+  return hash2(x + salt * 997, z + salt * 131) / 4294967295;
+}
+
+/* ─── Symmetric wall maze ─── */
+const cellCache = new Map();
+function cellKey(x, z) { return x + ',' + z; }
+
+function getCell(x, z) {
+  const k = cellKey(x, z);
+  if (cellCache.has(k)) return cellCache.get(k);
+  const r = rand01(x, z);
+  const density = 0.38 + 0.12 * Math.sin(x * 0.31) * Math.cos(z * 0.27);
+  const walls = { n: true, e: true, s: true, w: true };
+  if (r < density) {
+    const open = Math.floor(rand01(x, z, 1) * 4);
+    const dirs = ['n', 'e', 's', 'w'];
+    walls[dirs[open]] = false;
+    if (rand01(x, z, 2) > 0.55) {
+      const open2 = (open + 1 + Math.floor(rand01(x, z, 3) * 3)) % 4;
+      walls[dirs[open2]] = false;
+    }
+  } else {
+    const openCount = 1 + Math.floor(rand01(x, z, 4) * 2);
+    const order = [0, 1, 2, 3].sort((a, b) => rand01(x, z, 10 + a) - rand01(x, z, 10 + b));
+    for (let i = 0; i < openCount; i++) {
+      walls[['n', 'e', 's', 'w'][order[i]]] = false;
+    }
+  }
+  for (const [dir, dx, dz] of [['n', 0, -1], ['e', 1, 0], ['s', 0, 1], ['w', -1, 0]]) {
+    const nx = x + dx, nz = z + dz;
+    const opp = { n: 's', s: 'n', e: 'w', w: 'e' }[dir];
+    if (cellCache.has(cellKey(nx, nz))) {
+      walls[dir] = cellCache.get(cellKey(nx, nz))[opp];
+    }
+  }
+  const c = { x, z, walls, visited: false, variant: Math.floor(rand01(x, z, 99) * 5) };
+  cellCache.set(k, c);
+  for (const [dir, dx, dz] of [['n', 0, -1], ['e', 1, 0], ['s', 0, 1], ['w', -1, 0]]) {
+    const nx = x + dx, nz = z + dz;
+    const nk = cellKey(nx, nz);
+    if (cellCache.has(nk)) {
+      const opp = { n: 's', s: 'n', e: 'w', w: 'e' }[dir];
+      cellCache.get(nk).walls[opp] = walls[dir];
+    }
+  }
+  return c;
+}
+
+function isOpen(x, z, dir) {
+  return !getCell(x, z).walls[dir];
+}
+
+const DIR_VEC = {
+  n: { dx: 0, dz: -1, angle: 0 },
+  e: { dx: 1, dz: 0, angle: -Math.PI / 2 },
+  s: { dx: 0, dz: 1, angle: Math.PI },
+  w: { dx: -1, dz: 0, angle: Math.PI / 2 }
+};
+const DIR_ORDER = ['n', 'e', 's', 'w'];
+
+/* ─── Scene setup ─── */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050510);
+scene.fog = new THREE.FogExp2(0x0a0820, 0.028);
+
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 120);
+camera.position.set(0, 1.65, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.55, 0.82);
+composer.addPass(bloom);
+
+/* ─── Materials ─── */
+function makeWallMat(variant) {
+  const hues = [0.72, 0.78, 0.65, 0.82, 0.58];
+  const h = hues[variant % hues.length];
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(h, 0.35, 0.12),
+    roughness: 0.82,
+    metalness: 0.15,
+    emissive: new THREE.Color().setHSL(h, 0.6, 0.04),
+    emissiveIntensity: 0.6
+  });
+}
+
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x0c0a18,
+  roughness: 0.55,
+  metalness: 0.35,
+  emissive: 0x1a1030,
+  emissiveIntensity: 0.25
+});
+
+const trimMat = new THREE.MeshStandardMaterial({
+  color: 0xffc870,
+  roughness: 0.35,
+  metalness: 0.7,
+  emissive: 0xffa030,
+  emissiveIntensity: 1.8
+});
+
+const pillarMat = new THREE.MeshStandardMaterial({
+  color: 0x181028,
+  roughness: 0.5,
+  metalness: 0.4,
+  emissive: 0x402080,
+  emissiveIntensity: 0.4
+});
+
+const lightOrbMat = new THREE.MeshStandardMaterial({
+  color: 0xffe8c0,
+  emissive: 0xffb040,
+  emissiveIntensity: 3,
+  roughness: 0.2,
+  metalness: 0.1
+});
+
+/* ─── Geometry chunks ─── */
+const chunkGroup = new THREE.Group();
+scene.add(chunkGroup);
+const activeChunks = new Map();
+const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, WALL_T);
+const floorGeo = new THREE.PlaneGeometry(CELL, CELL);
+const trimGeo = new THREE.BoxGeometry(CELL * 0.92, 0.06, 0.06);
+const pillarGeo = new THREE.CylinderGeometry(0.12, 0.14, WALL_H, 8);
+const orbGeo = new THREE.SphereGeometry(0.08, 12, 12);
+
+function worldPos(cx, cz) {
+  return { x: cx * CELL + CELL / 2, z: cz * CELL + CELL / 2 };
+}
+
+function buildCellMesh(cx, cz) {
+  const cell = getCell(cx, cz);
+  const g = new THREE.Group();
+  const { x: wx, z: wz } = worldPos(cx, cz);
+
+  const floor = new THREE.Mesh(floorGeo, floorMat.clone());
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(wx, 0, wz);
+  floor.receiveShadow = true;
+  g.add(floor);
+
+  const gridLine = new THREE.Mesh(
+    new THREE.PlaneGeometry(CELL * 0.98, CELL * 0.98),
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setHSL(0.12 + cell.variant * 0.04, 0.7, 0.35 + cell.variant * 0.03),
+      transparent: true,
+      opacity: 0.08 + cell.variant * 0.015,
+      depthWrite: false
+    })
+  );
+  gridLine.rotation.x = -Math.PI / 2;
+  gridLine.position.set(wx, 0.01, wz);
+  g.add(gridLine);
+
+  const wallDefs = [
+    ['n', wx, wz - CELL / 2, 0],
+    ['s', wx, wz + CELL / 2, 0],
+    ['e', wx + CELL / 2, wz, Math.PI / 2],
+    ['w', wx - CELL / 2, wz, Math.PI / 2]
+  ];
+  for (const [dir, px, pz, rotY] of wallDefs) {
+    if (cell.walls[dir]) {
+      const w = new THREE.Mesh(wallGeo, makeWallMat(cell.variant));
+      w.position.set(px, WALL_H / 2, pz);
+      w.rotation.y = rotY;
+      w.castShadow = true;
+      w.receiveShadow = true;
+      g.add(w);
+
+      const trim = new THREE.Mesh(trimGeo, trimMat);
+      trim.position.set(px, WALL_H - 0.04, pz);
+      trim.rotation.y = rotY;
+      g.add(trim);
+
+      if (rand01(cx, cz, 50 + dir.charCodeAt(0)) > 0.82) {
+        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+        const off = 0.35;
+        let px2 = px, pz2 = pz;
+        if (dir === 'n' || dir === 's') px2 += (rand01(cx, cz, 60) - 0.5) * CELL * 0.5;
+        else pz2 += (rand01(cx, cz, 61) - 0.5) * CELL * 0.5;
+        pillar.position.set(px2, WALL_H / 2, pz2);
+        g.add(pillar);
+      }
+    }
+  }
+
+  if (cell.variant === 0 && rand01(cx, cz, 70) > 0.6) {
+    const orb = new THREE.Mesh(orbGeo, lightOrbMat);
+    orb.position.set(wx, WALL_H * 0.65, wz);
+    g.add(orb);
+    const pl = new THREE.PointLight(0xffb050, 0.8, CELL * 2.5);
+    pl.position.copy(orb.position);
+    g.add(pl);
+  }
+
+  g.userData = { cx, cz };
+  return g;
+}
+
+function updateChunks(camX, camZ) {
+  const ccx = Math.floor(camX / CELL);
+  const ccz = Math.floor(camZ / CELL);
+  const needed = new Set();
+  for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+    for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+      const k = cellKey(ccx + dx, ccz + dz);
+      needed.add(k);
+      if (!activeChunks.has(k)) {
+        const [cx, cz] = k.split(',').map(Number);
+        const mesh = buildCellMesh(cx, cz);
+        chunkGroup.add(mesh);
+        activeChunks.set(k, mesh);
+      }
+    }
+  }
+  for (const [k, mesh] of activeChunks) {
+    if (!needed.has(k)) {
+      chunkGroup.remove(mesh);
+      mesh.traverse(o => {
+        if (o.geometry && o.geometry !== wallGeo && o.geometry !== floorGeo &&
+            o.geometry !== trimGeo && o.geometry !== pillarGeo && o.geometry !== orbGeo) {
+          o.geometry.dispose();
+        }
+        if (o.material && o.material.dispose) o.material.dispose();
+      });
+      activeChunks.delete(k);
+    }
+  }
+}
+
+/* ─── Ambient lighting ─── */
+scene.add(new THREE.AmbientLight(0x302050, 0.45));
+const hemi = new THREE.HemisphereLight(0x6040a0, 0x100818, 0.55);
+scene.add(hemi);
+
+const camLight = new THREE.PointLight(0xffd090, 1.4, 14);
+camLight.position.set(0, 1.6, 0);
+camera.add(camLight);
+scene.add(camera);
+
+const dirLight = new THREE.DirectionalLight(0x8090ff, 0.25);
+dirLight.position.set(5, 12, -3);
+scene.add(dirLight);
+
+/* ─── Particles ─── */
+const PARTICLE_COUNT = 600;
+const pPositions = new Float32Array(PARTICLE_COUNT * 3);
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  pPositions[i * 3] = (Math.random() - 0.5) * 80;
+  pPositions[i * 3 + 1] = Math.random() * WALL_H * 0.9 + 0.2;
+  pPositions[i * 3 + 2] = (Math.random() - 0.5) * 80;
+}
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
+const pMat = new THREE.PointsMaterial({
+  color: 0xc0a0ff,
+  size: 0.06,
+  transparent: true,
+  opacity: 0.45,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending
+});
+const particles = new THREE.Points(pGeo, pMat);
+scene.add(particles);
+
+/* ─── Navigator AI ─── */
+let navCellX = 0, navCellZ = 0;
+let navDir = 's';
+let navState = 'move';
+let navProgress = 0;
+let navTargetAngle = DIR_VEC[navDir].angle;
+let currentAngle = navTargetAngle;
+let visitedOrder = [];
+const visitStack = [{ x: 0, z: 0, from: null }];
+
+function markVisited(x, z) {
+  const c = getCell(x, z);
+  if (!c.visited) {
+    c.visited = true;
+    visitedOrder.push({ x, z });
+  }
+}
+
+function getUnvisitedNeighbors(x, z) {
+  const result = [];
+  for (const d of DIR_ORDER) {
+    const { dx, dz } = DIR_VEC[d];
+    const nx = x + dx, nz = z + dz;
+    if (isOpen(x, z, d)) {
+      const nc = getCell(nx, nz);
+      if (!nc.visited) result.push({ dir: d, x: nx, z: nz });
+    }
+  }
+  return result;
+}
+
+function pickNextDirection(x, z, prevDir) {
+  const unvisited = getUnvisitedNeighbors(x, z);
+  if (unvisited.length > 0) {
+    unvisited.sort((a, b) => rand01(a.x, a.z, 200) - rand01(b.x, b.z, 200));
+    return unvisited[0].dir;
+  }
+  const options = DIR_ORDER.filter(d => isOpen(x, z, d));
+  if (options.length === 0) return prevDir;
+  const back = { n: 's', s: 'n', e: 'w', w: 'e' }[prevDir];
+  const forward = options.filter(d => d !== back);
+  if (forward.length > 0) {
+    forward.sort((a, b) => rand01(x, z, a.charCodeAt(0)) - rand01(x, z, b.charCodeAt(0)));
+    return forward[0];
+  }
+  return options[0];
+}
+
+function cellCenter(x, z) {
+  const p = worldPos(x, z);
+  return new THREE.Vector3(p.x, 1.65, p.z);
+}
+
+let targetPos = cellCenter(0, 0);
+let startPos = targetPos.clone();
+let turnStartAngle = 0;
+let turnEndAngle = 0;
+
+function beginMove() {
+  navState = 'move';
+  navProgress = 0;
+  startPos.copy(camera.position);
+  const { dx, dz } = DIR_VEC[navDir];
+  navCellX += dx;
+  navCellZ += dz;
+  targetPos = cellCenter(navCellX, navCellZ);
+  markVisited(navCellX, navCellZ);
+}
+
+function beginTurn(newDir) {
+  navState = 'turn';
+  navProgress = 0;
+  turnStartAngle = currentAngle;
+  turnEndAngle = DIR_VEC[newDir].angle;
+  let diff = turnEndAngle - turnStartAngle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  turnEndAngle = turnStartAngle + diff;
+  navDir = newDir;
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function updateNavigator(dt) {
+  if (navState === 'move') {
+    navProgress += dt * MOVE_SPEED / CELL;
+    const t = easeInOut(Math.min(navProgress, 1));
+    camera.position.lerpVectors(startPos, targetPos, t);
+    if (navProgress >= 1) {
+      const next = pickNextDirection(navCellX, navCellZ, navDir);
+      if (next !== navDir) beginTurn(next);
+      else beginMove();
+    }
+  } else if (navState === 'turn') {
+    navProgress += dt * TURN_SPEED;
+    const t = easeInOut(Math.min(navProgress, 1));
+    currentAngle = turnStartAngle + (turnEndAngle - turnStartAngle) * t;
+    camera.rotation.y = currentAngle;
+    if (navProgress >= 1) {
+      currentAngle = turnEndAngle;
+      camera.rotation.y = currentAngle;
+      beginMove();
+    }
+  }
+}
+
+markVisited(0, 0);
+
+/* ─── Camera bob & sway ─── */
+let time = 0;
+function updateCameraFX(dt) {
+  time += dt;
+  const bob = navState === 'move' ? Math.sin(time * 8) * 0.025 : Math.sin(time * 2) * 0.008;
+  camera.position.y = 1.65 + bob;
+  camera.rotation.z = Math.sin(time * 1.5) * 0.004;
+  camera.rotation.x = Math.sin(time * 2.2) * 0.012 + 0.02;
+}
+
+/* ─── Particle drift ─── */
+function updateParticles(dt) {
+  const pos = pGeo.attributes.position.array;
+  const cx = camera.position.x, cz = camera.position.z;
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    pos[i * 3 + 1] += dt * 0.08;
+    if (pos[i * 3 + 1] > WALL_H) pos[i * 3 + 1] = 0.2;
+    pos[i * 3] += Math.sin(time + i) * dt * 0.02;
+    const dx = pos[i * 3] - cx, dz = pos[i * 3 + 2] - cz;
+    if (Math.abs(dx) > 40) pos[i * 3] = cx + (Math.random() - 0.5) * 40;
+    if (Math.abs(dz) > 40) pos[i * 3 + 2] = cz + (Math.random() - 0.5) * 40;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+/* ─── Pulsing emissives ─── */
+function updatePulse() {
+  const pulse = 0.5 + 0.5 * Math.sin(time * 1.8);
+  trimMat.emissiveIntensity = 1.2 + pulse * 0.8;
+  chunkGroup.traverse(obj => {
+    if (obj.isPointLight) obj.intensity = 0.5 + pulse * 0.5;
+  });
+}
+
+/* ─── Main loop ─── */
+let lastT = performance.now();
+let overlayHidden = false;
+
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = Math.min((now - lastT) / 1000, 0.05);
+  lastT = now;
+
+  if (!overlayHidden && now > 2800) {
+    document.getElementById('overlay').classList.add('hidden');
+    overlayHidden = true;
+  }
+
+  updateNavigator(dt);
+  updateCameraFX(dt);
+  updateParticles(dt);
+  updatePulse();
+  updateChunks(camera.position.x, camera.position.z);
+
+  particles.position.set(camera.position.x, 0, camera.position.z);
+
+  composer.render();
+}
+
+camera.rotation.y = currentAngle;
+animate(performance.now());
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloom.resolution.set(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
