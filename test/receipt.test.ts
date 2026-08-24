@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { assertReceipt, isPlayable, publishStatus, receiptTemplate } from '../scripts/receipt.mjs';
+import {
+  assertReceipt,
+  isPlayable,
+  isShowcaseFixed,
+  publishStatus,
+  receiptTemplate,
+  showcaseFixedAt,
+} from '../scripts/receipt.mjs';
 
 const base = receiptTemplate({
   runId: 'run-1',
@@ -56,5 +63,15 @@ describe('isPlayable', () => {
     expect(isPlayable(true, 'pending')).toBe(true);
     expect(isPlayable(false, 'complete')).toBe(false);
     expect(isPlayable(true, 'failed')).toBe(false);
+  });
+});
+
+describe('showcaseFixed', () => {
+  it('reads an object stamp or a boolean', () => {
+    expect(isShowcaseFixed({ showcaseFixed: showcaseFixedAt('2026-08-24T00:00:00.000Z') })).toBe(
+      true,
+    );
+    expect(isShowcaseFixed({ showcaseFixed: true })).toBe(true);
+    expect(isShowcaseFixed(base)).toBe(false);
   });
 });

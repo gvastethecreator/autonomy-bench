@@ -86,3 +86,16 @@ export function publishStatus(receipt, hasHtml) {
 export function isPlayable(hasHtml, status) {
   return Boolean(hasHtml) && (status === 'complete' || status === 'pending');
 }
+
+export const SHOWCASE_FIXED_NOTE = 'Post-generation repair so the take runs in the public gallery.';
+
+export function showcaseFixedAt(at = new Date().toISOString()) {
+  return { at, note: SHOWCASE_FIXED_NOTE };
+}
+
+export function isShowcaseFixed(receipt) {
+  const value = receipt?.showcaseFixed;
+  if (!value) return false;
+  if (value === true) return true;
+  return typeof value === 'object' && Boolean(value.at || value.note);
+}

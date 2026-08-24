@@ -1,5 +1,6 @@
 import { compareDateStamp } from './layout.mjs';
 import { applyModelThinking } from './model-meta.mjs';
+import { isShowcaseFixed } from './receipt.mjs';
 import { pickCellForMonth } from './run-month.mjs';
 import { staffPicksFromCells } from './staff-picks.mjs';
 
@@ -10,6 +11,7 @@ export function glanceFromReceipt(receipt) {
     harness: receipt.harness || '',
     contributor: receipt.contributor || null,
     limitations: Array.isArray(receipt.limitations) ? receipt.limitations : [],
+    showcaseFixed: isShowcaseFixed(receipt),
   };
 }
 

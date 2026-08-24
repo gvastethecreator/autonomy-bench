@@ -8,6 +8,8 @@ Required identity: run id, cell id, benchmark id, prompt level, attempt, request
 
 Execution facts: status, timestamps, generation duration, token spend, adapter, harness (the program that ran the cell: Cursor, Codex, Claude Code, ChatGPT, and similar), contributor GitHub login and avatar, effective model when independently visible, reasoning setting when visible, isolation evidence, tool visibility, output paths and hashes, limitations, errors, external receipt links.
 
+`showcaseFixed` is optional. Record it when published HTML was repaired after generation so the take runs in the gallery. Do not invent generation time or token counts for that amendment.
+
 `contributor` is the person who submitted the take, not the model. Record `contributor.github` and `contributor.avatarUrl` (`https://github.com/<login>.png`). If the login is unknown, use the planned default. Do not invent a name.
 
 `harness` is not `adapter`. Adapter is how the coordinator dispatched the cell (`manual`, `agent`, `prototype-lab`). Harness is the program the worker used.

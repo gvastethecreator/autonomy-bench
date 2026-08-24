@@ -75,6 +75,34 @@ export function liveBenchmarkIds(suite) {
   return new Set((suite?.benchmarks || []).map((b) => b.id));
 }
 
+export function stripNoHtmlGalleryTakes(galleryDir) {
+  if (!existsSync(galleryDir)) return 0;
+  let removed = 0;
+  for (const modelName of readdirSync(galleryDir)) {
+    if (GALLERY_SKIP.has(modelName)) continue;
+    const modelDir = join(galleryDir, modelName);
+    if (!statSync(modelDir).isDirectory()) continue;
+    for (const promptV of readdirSync(modelDir)) {
+      const pvDir = join(modelDir, promptV);
+      if (!statSync(pvDir).isDirectory()) continue;
+      for (const date of readdirSync(pvDir)) {
+        const cellDir = join(pvDir, date);
+        if (!statSync(cellDir).isDirectory()) continue;
+        if (existsSync(join(cellDir, 'index.html'))) continue;
+        rmSync(cellDir, { recursive: true, force: true });
+        removed++;
+      }
+      if (existsSync(pvDir) && readdirSync(pvDir).length === 0) {
+        rmSync(pvDir, { recursive: true, force: true });
+      }
+    }
+    if (existsSync(modelDir) && readdirSync(modelDir).length === 0) {
+      rmSync(modelDir, { recursive: true, force: true });
+    }
+  }
+  return removed;
+}
+
 export function stripRetiredGalleryBenchmarks(galleryDir, suite) {
   if (!existsSync(galleryDir)) return 0;
   const known = liveBenchmarkIds(suite);
@@ -126,7 +154,7 @@ export function indexPublishedCells(galleryDir, suite) {
           receipt = stamped.receipt;
         }
         const hasHtml = existsSync(htmlPath);
-        if (!hasHtml && !receipt) continue;
+        if (!hasHtml) continue;
         const status = publishStatus(receipt, hasHtml);
         const rel = `${modelName}/${promptV}/${date}`;
         const experiment = receipt?.benchmarkId || parsed.benchmarkId;
@@ -204,7 +232,7 @@ export function publishRun({ runDir, galleryDir, suite }) {
       runId: m.runId,
       attempt: cell.attempt || 1,
     });
-    if (!isPlayable(hasHtml, status) && !receipt) continue;
+    if (!isPlayable(hasHtml, status)) continue;
     const destDir = ensureDir(join(galleryDir, destRel));
     if (isPlayable(hasHtml, status)) {
       copyFileSync(htmlPath, join(destDir, 'index.html'));
