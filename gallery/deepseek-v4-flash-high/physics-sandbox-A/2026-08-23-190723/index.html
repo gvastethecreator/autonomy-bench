@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>2D Physics Sandbox</title>
+<style>
+  :root {
+    --bg: #0a0e15;
+    --panel: rgba(15, 20, 32, 0.92);
+    --line: rgba(255, 255, 255, 0.08);
+    --text: #e8eefc;
+    --muted: #8b94ab;
+    --accent: #5eead4;
+    --accent2: #8b7cf8;
+    --danger: #ff7b8a;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  #world { position: fixed; inset: 0; display: block; touch-action: none; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 2;
+    background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,0.38) 100%); }
+  #loaderr { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    z-index: 50; background: var(--bg); color: var(--danger); font-size: 16px; padding: 32px; text-align: center; }
+
+  /* Brand */
+  #brand { position: fixed; top: 18px; left: 20px; z-index: 5; pointer-events: none; user-select: none; }
+  #brand h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #brand p { margin-top: 4px; font-size: 12.5px; color: var(--muted); max-width: 480px; }
+  #brand b { color: var(--accent); font-weight: 600; }
+
+  /* HUD */
+  #hud { position: fixed; left: 20px; bottom: 16px; z-index: 5; pointer-events: none; user-select: none;
+    font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--muted);
+    background: rgba(10, 14, 21, 0.55); border: 1px solid var(--line); border-radius: 9px;
+    padding: 6px 12px; backdrop-filter: blur(6px); }
+  #hud b { color: var(--text); font-weight: 600; }
+
+  /* Panel */
+  #panel { position: fixed; top: 16px; right: 16px; bottom: 16px; z-index: 6; width: 264px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px; overflow-y: auto; backdrop-filter: blur(12px);
+    display: flex; flex-direction: column; gap: 14px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); }
+  #panel h2 { font-size: 13px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); }
+  .section { display: flex; flex-direction: column; gap: 7px;
+    padding-top: 12px; border-top: 1px solid var(--line); }
+  .sec-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  button { appearance: none; border: 1px solid var(--line); background: rgba(255,255,255,0.045);
+    color: var(--text); border-radius: 9px; padding: 8px 10px; font: inherit; cursor: pointer;
+    transition: background .15s, border-color .15s, transform .05s; }
+  button:hover { background: rgba(255,255,255,0.09); }
+  button:active { transform: translateY(1px); }
+  button.active { background: linear-gradient(135deg, rgba(94,234,212,0.18), rgba(139,124,248,0.18));
+    border-color: var(--accent); box-shadow: 0 0 0 1px rgba(94,234,212,0.25), 0 0 18px rgba(94,234,212,0.15); }
+  .act-row { display: flex; gap: 7px; }
+  .act-row button { flex: 1; }
+  .row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+  .row span { flex: 1; }
+  .row input[type=range] { flex: 1.4; accent-color: var(--accent); min-width: 0; }
+  .row em { width: 46px; text-align: right; font-style: normal; font-size: 12px; color: var(--muted); }
+  .row.check { cursor: pointer; }
+  .row.check input { accent-color: var(--accent); }
+  .btns { display: flex; gap: 7px; }
+  .btns button { flex: 1; }
+  #btn-pause.active, #btn-walls.on, #btn-sound.on { border-color: var(--accent); color: var(--accent); }
+  #warn { min-height: 16px; font-size: 12px; color: var(--danger); }
+  .kbd { font-size: 11px; color: var(--muted); line-height: 1.7; padding-top: 10px; border-top: 1px solid var(--line); }
+  .kbd code { background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 5px; font-size: 10.5px; }
+
+  @media (max-width: 1080px) {
+    #brand p { display: none; }
+    #panel { top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-height: 42vh;
+      border-radius: 16px 16px 0 0; padding: 12px 14px; flex-direction: row; overflow-y: auto;
+      overflow-x: auto; align-items: flex-start; }
+    #panel h2 { display: none; }
+    .section { min-width: 200px; padding-top: 8px; }
+    #hud { bottom: auto; top: 14px; }
+    #brand { top: 48px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+<div id="vignette"></div>
+
+<header id="brand">
+  <h1>⦿ 2D Physics Sandbox</h1>
+  <p>Click &amp; drag a body to throw it &middot; pick a tool, then click &amp; drag to sling new shapes &middot; <b>Space</b> pauses &middot; <b>1–5</b> tools &middot; <b>C</b> clear &middot; <b>E</b> boom &middot; <b>M</b> mute</p>
+</header>
+
+<div id="hud">
+  <b id="stat-fps">—</b> FPS &middot; <b id="stat-bodies">0</b> bodies &middot; <b id="stat-state">running</b>
+</div>
+
+<aside id="panel">
+  <h2>Controls</h2>
+
+  <div class="section">
+    <div class="sec-title">Tools</div>
+    <div class="tool-grid">
+      <button class="tool-btn active" data-tool="grab">🖐 Grab</button>
+      <button class="tool-btn" data-tool="circle">⬤ Circle</button>
+      <button class="tool-btn" data-tool="box">▣ Box</button>
+      <button class="tool-btn" data-tool="poly">⬡ Polygon</button>
+      <button class="tool-btn" data-tool="bullet">◎ Bullet</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">Actions</div>
+    <div class="act-row">
+      <button id="btn-explode">💥 Explode</button>
+      <button id="btn-clear">🗑 Clear</button>
+    </div>
+    <div class="act-row">
+      <button id="btn-walls" class="on">🧱 Walls</button>
+      <button id="btn-gravity">⇅ Gravity</button>
+      <button id="btn-sound">🔊</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">Scene</div>
+    <label class="row"><span>Gravity</span><input id="s-gravity" type="range" min="0" max="200" value="100"><em id="v-gravity">1.00×</em></label>
+    <label class="row"><span>Bounciness</span><input id="s-bounce" type="range" min="0" max="100" value="55"><em id="v-bounce">0.55</em></label>
+    <label class="row"><span>Friction</span><input id="s-friction" type="range" min="0" max="100" value="8"><em id="v-friction">0.08</em></label>
+    <label class="row"><span>Density</span><input id="s-density" type="range" min="10" max="300" value="100"><em id="v-density">1.00×</em></label>
+    <label class="row"><span>Speed</span><input id="s-speed" type="range" min="10" max="200" value="100"><em id="v-speed">1.00×</em></label>
+    <label class="row"><span>Size</span><input id="s-size" type="range" min="40" max="200" value="100"><em id="v-size">1.00×</em></label>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">Ambience</div>
+    <label class="row"><span>Volume</span><input id="s-volume" type="range" min="0" max="100" value="60"><em id="v-volume">60%</em></label>
+    <label class="row check"><input id="auto-chk" type="checkbox" checked><span>Auto spawn</span></label>
+  </div>
+
+  <div class="btns">
+    <button id="btn-pause">⏸ Pause</button>
+    <button id="btn-step" disabled>Step ⏭</button>
+  </div>
+  <p id="warn"></p>
+  <div class="kbd">Keys: <code>1</code> grab <code>2</code> circle <code>3</code> box <code>4</code> polygon <code>5</code> bullet<br>
+  <code>Space</code> pause &middot; <code>C</code> clear &middot; <code>E</code> explode &middot; <code>G</code> flip gravity &middot; <code>M</code> sound &middot; <code>B</code> walls</div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js" onerror="window.__matterFail=true"></script>
+<script src="https://unpkg.com/matter-js@0.19.0/build/matter.min.js" onerror="window.__matterFail=true"></script>
+
+<script>
+(function () {
+  'use strict';
+  if (typeof Matter === 'undefined') {
+    document.getElementById('loaderr') || document.body.insertAdjacentHTML('beforeend',
+      '<div id="loaderr">Could not load the Matter.js physics engine from CDN.<br>Check your internet connection and reload.</div>');
+    return;
+  }
+
+  const { Engine, Bodies, Body, Composite, Mouse, MouseConstraint, Events, Vertices, Vector } = Matter;
+
+  // ------------------------------------------------------------------
+  //  Canvas & sizing
+  // ------------------------------------------------------------------
+  const canvas = document.getElementById('world');
+  const ctx = canvas.getContext('2d');
+  let W = window.innerWidth;
+  let H = window.innerHeight;
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.width = 64; gridCanvas.height = 64;
+  (function makeGrid() {
+    const g = gridCanvas.getContext('2d');
+    g.fillStyle = '#131a29';
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = 'rgba(255,255,255,0.05)';
+    g.beginPath(); g.arc(32, 32, 1.1, 0, Math.PI * 2); g.fill();
+  })();
+  const gridPattern = ctx.createPattern(gridCanvas, 'repeat');
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    rebuildWalls();
+  }
+  window.addEventListener('resize', resize);
+
+  // ------------------------------------------------------------------
+  //  Physics engine
+  // ------------------------------------------------------------------
+  const engine = Engine.create({ enableSleeping: false });
+  engine.positionIterations = 12;
+  engine.velocityIterations = 8;
+
+  let walls = [];
+  let wallsEnabled = true;
+  function rebuildWalls() {
+    Composite.remove(engine.world, walls);
+    walls = [
+      Bodies.rectangle(W / 2, H + 60, W + 300, 120, { isStatic: true, friction: 0.4, restitution: 0.1 }),
+      Bodies.rectangle(W / 2, -60, W + 300, 120, { isStatic: true }),
+      Bodies.rectangle(-60, H / 2, 120, H + 300, { isStatic: true }),
+      Bodies.rectangle(W + 60, H / 2, 120, H + 300, { isStatic: true })
+    ];
+    walls.forEach(function (w) { w.userData = { color: { h: 210, s: 45, l: 55 }, size: 44 }; });
+    if (wallsEnabled) Composite.add(engine.world, walls);
+  }
+
+  // ------------------------------------------------------------------
+  //  Mice / dragging / throwing
+  // ------------------------------------------------------------------
+  const mouse = Mouse.create(canvas);
+  mouse.pixelRatio = 1;
+  const mouseConstraint = MouseConstraint.create(engine, {
+    mouse: mouse,
+    constraint: { stiffness: 0.07, damping: 0.08, render: { visible: false } }
+  });
+  let mouseInWorld = false;
+
+  function setMouseC(active) {
+    if (active && !mouseInWorld) { Composite.add(engine.world, mouseConstraint); mouseInWorld = true; }
+    else if (!active && mouseInWorld) { Composite.remove(engine.world, mouseConstraint); mouseInWorld = false; }
+  }
+
+  let mhist = [];
+  Events.on(mouse, 'mousemove', function () {
+    mhist.push({ x: mouse.position.x, y: mouse.position.y, t: performance.now() });
+    if (mhist.length > 6) mhist.shift();
+  });
+
+  function throwVelocity() {
+    const n = mhist.length;
+    if (n < 2) return null;
+    const a = mhist[n - 1], b2 = mhist[n - 2];
+    let dt = a.t - b2.t;
+    if (dt < 1) dt = 1;
+    let vx = (a.x - b2.x) / dt * 16.7;
+    let vy = (a.y - b2.y) / dt * 16.7;
+    const m = Math.hypot(vx, vy);
+    if (m > 18) { vx *= 18 / m; vy *= 18 / m; }
+    return { x: vx, y: vy };
+  }
+
+  Events.on(mouseConstraint, 'startdrag', function () {
+    mhist = [];
+    pluck(320);
+  });
+
+  Events.on(mouseConstraint, 'enddrag', function () {
+    const b = mouseConstraint.body;
+    if (!b || b.isStatic) return;
+    const v = throwVelocity();
+    if (v) { Body.setVelocity(b, v); Body.setAngularVelocity(b, b.angularVelocity + (Math.random() - 0.5) * 0.2); }
+  });
+
+  // ------------------------------------------------------------------
+  //  World state & parameters
+  // ------------------------------------------------------------------
+  const MAX_BODIES = 300;
+  const LAUNCH = { circle: 0.05, box: 0.045, poly: 0.05, bullet: 0.16 };
+  const CAP = { circle: 14, box: 12, poly: 14, bullet: 22 };
+
+  let tool = 'grab';
+  let paused = false;
+  let gSign = 1;
+  let gravityVal = 1, bounceVal = 0.55, frictionVal = 0.08, densityVal = 0.001, timeScaleVal = 1, sizeVal = 1;
+  let volume = 0.6, muted = false;
+  let autoSpawn = true;
+  let autoTimer = 1200;
+  let spawning = null;
+  let activePointerId = null;
+
+  let particles = [];
+  let rings = [];
+  let flash = 0;
+  let spawnCount = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+
+  function liveBodies() {
+    return Composite.allBodies(engine.world).filter(function (b) { return !b.isStatic; });
+  }
+  function bodyCount() { return liveBodies().length; }
+
+  // ------------------------------------------------------------------
+  //  Shape builders
+  // ------------------------------------------------------------------
+  function randomGeom(kind) {
+    const s = sizeVal;
+    if (kind === 'circle') return { kind: 'circle', r: 14 * s * rand(0.55, 1) };
+    if (kind === 'box') {
+      const hw = 16 * s * rand(0.55, 1), hh = 16 * s * rand(0.55, 1);
+      return { kind: 'box', hw: hw, hh: hh, corners: [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] };
+    }
+    if (kind === 'poly') {
+      const n = randInt(4, 9);
+      const rad = 18 * s * rand(0.6, 1.1);
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rand(-0.15, 0.15);
+        const rr = rad * rand(0.55, 1.25);
+        pts.push(Vector.create(Math.cos(a) * rr, Math.sin(a) * rr));
+      }
+      let hull = Vertices.hull(pts);
+      hull = hull.map(function (v) { return { x: v.x, y: v.y }; });
+      const cx = hull.reduce(function (s2, v) { return s2 + v.x; }, 0) / hull.length;
+      const cy = hull.reduce(function (s2, v) { return s2 + v.y; }, 0) / hull.length;
+      hull = hull.map(function (v) { return { x: v.x - cx, y: v.y - cy }; });
+      return { kind: 'poly', corners: hull, size: rad };
+    }
+    return { kind: 'bullet' };
+  }
+
+  function buildBody(kind, geom, x, y, vx, vy) {
+    if (bodyCount() >= MAX_BODIES) { flashWarning('Max bodies reached — clear some!'); return null; }
+    const opts = { restitution: bounceVal, friction: frictionVal, density: densityVal, frictionAir: 0.001 };
+    let body = null;
+
+    if (geom.kind === 'circle') body = Bodies.circle(x, y, geom.r, opts);
+    else if (geom.kind === 'box') body = Bodies.rectangle(x, y, geom.hw * 2, geom.hh * 2, opts);
+    else if (geom.kind === 'poly') {
+      try {
+        body = Bodies.fromVertices(x, y, geom.corners.map(function (c) { return { x: c.x, y: c.y }; }), opts, true);
+      } catch (err) {
+        body = Bodies.circle(x, y, 14 * sizeVal, opts);
+      }
+      if (!body) body = Bodies.circle(x, y, 14 * sizeVal, opts);
+    } else { // bullet
+      body = Bodies.circle(x, y, Math.max(5, 7 * sizeVal),
+        { restitution: 0.35, friction: 0.05, density: densityVal * 2.5, frictionAir: 0.0006 });
+    }
+
+    let size = body.bounds ? Math.abs(body.bounds.max.x - body.bounds.min.x) / 2 : 10;
+    const color = geom.kind === 'bullet'
+      ? { h: 45, s: 92, l: 66 }
+      : { h: rand(0, 360), s: 78, l: 58 };
+
+    body.userData = {
+      kind: kind,
+      geom: geom,
+      radius: geom.kind === 'circle' ? geom.r : null,
+      corners: geom.corners || null,
+      size: size,
+      color: color,
+      prev: { x: x, y: y }
+    };
+
+    if (vx || vy) { Body.setVelocity(body, { x: vx, y: vy }); }
+    Composite.add(engine.world, body);
+    return body;
+  }
+
+  function spawnAt(kind, x, y, vx, vy, geom) {
+    const g = geom || randomGeom(kind);
+    return buildBody(kind, g, x, y, vx, vy);
+  }
+
+  function spawnRandomShape() {
+    if (paused || bodyCount() >= MAX_BODIES) return;
+    const r = Math.random();
+    const kind = r < 0.30 ? 'circle' : r < 0.60 ? 'box' : r < 0.85 ? 'poly' : 'bullet';
+    const x = rand(W * 0.12, W * 0.88);
+    spawnAt(kind, x, -30, rand(-4, 4), 0);
+    spawnCount++;
+  }
+
+  // ------------------------------------------------------------------
+  //  Actions
+  // ------------------------------------------------------------------
+  function explode() {
+    const cx = W / 2, cy = H / 2;
+    let any = false;
+    Composite.allBodies(engine.world).forEach(function (b) {
+      if (b.isStatic) return;
+      any = true;
+      const dx = b.position.x - cx, dy = b.position.y - cy;
+      const d = Math.max(1, Math.hypot(dx, dy));
+      const sp = Math.min(13, 3 + d * 0.024);
+      Body.setVelocity(b, { x: b.velocity.x + dx / d * sp, y: b.velocity.y + dy / d * sp + 1 });
+      Body.setAngularVelocity(b, b.angularVelocity + rand(-0.4, 0.4));
+    });
+    if (any) {
+      burst(cx, cy, 130, { h: 45, s: 95, l: 62 }, 6);
+      addRing(cx, cy, { h: 45, s: 95, l: 70 }, 90);
+      boom();
+      flash = 1;
+    }
+  }
+
+  function clearAll() {
+    const rem = liveBodies();
+    if (rem.length) Composite.remove(engine.world, rem);
+    particles = []; rings = []; spawning = null; mhist = [];
+  }
+
+  function flipGravity() { gSign *= -1; engine.gravity.y = gSign * gravityVal; }
+
+  function applyGravity() { engine.gravity.y = gSign * gravityVal; }
+
+  function applyLivePhysics() {
+    if (densityVal <= 0) return;
+    Composite.allBodies(engine.world).forEach(function (b) {
+      if (b.isStatic) return;
+      b.restitution = bounceVal;
+      b.friction = frictionVal;
+      try { Body.setDensity(b, densityVal); } catch (e) { /* density collision */ }
+    });
+  }
+
+  function togglePause() {
+    paused = !paused;
+    document.getElementById('btn-pause').classList.toggle('active', paused);
+    document.getElementById('btn-pause').textContent = paused ? '▶ Play' : '⏸ Pause';
+    document.getElementById('btn-step').disabled = !paused;
+    document.getElementById('stat-state').textContent = paused ? 'paused' : 'running';
+  }
+
+  function stepOnce() { Engine.update(engine, 16.67 * timeScaleVal); }
+
+  function toggleWalls() {
+    wallsEnabled = !wallsEnabled;
+    const btn = document.getElementById('btn-walls');
+    btn.classList.toggle('on', wallsEnabled);
+    if (wallsEnabled) Composite.add(engine.world, walls);
+    else Composite.remove(engine.world, walls);
+  }
+
+  let warnTimer = null;
+  function flashWarning(msg) {
+    const el = document.getElementById('warn');
+    el.textContent = msg;
+    if (warnTimer) clearTimeout(warnTimer);
+    warnTimer = setTimeout(function () { el.textContent = ''; }, 1800);
+  }
+
+  // ------------------------------------------------------------------
+  //  Audio (WebAudio, procedural)
+  // ------------------------------------------------------------------
+  let audio = null;
+  function initAudio() {
+    if (audio) { if (audio.ctx.state === 'suspended') audio.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    const master = ctx.createGain();
+    master.connect(ctx.destination);
+    const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    audio = { ctx: ctx, master: master, noise: noiseBuf, lastHit: 0 };
+    setGain();
+  }
+  function setGain() { if (audio) audio.master.gain.value = muted ? 0 : volume; }
+
+  function hitSound(speed, size) {
+    if (!audio || muted || speed < 3.5) return;
+    const t = audio.ctx.currentTime;
+    if (t - audio.lastHit < 0.035) return;
+    audio.lastHit = t;
+    const g = Math.min(0.32, speed * 0.011 * volume);
+    const f0 = Math.max(55, 250 - (size || 30) * 6 - speed * 2);
+    const o = audio.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(32, f0 * 0.4), t + 0.09);
+    const og = audio.ctx.createGain();
+    og.gain.setValueAtTime(g, t);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(og); og.connect(audio.master);
+    o.start(t); o.stop(t + 0.14);
+
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.noise;
+    src.start(t, Math.random() * 0.4, 0.06);
+    const bp = audio.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = Math.min(2400, 500 + speed * 55);
+    bp.Q.value = 0.9;
+    const ng = audio.ctx.createGain();
+    ng.gain.setValueAtTime(g * 0.55, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    src.connect(bp); bp.connect(ng); ng.connect(audio.master);
+    src.stop(t + 0.065);
+  }
+
+  function pluck(freq) {
+    if (!audio || muted) return;
+    const t = audio.ctx.currentTime;
+    const o = audio.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(freq || 320, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(80, (freq || 320) * 0.5), t + 0.09);
+    const g = audio.ctx.createGain();
+    g.gain.setValueAtTime(0.1 * volume, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    o.connect(g); g.connect(audio.master);
+    o.start(t); o.stop(t + 0.12);
+  }
+
+  function plop(hue) {
+    if (!audio || muted) return;
+    const t = audio.ctx.currentTime;
+    const o = audio.ctx.createOscillator();
+    o.type = 'sine';
+    const f = hue ? 240 + (hue % 90) : 300;
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * 0.6, t + 0.07);
+    const g = audio.ctx.createGain();
+    g.gain.setValueAtTime(0.08 * volume, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    o.connect(g); g.connect(audio.master);
+    o.start(t); o.stop(t + 0.1);
+  }
+
+  function boom() {
+    if (!audio || muted) return;
+    const t = audio.ctx.currentTime;
+    const o = audio.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(95, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+    const g = audio.ctx.createGain();
+    g.gain.setValueAtTime(0.5 * volume, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    o.connect(g); g.connect(audio.master);
+    o.start(t); o.stop(t + 0.6);
+    const src = audio.ctx.createBufferSource();
+    src.buffer = audio.noise;
+    src.start(t, Math.random() * 0.2, 0.5);
+    const lp = audio.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 0.45);
+    const ng = audio.ctx.createGain();
+    ng.gain.setValueAtTime(0.45 * volume, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    src.connect(lp); lp.connect(ng); ng.connect(audio.master);
+    src.stop(t + 0.55);
+  }
+
+  // ------------------------------------------------------------------
+  //  Collision FX (sound + impact rings)
+  // ------------------------------------------------------------------
+  Events.on(engine, 'collisionStart', function (ev) {
+    let budget = 6;
+    for (let i = 0; i < ev.pairs.length && budget > 0; i++) {
+      const p = ev.pairs[i];
+      const a = p.bodyA, b = p.bodyB;
+      if (a.isStatic && b.isStatic) continue;
+      const normal = p.collision.normal;
+      const rel = Vector.sub(b.velocity, a.velocity);
+      const speed = Math.abs(Vector.dot(rel, normal));
+      if (speed < 4) continue;
+      const ua = a.userData || {}, ub = b.userData || {};
+      const size = Math.min(ua.size || 40, ub.size || 40);
+      if (speed > 9) {
+        const pt = p.collision.supports && p.collision.supports[0];
+        if (pt) addRing(pt.x, pt.y, { h: 200, s: 60, l: 70 }, Math.min(52, 18 + speed * 1.4));
+      }
+      hitSound(speed, size);
+      budget--;
+    }
+  });
+
+  function addRing(x, y, color, maxR) { rings.push({ x: x, y: y, r: 4, max: maxR || 34, life: 1, color: color }); }
+  function burst(x, y, count, color, spread) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = rand(0.2, spread || 4);
+      particles.push({
+        x: x, y: y,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 1, decay: rand(0.8, 3) / 1000,
+        size: rand(1.5, 4), color: color
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  Pointer interaction (spawn tools)
+  // ------------------------------------------------------------------
+  function toLocal(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    if (spawning || activePointerId !== null) return;
+    if (tool === 'grab') { initAudio(); return; }
+    initAudio();
+    e.preventDefault();
+    activePointerId = e.pointerId;
+    canvas.setPointerCapture(e.pointerId);
+    const p = toLocal(e);
+    const g = randomGeom(tool);
+    spawning = { kind: tool, geom: g, sx: p.x, sy: p.y, cx: p.x, cy: p.y };
+  });
+
+  canvas.addEventListener('pointermove', function (e) {
+    if (!spawning || e.pointerId !== activePointerId) return;
+    const p = toLocal(e);
+    spawning.cx = p.x; spawning.cy = p.y;
+  });
+
+  function finishSpawn(e) {
+    if (!spawning || e.pointerId !== activePointerId) return;
+    const g = spawning;
+    spawning = null;
+    activePointerId = null;
+    const dist = Math.hypot(g.cx - g.sx, g.cy - g.sy);
+    let vx = 0, vy = 0;
+    if (dist > 14) {
+      const speed = Math.min(dist * LAUNCH[g.kind], CAP[g.kind]);
+      const ang = Math.atan2(g.sy - g.cy, g.sx - g.cx);
+      vx = Math.cos(ang) * speed;
+      vy = Math.sin(ang) * speed;
+    }
+    const body = spawnAt(g.kind, g.sx, g.sy, vx, vy, g.geom);
+    if (!body) return;
+    const u = body.userData;
+    if (g.kind === 'bullet' && (vx || vy)) {
+      burst(body.position.x, body.position.y, 16, { h: 45, s: 95, l: 66 }, 3);
+      addRing(body.position.x, body.position.y, { h: 45, s: 95, l: 70 }, 24);
+    }
+    plop(u.color.h);
+  }
+
+  canvas.addEventListener('pointerup', finishSpawn);
+  canvas.addEventListener('pointercancel', finishSpawn);
+
+  // ------------------------------------------------------------------
+  //  Tool switching
+  // ------------------------------------------------------------------
+  function setTool(t) {
+    tool = t;
+    spawning = null; activePointerId = null;
+    document.querySelectorAll('.tool-btn').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.tool === t);
+    });
+    setMouseC(t === 'grab');
+    canvas.style.cursor = t === 'bullet' ? 'crosshair' : 'default';
+  }
+
+  document.querySelectorAll('.tool-btn').forEach(function (b) {
+    b.addEventListener('click', function () { setTool(b.dataset.tool); });
+  });
+
+  // ------------------------------------------------------------------
+  //  UI wiring
+  // ------------------------------------------------------------------
+  function bindSlider(id, valId, fmt, onChange) {
+    const el = document.getElementById(id);
+    const v = document.getElementById(valId);
+    el.addEventListener('input', function () {
+      onChange(parseFloat(el.value));
+      v.textContent = fmt(parseFloat(el.value));
+    });
+    v.textContent = fmt(parseFloat(el.value));
+  }
+
+  bindSlider('s-gravity', 'v-gravity', function (x) { return (x / 100).toFixed(2) + '×'; },
+    function (x) { gravityVal = x / 100; applyGravity(); });
+  bindSlider('s-bounce', 'v-bounce', function (x) { return (x / 100).toFixed(2); },
+    function (x) { bounceVal = x / 100; applyLivePhysics(); });
+  bindSlider('s-friction', 'v-friction', function (x) { return (x / 100).toFixed(2); },
+    function (x) { frictionVal = x / 100; applyLivePhysics(); });
+  bindSlider('s-density', 'v-density', function (x) { return (x / 100).toFixed(2) + '×'; },
+    function (x) { densityVal = Math.max(0.0001, 0.001 * x / 100); applyLivePhysics(); });
+  bindSlider('s-speed', 'v-speed', function (x) { return (x / 100).toFixed(2) + '×'; },
+    function (x) { timeScaleVal = x / 100; });
+  bindSlider('s-size', 'v-size', function (x) { return (x / 100).toFixed(2) + '×'; },
+    function (x) { sizeVal = x / 100; });
+  bindSlider('s-volume', 'v-volume', function (x) { return x + '%'; },
+    function (x) { volume = x / 100; setGain(); });
+
+  document.getElementById('btn-explode').addEventListener('click', function () { initAudio(); explode(); });
+  document.getElementById('btn-clear').addEventListener('click', clearAll);
+  document.getElementById('btn-walls').addEventListener('click', toggleWalls);
+  document.getElementById('btn-gravity').addEventListener('click', function () { initAudio(); flipGravity(); pluck(220); });
+  document.getElementById('btn-sound').addEventListener('click', function () {
+    muted = !muted;
+    const btn = document.getElementById('btn-sound');
+    btn.textContent = muted ? '🔇' : '🔊';
+    btn.classList.toggle('on', !muted);
+    setGain();
+  });
+  document.getElementById('btn-pause').addEventListener('click', togglePause);
+  document.getElementById('btn-step').addEventListener('click', stepOnce);
+  document.getElementById('auto-chk').addEventListener('change', function (e) {
+    autoSpawn = e.target.checked;
+    autoTimer = 900;
+  });
+
+  window.addEventListener('keydown', function (e) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+    const k = e.key.toLowerCase();
+    switch (k) {
+      case ' ': e.preventDefault(); togglePause(); break;
+      case 'c': clearAll(); break;
+      case 'e': initAudio(); explode(); break;
+      case 'g': initAudio(); flipGravity(); pluck(220); break;
+      case 'm':
+        document.getElementById('btn-sound').click(); break;
+      case 'b': toggleWalls(); break;
+      case '1': setTool('grab'); break;
+      case '2': setTool('circle'); break;
+      case '3': setTool('box'); break;
+      case '4': setTool('poly'); break;
+      case '5': setTool('bullet'); break;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  //  Rendering helpers
+  // ------------------------------------------------------------------
+  function cssColor(c, alpha) {
+    return alpha == null
+      ? 'hsl(' + c.h + ',' + c.s + '%,' + c.l + '%)'
+      : 'hsla(' + c.h + ',' + c.s + '%,' + c.l + '%,' + alpha + ')';
+  }
+
+  function shade(c, dl) {
+    return { h: c.h, s: c.s, l: Math.max(6, Math.min(92, c.l + dl)) };
+  }
+
+  function traceShape(ctx2, geom) {
+    if (geom.kind === 'circle') ctx2.arc(0, 0, geom.r, 0, Math.PI * 2);
+    else if (geom.corners) {
+      const cs = geom.corners;
+      ctx2.moveTo(cs[0].x, cs[0].y);
+      for (let i = 1; i < cs.length; i++) ctx2.lineTo(cs[i].x, cs[i].y);
+      ctx2.closePath();
+    } else { ctx2.arc(0, 0, 10, 0, Math.PI * 2); }
+  }
+
+  function drawBody(b) {
+    const u = b.userData || {};
+    const color = u.color || { h: 0, s: 0, l: 70 };
+    ctx.save();
+    ctx.translate(b.position.x, b.position.y);
+    ctx.rotate(b.angle);
+
+    if (u.radius) {
+      ctx.beginPath();
+      ctx.arc(0, 0, u.radius, 0, Math.PI * 2);
+    } else if (u.corners && u.corners.length) {
+      ctx.beginPath();
+      traceShape(ctx, { kind: 'poly', corners: u.corners });
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(4, u.size || 10), 0, Math.PI * 2);
+    }
+
+    ctx.fillStyle = cssColor(color);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = cssColor(shade(color, -14));
+    ctx.stroke();
+
+    // glint
+    if (u.radius) {
+      ctx.beginPath();
+      ctx.arc(-u.radius * 0.35, -u.radius * 0.35, u.radius * 0.16, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawTrails() {
+    const bodies = liveBodies();
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      const u = b.userData;
+      if (!u || !u.prev) continue;
+      const sp = Math.hypot(b.velocity.x, b.velocity.y);
+      if (sp > 8) {
+        ctx.strokeStyle = cssColor(u.color, Math.min(0.45, sp / 95));
+        ctx.lineWidth = Math.max(2, (u.size || 10) * 0.45);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(u.prev.x, u.prev.y);
+        ctx.lineTo(b.position.x, b.position.y);
+        ctx.stroke();
+      }
+      u.prev = { x: b.position.x, y: b.position.y };
+    }
+  }
+
+  function drawGhost(g) {
+    const dist = Math.hypot(g.cx - g.sx, g.cy - g.sy);
+    if (dist > 14) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(g.sx, g.sy);
+      ctx.lineTo(g.cx, g.cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.save();
+    ctx.translate(g.sx, g.sy);
+    ctx.scale(g.kind === 'bullet' && dist > 14 ? 1 : 1, 1);
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    traceShape(ctx, g.geom);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  function drawParticles(dt) {
+    if (!particles.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt * timeScaleVal;
+      p.y += p.vy * dt * timeScaleVal;
+      p.life -= p.decay * dt * timeScaleVal;
+      if (p.life <= 0) { particles.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = cssColor(p.color);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawRings() {
+    if (!rings.length) return;
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const r = rings[i];
+      r.life -= 0.035;
+      if (r.life <= 0) { rings.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.max(0, r.life) * 0.7;
+      ctx.strokeStyle = cssColor(r.color);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r + (1 - r.life) * r.max, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ------------------------------------------------------------------
+  //  Main loop
+  // ------------------------------------------------------------------
+  let last = performance.now();
+  let fpsAcc = 0, fpsFrames = 0, fpsShown = 0;
+  let statTimer = 0;
+
+  function render(effDt) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#0a0e15';
+    ctx.fillRect(0, 0, W, H);
+    if (gridPattern) { ctx.fillStyle = gridPattern; ctx.fillRect(0, 0, W, H); }
+
+    if (wallsEnabled) {
+      ctx.strokeStyle = 'rgba(94,234,212,0.22)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(6, 6, W - 12, H - 12);
+    }
+
+    drawTrails();
+    const bodies = liveBodies();
+    for (let i = 0; i < bodies.length; i++) drawBody(bodies[i]);
+    if (spawning) drawGhost(spawning);
+
+    if (particles.length) drawParticles(effDt);
+    drawRings();
+
+    if (flash > 0) {
+      ctx.globalAlpha = Math.min(1, flash) * 0.4 / Math.max(1, flash + 0.2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+      flash = Math.max(0, flash - 0.06);
+    }
+  }
+
+  function loop(now) {
+    let dt = now - last;
+    last = now;
+    if (dt > 50) dt = 50;
+    if (dt < 1) dt = 1;
+
+    if (!paused) {
+      Engine.update(engine, dt * timeScaleVal);
+      // soft velocity cap so walls-off mode never explodes numerically
+      const bs = liveBodies();
+      for (let i = 0; i < bs.length; i++) {
+        const b = bs[i];
+        const sp = Math.hypot(b.velocity.x, b.velocity.y);
+        if (sp > 42) {
+          const f = 42 / sp;
+          Body.setVelocity(b, { x: b.velocity.x * f, y: b.velocity.y * f });
+        }
+      }
+
+      if (autoSpawn) {
+        autoTimer -= dt * timeScaleVal;
+        if (autoTimer <= 0) {
+          autoTimer = rand(700, 1700);
+          spawnRandomShape();
+        }
+      }
+    }
+
+    render(paused ? 0 : dt * timeScaleVal);
+
+    // stats
+    fpsAcc += dt; fpsFrames++;
+    statTimer += dt;
+    if (statTimer >= 500) {
+      fpsShown = Math.round(1000 / (fpsAcc / Math.max(1, fpsFrames)));
+      fpsAcc = 0; fpsFrames = 0; statTimer = 0;
+      document.getElementById('stat-fps').textContent = fpsShown;
+      document.getElementById('stat-bodies').textContent = bodyCount();
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  // ------------------------------------------------------------------
+  //  Boot
+  // ------------------------------------------------------------------
+  resize();
+  setTool('grab');
+
+  function introScene() {
+    for (let i = 0; i < 12; i++) {
+      const kind = i % 3 === 0 ? 'box' : i % 3 === 1 ? 'circle' : 'poly';
+      spawnAt(kind, W / 2 + rand(-W * 0.34, W * 0.34), -50 - i * 95, rand(-2.5, 2.5), 0);
+    }
+  }
+  introScene();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

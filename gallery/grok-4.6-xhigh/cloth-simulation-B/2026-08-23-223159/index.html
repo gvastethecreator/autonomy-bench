@@ -1,0 +1,1640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Drape — Cloth study</title>
+  <style>
+    :root {
+      --bg: #100e0c;
+      --ink: #f3eadc;
+      --muted: #9a8f80;
+      --brass: #d4b483;
+      --brass-dim: rgba(212, 180, 131, 0.18);
+      --panel: rgba(18, 15, 13, 0.72);
+      --stroke: rgba(243, 234, 220, 0.12);
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+      --sans: "Segoe UI", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+      --safe-l: env(safe-area-inset-left, 0px);
+      --safe-r: env(safe-area-inset-right, 0px);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      overflow: hidden;
+    }
+
+    body {
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    canvas#view {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    canvas#view.is-grabbing { cursor: grabbing; }
+    canvas#view.tool-pin { cursor: cell; }
+    canvas#view.tool-cut { cursor: crosshair; }
+    canvas#view.tool-form { cursor: move; }
+
+    .vignette,
+    .grain {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .vignette {
+      background:
+        radial-gradient(ellipse at 50% 42%, transparent 0%, transparent 48%, rgba(8, 6, 5, 0.28) 78%, rgba(8, 6, 5, 0.62) 100%);
+    }
+
+    .grain {
+      opacity: 0.055;
+      mix-blend-mode: overlay;
+    }
+
+    .grain rect { width: 100%; height: 100%; }
+
+    header.brand,
+    .hud,
+    .hint,
+    .meter {
+      position: fixed;
+      z-index: 4;
+      pointer-events: none;
+    }
+
+    header.brand {
+      top: calc(22px + var(--safe-t));
+      left: calc(26px + var(--safe-l));
+      max-width: min(420px, calc(100vw - 220px));
+    }
+
+    header.brand h1 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.42em;
+      text-transform: uppercase;
+      color: var(--brass);
+    }
+
+    header.brand p {
+      margin: 8px 0 0;
+      font-size: 13.5px;
+      line-height: 1.45;
+      color: var(--muted);
+      max-width: 34ch;
+    }
+
+    .hud {
+      pointer-events: auto;
+    }
+
+    .tools {
+      top: calc(20px + var(--safe-t));
+      right: calc(20px + var(--safe-r));
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .panel {
+      left: calc(20px + var(--safe-l));
+      bottom: calc(20px + var(--safe-b));
+      width: min(320px, calc(100vw - 40px));
+      padding: 16px 16px 14px;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .actions {
+      right: calc(20px + var(--safe-r));
+      bottom: calc(20px + var(--safe-b));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .hint {
+      left: 50%;
+      bottom: calc(24px + var(--safe-b));
+      transform: translateX(-50%);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      text-align: center;
+      white-space: nowrap;
+      background: rgba(16, 14, 12, 0.45);
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      padding: 8px 14px;
+      backdrop-filter: blur(10px);
+    }
+
+    .meter {
+      right: calc(24px + var(--safe-r));
+      top: calc(72px + var(--safe-t));
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: rgba(154, 143, 128, 0.9);
+      text-align: right;
+    }
+
+    button, select {
+      font-family: inherit;
+      color: var(--ink);
+      background: rgba(243, 234, 220, 0.06);
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+    }
+
+    button {
+      appearance: none;
+      cursor: pointer;
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      color: var(--ink);
+      transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 120ms ease;
+    }
+
+    .icon-btn:hover {
+      background: rgba(212, 180, 131, 0.14);
+      border-color: rgba(212, 180, 131, 0.35);
+    }
+
+    .icon-btn:active { transform: translateY(1px); }
+
+    .icon-btn[aria-pressed="true"] {
+      background: rgba(212, 180, 131, 0.2);
+      border-color: rgba(212, 180, 131, 0.55);
+      color: var(--brass);
+    }
+
+    .icon-btn:focus-visible,
+    .swatch:focus-visible,
+    .chip:focus-visible,
+    input[type="range"]:focus-visible,
+    select:focus-visible,
+    .text-btn:focus-visible {
+      outline: 2px solid var(--brass);
+      outline-offset: 2px;
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .text-btn {
+      height: 40px;
+      padding: 0 14px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(243, 234, 220, 0.06);
+      transition: background 160ms ease, border-color 160ms ease;
+    }
+
+    .text-btn:hover {
+      background: rgba(212, 180, 131, 0.14);
+      border-color: rgba(212, 180, 131, 0.35);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .row label {
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .row output {
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      color: var(--brass);
+      min-width: 3.2em;
+      text-align: right;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      margin: 0 0 12px;
+      background: rgba(243, 234, 220, 0.14);
+      border-radius: 99px;
+      outline: none;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--brass);
+      border: 0;
+      box-shadow: 0 0 0 3px rgba(16, 14, 12, 0.85);
+      cursor: pointer;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--brass);
+      border: 0;
+      cursor: pointer;
+    }
+
+    .chips, .swatches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 12px;
+    }
+
+    .chip {
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: rgba(243, 234, 220, 0.04);
+      border: 1px solid var(--stroke);
+      cursor: pointer;
+    }
+
+    .chip[aria-pressed="true"] {
+      color: var(--ink);
+      border-color: rgba(212, 180, 131, 0.5);
+      background: rgba(212, 180, 131, 0.16);
+    }
+
+    .swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid rgba(16, 14, 12, 0.7);
+      box-shadow: 0 0 0 1px rgba(243, 234, 220, 0.25);
+      cursor: pointer;
+      padding: 0;
+      background: var(--swatch);
+    }
+
+    .swatch[aria-pressed="true"] {
+      box-shadow: 0 0 0 2px var(--brass);
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    select {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+
+    dialog {
+      width: min(440px, calc(100vw - 32px));
+      padding: 28px 28px 22px;
+      border: 1px solid rgba(212, 180, 131, 0.28);
+      border-radius: 20px;
+      background: #171410;
+      color: var(--ink);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+    }
+
+    dialog::backdrop { background: rgba(8, 6, 5, 0.72); }
+
+    dialog h2 {
+      margin: 0 0 8px;
+      font-family: var(--serif);
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-size: 15px;
+      color: var(--brass);
+    }
+
+    dialog p, dialog li {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    dialog ul {
+      margin: 12px 0 18px;
+      padding-left: 1.1em;
+    }
+
+    dialog kbd {
+      font-family: var(--sans);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      color: var(--ink);
+      background: rgba(243, 234, 220, 0.08);
+      border: 1px solid var(--stroke);
+      border-radius: 6px;
+      padding: 1px 6px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    @media (max-width: 820px) {
+      header.brand {
+        max-width: calc(100vw - 160px);
+      }
+      header.brand p { display: none; }
+      .hint { display: none; }
+      .panel {
+        width: auto;
+        right: calc(20px + var(--safe-r));
+        left: calc(20px + var(--safe-l));
+        bottom: calc(72px + var(--safe-b));
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 16px;
+      }
+      .panel h2, .panel .span2 { grid-column: 1 / -1; }
+      .actions {
+        flex-direction: row;
+        left: calc(20px + var(--safe-l));
+        right: calc(20px + var(--safe-r));
+        justify-content: flex-end;
+      }
+      .meter { display: none; }
+    }
+
+    @media (max-width: 560px) {
+      .panel {
+        grid-template-columns: 1fr;
+        max-height: 34vh;
+        overflow: auto;
+      }
+      .tools { gap: 6px; }
+      .icon-btn, .text-btn { height: 36px; }
+      .icon-btn { width: 36px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .icon-btn, .text-btn { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="view" width="1200" height="800" role="img" aria-label="Interactive hanging cloth in a dim studio. Drag to pull the fabric."></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <svg class="grain" aria-hidden="true" preserveAspectRatio="none">
+    <filter id="grainFilter">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch" />
+    </filter>
+    <rect filter="url(#grainFilter)" />
+  </svg>
+
+  <header class="brand">
+    <h1>Drape</h1>
+    <p id="tagline">A hanging cloth in still air. Pull a fold, pin a corner, or let the wind find it.</p>
+  </header>
+
+  <div class="hud tools" role="toolbar" aria-label="Pointer tools">
+    <button class="icon-btn" id="toolGrab" type="button" aria-pressed="true" aria-label="Grab tool" title="Grab">
+      <svg viewBox="0 0 24 24"><path d="M8 11V7.5a1.5 1.5 0 1 1 3 0V11" /><path d="M11 10.5V6.5a1.5 1.5 0 1 1 3 0V11" /><path d="M14 11V8.5a1.5 1.5 0 1 1 3 0V14c0 3.2-1.8 6-5 6.5-2.4.4-4.5-1-5.5-3L5 12.5A1.5 1.5 0 0 1 7.6 11L8 12" /></svg>
+    </button>
+    <button class="icon-btn" id="toolPin" type="button" aria-pressed="false" aria-label="Pin tool" title="Pin">
+      <svg viewBox="0 0 24 24"><path d="M15 4 9 10l5 5 6-6" /><path d="m9 10-5 9 9-5" /></svg>
+    </button>
+    <button class="icon-btn" id="toolCut" type="button" aria-pressed="false" aria-label="Cut tool" title="Cut">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.2" /><circle cx="6" cy="17" r="2.2" /><path d="M8 8.5 20 19M8 15.5 20 5" /></svg>
+    </button>
+    <button class="icon-btn" id="toolForm" type="button" aria-pressed="false" aria-label="Move the form" title="Form">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="11" r="6" /><path d="M12 17v4M9 21h6" /></svg>
+    </button>
+  </div>
+
+  <div class="hud panel">
+    <h2>Studio</h2>
+    <div class="chips span2" id="presets" role="group" aria-label="Hanging presets"></div>
+
+    <div class="row span2"><label for="wind">Wind</label><output id="windOut">0.40</output></div>
+    <input id="wind" type="range" min="0" max="1.6" step="0.01" value="0.42" aria-label="Wind strength" />
+
+    <div class="row span2"><label for="gravity">Gravity</label><output id="gravityOut">1.00</output></div>
+    <input id="gravity" type="range" min="0" max="2.2" step="0.01" value="1" aria-label="Gravity" />
+
+    <div class="row span2"><label for="stiff">Hand</label><output id="stiffOut">0.82</output></div>
+    <input id="stiff" type="range" min="0.35" max="1" step="0.01" value="0.82" aria-label="Cloth stiffness" />
+
+    <h2 class="span2">Cloth</h2>
+    <div class="swatches span2" id="swatches" role="group" aria-label="Fabric colors"></div>
+    <div class="split span2">
+      <button class="text-btn" id="meshBtn" type="button" aria-pressed="false">Mesh</button>
+      <button class="text-btn" id="formBtn" type="button" aria-pressed="false">Form</button>
+    </div>
+  </div>
+
+  <div class="hud actions">
+    <button class="text-btn" id="gustBtn" type="button">Gust</button>
+    <button class="text-btn" id="dropBtn" type="button">Drop</button>
+    <button class="text-btn" id="pauseBtn" type="button" aria-pressed="false">Pause</button>
+    <button class="text-btn" id="resetBtn" type="button">Reset</button>
+    <button class="icon-btn" id="helpBtn" type="button" aria-label="Open help">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M9.6 9.4a2.4 2.4 0 1 1 3.3 2.2c-.8.4-1.4 1-1.4 1.9v.3" /><path d="M12 17.2h.01" /></svg>
+    </button>
+  </div>
+
+  <p class="hint">Drag the cloth · Right-drag to look · Shift-click pins a point · Scroll to move closer</p>
+  <p class="meter" id="meter" aria-hidden="true">—</p>
+  <div class="sr-only" id="live" aria-live="polite"></div>
+
+  <dialog id="help">
+    <h2>How it hangs</h2>
+    <p>The sheet is a grid of point masses stitched with distance constraints. Pull it, pin it, or cut a seam and the rest of the cloth keeps its weight.</p>
+    <ul>
+      <li><kbd>Drag</kbd> to gather a fold. <kbd>Right-drag</kbd> orbits the room.</li>
+      <li><kbd>Shift-click</kbd> or the pin tool tacks a point in place.</li>
+      <li>The cut tool slices stitches you drag across.</li>
+      <li><kbd>Space</kbd> pauses · <kbd>G</kbd> gust · <kbd>R</kbd> reset · <kbd>1–5</kbd> presets</li>
+    </ul>
+    <button class="text-btn" id="closeHelp" type="button">Close</button>
+  </dialog>
+
+  <script>
+  (() => {
+    const canvas = document.getElementById("view");
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    const meterEl = document.getElementById("meter");
+    const liveEl = document.getElementById("live");
+    const tagline = document.getElementById("tagline");
+    const help = document.getElementById("help");
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const coarse = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 700;
+
+    const KEY = norm({ x: -0.42, y: 0.78, z: 0.46 });
+    const FILL = norm({ x: 0.62, y: 0.18, z: 0.28 });
+    const RIM = norm({ x: 0.15, y: 0.22, z: -0.96 });
+
+    const FABRICS = [
+      { id: "ivory", name: "Ivory silk", front: [214, 198, 176], back: [168, 138, 122], spec: 0.62, rough: 28, kind: "silk", swatch: "#d6c6b0" },
+      { id: "indigo", name: "Indigo", front: [42, 58, 92], back: [92, 78, 58], spec: 0.28, rough: 18, kind: "matte", swatch: "#2a3a5c" },
+      { id: "oxblood", name: "Oxblood", front: [122, 38, 44], back: [86, 48, 42], spec: 0.4, rough: 22, kind: "silk", swatch: "#7a262c" },
+      { id: "velvet", name: "Forest velvet", front: [28, 52, 40], back: [18, 28, 24], spec: 0.08, rough: 8, kind: "velvet", swatch: "#1c3428" },
+      { id: "gold", name: "Gold lamé", front: [186, 142, 72], back: [92, 58, 36], spec: 0.9, rough: 42, kind: "silk", swatch: "#ba8e48" }
+    ];
+
+    const PRESETS = [
+      { id: "banner", name: "Banner", blurb: "Pinned along the rod. The default hang." },
+      { id: "flag", name: "Flag", blurb: "A pole on the left. Wind does the rest." },
+      { id: "canopy", name: "Canopy", blurb: "Four corners tacked. The middle sags." },
+      { id: "veil", name: "Veil", blurb: "Two pins and a form. Silk looking for a shoulder." },
+      { id: "table", name: "Table", blurb: "No pins. Dropped over a round form." }
+    ];
+
+    const state = {
+      tool: "grab",
+      preset: "banner",
+      fabric: FABRICS[0],
+      wind: reduced ? 0.12 : 0.42,
+      gravity: 1,
+      stiff: 0.82,
+      paused: false,
+      showMesh: false,
+      showForm: false,
+      gust: 0,
+      t: 0,
+      w: 0,
+      h: 0,
+      dpr: 1,
+      yaw: 0.42,
+      pitch: 0.16,
+      dist: 3.55,
+      target: { x: 0, y: 0.12, z: 0 },
+      userOrbit: false,
+      fps: 60
+    };
+
+    const cam = {
+      right: { x: 1, y: 0, z: 0 },
+      up: { x: 0, y: 1, z: 0 },
+      fwd: { x: 0, y: 0, z: 1 }
+    };
+
+    const sphere = { x: 0, y: -0.18, z: 0.22, r: 0.38, on: false };
+    const floorY = -1.28;
+    const particles = [];
+    const constraints = [];
+    const faces = [];
+    const motes = [];
+    let cols = 0;
+    let rows = 0;
+    let grabbed = -1;
+    let draggingSphere = false;
+    let orbiting = false;
+    let cutting = false;
+    let lastCut = null;
+    let lastPx = 0;
+    let lastPy = 0;
+    let cutLine = [];
+    let pinStore = [];
+    let acc = 0;
+    let lastTs = 0;
+    let fpsEma = 60;
+
+    function norm(v) {
+      const l = Math.hypot(v.x, v.y, v.z) || 1;
+      return { x: v.x / l, y: v.y / l, z: v.z / l };
+    }
+
+    function announce(text) {
+      liveEl.textContent = text;
+    }
+
+    function quality() {
+      if (coarse) return { cols: 18, rows: 13 };
+      if (window.innerWidth < 1100) return { cols: 26, rows: 18 };
+      return { cols: 32, rows: 22 };
+    }
+
+    function clearSim() {
+      particles.length = 0;
+      constraints.length = 0;
+      faces.length = 0;
+      grabbed = -1;
+    }
+
+    function addParticle(x, y, z, pinned) {
+      particles.push({
+        x, y, z,
+        ox: x, oy: y, oz: z,
+        px: x, py: y, pz: z,
+        w: pinned ? 0 : 1,
+        pinned: !!pinned
+      });
+      return particles.length - 1;
+    }
+
+    function addConstraint(i, j, stiff, tearMul) {
+      const a = particles[i];
+      const b = particles[j];
+      const rest = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+      constraints.push({
+        i, j, rest, stiff, tear: rest * tearMul, alive: true
+      });
+    }
+
+    function idx(x, y) { return y * cols + x; }
+
+    function buildCloth(kind) {
+      clearSim();
+      const q = quality();
+      cols = q.cols;
+      rows = q.rows;
+      const W = 2.15;
+      const H = 1.55;
+      const x0 = -W / 2;
+      const y0 = 1.05;
+      pinStore = [];
+
+      const isTable = kind === "table";
+      const isFlag = kind === "flag";
+      const isCanopy = kind === "canopy";
+      const isVeil = kind === "veil";
+
+      sphere.on = isVeil || isTable || state.showForm;
+      if (isTable) {
+        sphere.x = 0; sphere.y = -0.42; sphere.z = 0; sphere.r = 0.46;
+      } else if (isVeil) {
+        sphere.x = 0.08; sphere.y = -0.12; sphere.z = 0.28; sphere.r = 0.36;
+      } else {
+        sphere.x = 0.2; sphere.y = -0.22; sphere.z = 0.34; sphere.r = 0.34;
+      }
+
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const u = x / (cols - 1);
+          const v = y / (rows - 1);
+          let px, py, pz, pinned = false;
+          if (isTable) {
+            px = x0 + u * W;
+            pz = -0.7 + v * 1.4;
+            py = 0.95;
+            pinned = false;
+          } else if (isFlag) {
+            px = x0 + u * W;
+            py = y0 - v * H;
+            pz = 0.04 * Math.sin(u * 6.2);
+            pinned = x === 0;
+          } else if (isCanopy) {
+            px = x0 + u * W;
+            py = 0.95 - v * 0.12;
+            pz = -0.55 + v * 1.15;
+            pinned = (x === 0 || x === cols - 1) && (y === 0 || y === rows - 1);
+          } else if (isVeil) {
+            px = x0 + u * W * 0.92;
+            py = y0 - v * H;
+            pz = 0.05 * Math.sin(u * 4);
+            pinned = y === 0 && (x <= 1 || x >= cols - 2);
+          } else {
+            px = x0 + u * W;
+            py = y0 - v * H;
+            pz = 0.035 * Math.sin(u * Math.PI * 2) * (0.2 + v);
+            pinned = y === 0;
+          }
+          addParticle(px, py, pz, pinned);
+          if (pinned) pinStore.push(idx(x, y));
+        }
+      }
+
+      const tear = kind === "veil" ? 3.4 : 4.2;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const i = idx(x, y);
+          if (x + 1 < cols) addConstraint(i, idx(x + 1, y), 1, tear);
+          if (y + 1 < rows) addConstraint(i, idx(x, y + 1), 1, tear);
+          if (x + 1 < cols && y + 1 < rows) {
+            addConstraint(i, idx(x + 1, y + 1), 0.72, tear + 0.4);
+            addConstraint(idx(x + 1, y), idx(x, y + 1), 0.72, tear + 0.4);
+          }
+          if (x + 2 < cols) addConstraint(i, idx(x + 2, y), 0.28, tear + 1.2);
+          if (y + 2 < rows) addConstraint(i, idx(x, y + 2), 0.28, tear + 1.2);
+        }
+      }
+
+      for (let y = 0; y < rows - 1; y++) {
+        for (let x = 0; x < cols - 1; x++) {
+          const a = idx(x, y);
+          const b = idx(x + 1, y);
+          const c = idx(x, y + 1);
+          const d = idx(x + 1, y + 1);
+          faces.push({ a, b, c, u0: x, v0: y, diag: 0 });
+          faces.push({ a: b, b: d, c, u0: x, v0: y, diag: 1 });
+        }
+      }
+
+      if (kind === "table") {
+        for (const p of particles) {
+          p.oy = p.y + 0.002;
+        }
+      }
+
+      state.showForm = sphere.on;
+      document.getElementById("formBtn").setAttribute("aria-pressed", sphere.on ? "true" : "false");
+    }
+
+    function applyPreset(id, speak) {
+      state.preset = id;
+      const p = PRESETS.find((d) => d.id === id);
+      if (id === "flag") {
+        state.wind = Math.max(state.wind, reduced ? 0.28 : 0.72);
+        document.getElementById("wind").value = String(state.wind);
+      }
+      buildCloth(id);
+      syncSwatches();
+      syncPresets();
+      syncOutputs();
+      tagline.textContent = p.blurb;
+      if (speak) announce(p.name + ". " + p.blurb);
+    }
+
+    function integrate(dt) {
+      const g = -9.6 * state.gravity;
+      const damp = 0.985;
+      const windBase = state.wind + state.gust;
+      const t = state.t;
+      for (let n = 0; n < particles.length; n++) {
+        const p = particles[n];
+        if (p.pinned || n === grabbed) {
+          p.x = p.px; p.y = p.py; p.z = p.pz;
+          p.ox = p.x; p.oy = p.y; p.oz = p.z;
+          continue;
+        }
+        const vx = (p.x - p.ox) * damp;
+        const vy = (p.y - p.oy) * damp;
+        const vz = (p.z - p.oz) * damp;
+        p.ox = p.x; p.oy = p.y; p.oz = p.z;
+        const gustField =
+          Math.sin(p.x * 1.31 + t * 1.15) * 0.55 +
+          Math.cos(p.y * 0.9 - t * 0.8) * 0.3 +
+          Math.sin((p.x + p.z) * 0.7 + t * 0.45) * 0.2;
+        const wx = windBase * (0.55 + 0.45 * gustField);
+        const wy = windBase * 0.06 * Math.sin(t * 1.7 + p.x);
+        const wz = windBase * (0.18 + 0.22 * Math.cos(t * 0.9 + p.y * 2));
+        const dt2 = dt * dt;
+        p.x += vx + wx * dt2 * 36;
+        p.y += vy + (g + wy * 10) * dt2;
+        p.z += vz + wz * dt2 * 28;
+
+        if (p.y < floorY) {
+          p.y = floorY;
+          p.oy = p.y + vy * 0.12;
+          p.ox = p.x - vx * 0.4;
+          p.oz = p.z - vz * 0.4;
+        }
+
+        if (sphere.on) {
+          const dx = p.x - sphere.x;
+          const dy = p.y - sphere.y;
+          const dz = p.z - sphere.z;
+          const d = Math.hypot(dx, dy, dz);
+          const min = sphere.r + 0.012;
+          if (d < min && d > 1e-6) {
+            const s = min / d;
+            p.x = sphere.x + dx * s;
+            p.y = sphere.y + dy * s;
+            p.z = sphere.z + dz * s;
+            p.ox = p.x - vx * 0.55;
+            p.oy = p.y - vy * 0.55;
+            p.oz = p.z - vz * 0.55;
+          } else if (d <= 1e-6) {
+            p.y = sphere.y + min;
+            p.oy = p.y;
+          }
+        }
+      }
+    }
+
+    function satisfy() {
+      const kUser = state.stiff;
+      for (let n = 0; n < constraints.length; n++) {
+        const c = constraints[n];
+        if (!c.alive) continue;
+        const a = particles[c.i];
+        const b = particles[c.j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dz = b.z - a.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 1e-8) continue;
+        if (dist > c.tear) {
+          c.alive = false;
+          continue;
+        }
+        const wa = (a.pinned || c.i === grabbed) ? 0 : a.w;
+        const wb = (b.pinned || c.j === grabbed) ? 0 : b.w;
+        const w = wa + wb;
+        if (w === 0) continue;
+        const corr = ((dist - c.rest) / dist) * c.stiff * kUser;
+        const mx = dx * corr;
+        const my = dy * corr;
+        const mz = dz * corr;
+        const sa = wa / w;
+        const sb = wb / w;
+        a.x += mx * sa;
+        a.y += my * sa;
+        a.z += mz * sa;
+        b.x -= mx * sb;
+        b.y -= my * sb;
+        b.z -= mz * sb;
+      }
+    }
+
+    function step(dt) {
+      const sub = 2;
+      const sdt = dt / sub;
+      const iters = coarse ? 4 : 6;
+      for (let s = 0; s < sub; s++) {
+        integrate(sdt);
+        for (let i = 0; i < iters; i++) satisfy();
+      }
+      if (state.gust > 0.001) state.gust *= 0.96;
+      else state.gust = 0;
+    }
+
+    function updateCamera() {
+      const cy = Math.cos(state.yaw);
+      const sy = Math.sin(state.yaw);
+      const cp = Math.cos(state.pitch);
+      const sp = Math.sin(state.pitch);
+      cam.fwd = { x: sy * cp, y: sp, z: cy * cp };
+      cam.right = norm({ x: cy, y: 0, z: -sy });
+      cam.up = norm({
+        x: cam.right.y * cam.fwd.z - cam.right.z * cam.fwd.y,
+        y: cam.right.z * cam.fwd.x - cam.right.x * cam.fwd.z,
+        z: cam.right.x * cam.fwd.y - cam.right.y * cam.fwd.x
+      });
+    }
+
+    function project(p) {
+      const tx = p.x - state.target.x;
+      const ty = p.y - state.target.y;
+      const tz = p.z - state.target.z;
+      const rx = tx * cam.right.x + ty * cam.right.y + tz * cam.right.z;
+      const ry = tx * cam.up.x + ty * cam.up.y + tz * cam.up.z;
+      const rz = tx * cam.fwd.x + ty * cam.fwd.y + tz * cam.fwd.z + state.dist;
+      const f = (Math.min(state.w, state.h) * 0.92) / Math.max(0.12, rz);
+      return {
+        x: state.w * 0.5 + rx * f,
+        y: state.h * 0.42 - ry * f,
+        z: rz,
+        s: f
+      };
+    }
+
+    function screenRay(sx, sy) {
+      const nx = (sx - state.w * 0.5) / (Math.min(state.w, state.h) * 0.92);
+      const ny = (state.h * 0.42 - sy) / (Math.min(state.w, state.h) * 0.92);
+      return {
+        x: cam.right.x * nx + cam.up.x * ny + cam.fwd.x,
+        y: cam.right.y * nx + cam.up.y * ny + cam.fwd.y,
+        z: cam.right.z * nx + cam.up.z * ny + cam.fwd.z
+      };
+    }
+
+    const vnorm = [];
+
+    function ensureNormals() {
+      if (vnorm.length !== particles.length * 3) {
+        vnorm.length = 0;
+        vnorm.push(...new Array(particles.length * 3).fill(0));
+      } else {
+        vnorm.fill(0);
+      }
+    }
+
+    function accumulateNormals() {
+      ensureNormals();
+      for (let i = 0; i < faces.length; i++) {
+        const f = faces[i];
+        const a = particles[f.a];
+        const b = particles[f.b];
+        const c = particles[f.c];
+        const e1x = b.x - a.x, e1y = b.y - a.y, e1z = b.z - a.z;
+        const e2x = c.x - a.x, e2y = c.y - a.y, e2z = c.z - a.z;
+        let nx = e1y * e2z - e1z * e2y;
+        let ny = e1z * e2x - e1x * e2z;
+        let nz = e1x * e2y - e1y * e2x;
+        vnorm[f.a * 3] += nx; vnorm[f.a * 3 + 1] += ny; vnorm[f.a * 3 + 2] += nz;
+        vnorm[f.b * 3] += nx; vnorm[f.b * 3 + 1] += ny; vnorm[f.b * 3 + 2] += nz;
+        vnorm[f.c * 3] += nx; vnorm[f.c * 3 + 1] += ny; vnorm[f.c * 3 + 2] += nz;
+      }
+      for (let i = 0; i < particles.length; i++) {
+        const l = Math.hypot(vnorm[i * 3], vnorm[i * 3 + 1], vnorm[i * 3 + 2]) || 1;
+        vnorm[i * 3] /= l;
+        vnorm[i * 3 + 1] /= l;
+        vnorm[i * 3 + 2] /= l;
+      }
+    }
+
+    function shade(nx, ny, nz, viewX, viewY, viewZ, back) {
+      const fab = state.fabric;
+      let ndv = nx * viewX + ny * viewY + nz * viewZ;
+      if (ndv < 0) {
+        nx = -nx; ny = -ny; nz = -nz;
+        ndv = -ndv;
+        back = !back;
+      }
+      const col = back ? fab.back : fab.front;
+      const ndk = Math.max(0, nx * KEY.x + ny * KEY.y + nz * KEY.z);
+      const ndf = Math.max(0, nx * FILL.x + ny * FILL.y + nz * FILL.z);
+      const wrap = ndk * 0.55 + 0.45;
+      const rim = Math.pow(1 - Math.min(1, ndv), 2.2) * Math.max(0, nx * RIM.x + ny * RIM.y + nz * RIM.z);
+      let spec = 0;
+      if (fab.kind === "velvet") {
+        const nap = Math.pow(1 - Math.min(1, Math.abs(ndv)), 1.6);
+        spec = nap * 0.22;
+      } else {
+        const hx = KEY.x + viewX, hy = KEY.y + viewY, hz = KEY.z + viewZ;
+        const hl = Math.hypot(hx, hy, hz) || 1;
+        const ndh = Math.max(0, nx * hx / hl + ny * hy / hl + nz * hz / hl);
+        spec = Math.pow(ndh, fab.rough) * fab.spec;
+        if (fab.kind === "silk") {
+          const tx = 1, ty = 0, tz = 0;
+          const tdoth = (tx * hx + ty * hy + tz * hz) / hl;
+          const an = Math.sqrt(Math.max(0, 1 - tdoth * tdoth));
+          spec = spec * 0.55 + Math.pow(an, 8) * fab.spec * 0.45 * ndk;
+        }
+      }
+      const amb = 0.16;
+      const keyC = 0.95 * wrap;
+      const fillC = 0.28 * ndf;
+      const r = col[0] * (amb + keyC * 1.05 + fillC) + spec * 255 + rim * 40;
+      const g = col[1] * (amb + keyC * 0.92 + fillC * 1.05) + spec * 235 + rim * 55;
+      const b = col[2] * (amb + keyC * 0.78 + fillC * 1.2) + spec * 210 + rim * 70;
+      return [
+        Math.max(0, Math.min(255, r)),
+        Math.max(0, Math.min(255, g)),
+        Math.max(0, Math.min(255, b))
+      ];
+    }
+
+    function drawBackground() {
+      const g = ctx.createLinearGradient(0, 0, 0, state.h);
+      g.addColorStop(0, "#2a221c");
+      g.addColorStop(0.42, "#161310");
+      g.addColorStop(1, "#0b0908");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, state.w, state.h);
+
+      const glow = ctx.createRadialGradient(
+        state.w * 0.38, state.h * 0.18, 10,
+        state.w * 0.42, state.h * 0.28, state.h * 0.7
+      );
+      glow.addColorStop(0, "rgba(212, 176, 118, 0.16)");
+      glow.addColorStop(0.45, "rgba(90, 70, 48, 0.05)");
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, state.w, state.h);
+
+      const windowLight = ctx.createRadialGradient(
+        state.w * 0.82, state.h * 0.22, 8,
+        state.w * 0.78, state.h * 0.3, state.h * 0.5
+      );
+      windowLight.addColorStop(0, "rgba(120, 148, 168, 0.08)");
+      windowLight.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = windowLight;
+      ctx.fillRect(0, 0, state.w, state.h);
+    }
+
+    function drawFloor() {
+      const half = 2.6;
+      const steps = 8;
+      const quads = [];
+      for (let i = 0; i < steps; i++) {
+        for (let j = 0; j < steps; j++) {
+          const x0 = -half + (i / steps) * half * 2;
+          const z0 = -half + (j / steps) * half * 2;
+          const x1 = -half + ((i + 1) / steps) * half * 2;
+          const z1 = -half + ((j + 1) / steps) * half * 2;
+          const p00 = project({ x: x0, y: floorY, z: z0 });
+          const p10 = project({ x: x1, y: floorY, z: z0 });
+          const p11 = project({ x: x1, y: floorY, z: z1 });
+          const p01 = project({ x: x0, y: floorY, z: z1 });
+          const z = (p00.z + p11.z) * 0.5;
+          const shadeAmt = 22 + (i + j) % 2 * 6;
+          quads.push({ p00, p10, p11, p01, z, shadeAmt });
+        }
+      }
+      quads.sort((a, b) => b.z - a.z);
+      for (const q of quads) {
+        if (q.p00.z < 0.2 || q.p11.z < 0.2) continue;
+        ctx.beginPath();
+        ctx.moveTo(q.p00.x, q.p00.y);
+        ctx.lineTo(q.p10.x, q.p10.y);
+        ctx.lineTo(q.p11.x, q.p11.y);
+        ctx.lineTo(q.p01.x, q.p01.y);
+        ctx.closePath();
+        ctx.fillStyle = `rgb(${q.shadeAmt + 18},${q.shadeAmt + 10},${q.shadeAmt})`;
+        ctx.fill();
+      }
+
+      let cx = 0, cz = 0, n = 0;
+      for (const p of particles) { cx += p.x; cz += p.z; n++; }
+      cx /= n; cz /= n;
+      const sc = project({ x: cx, y: floorY, z: cz });
+      const edge = project({ x: cx + 0.9, y: floorY, z: cz });
+      const rw = Math.abs(edge.x - sc.x);
+      const rh = rw * 0.32;
+      const sg = ctx.createRadialGradient(sc.x, sc.y, 2, sc.x, sc.y, rw);
+      sg.addColorStop(0, "rgba(0,0,0,0.38)");
+      sg.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = sg;
+      ctx.beginPath();
+      ctx.ellipse(sc.x, sc.y, rw, Math.max(8, rh), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawSphere() {
+      if (!sphere.on) return;
+      const c = project(sphere);
+      if (c.z < 0.2) return;
+      const r = sphere.r * c.s;
+      const hx = c.x - KEY.x * r * 0.42;
+      const hy = c.y + KEY.y * r * 0.42;
+      const g = ctx.createRadialGradient(hx, hy, r * 0.08, c.x, c.y, r);
+      g.addColorStop(0, "#c4b09a");
+      g.addColorStop(0.35, "#8a7360");
+      g.addColorStop(0.78, "#3d322c");
+      g.addColorStop(1, "#1a1512");
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(20,16,12,0.45)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const standTop = project({ x: sphere.x, y: sphere.y - sphere.r * 0.85, z: sphere.z });
+      const standBot = project({ x: sphere.x, y: floorY, z: sphere.z });
+      ctx.beginPath();
+      ctx.moveTo(standTop.x, standTop.y);
+      ctx.lineTo(standBot.x, standBot.y);
+      ctx.strokeStyle = "rgba(80, 68, 56, 0.8)";
+      ctx.lineWidth = Math.max(2, 0.025 * standTop.s);
+      ctx.stroke();
+    }
+
+    function faceAlive(f) {
+      const a = particles[f.a];
+      const b = particles[f.b];
+      const c = particles[f.c];
+      const d1 = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+      const d2 = Math.hypot(a.x - c.x, a.y - c.y, a.z - c.z);
+      const d3 = Math.hypot(b.x - c.x, b.y - c.y, b.z - c.z);
+      const lim = 0.85;
+      return d1 < lim && d2 < lim && d3 < lim;
+    }
+
+    const projCache = [];
+
+    function drawCloth() {
+      accumulateNormals();
+      if (projCache.length !== particles.length) {
+        projCache.length = particles.length;
+        for (let i = 0; i < particles.length; i++) projCache[i] = { x: 0, y: 0, z: 0, s: 1 };
+      }
+      for (let i = 0; i < particles.length; i++) {
+        const pr = project(particles[i]);
+        const o = projCache[i];
+        o.x = pr.x; o.y = pr.y; o.z = pr.z; o.s = pr.s;
+      }
+
+      const view = cam.fwd;
+      const drawn = [];
+      for (let i = 0; i < faces.length; i++) {
+        const f = faces[i];
+        if (!faceAlive(f)) continue;
+        const pa = projCache[f.a];
+        const pb = projCache[f.b];
+        const pc = projCache[f.c];
+        if (pa.z < 0.15 || pb.z < 0.15 || pc.z < 0.15) continue;
+        const z = (pa.z + pb.z + pc.z) / 3;
+        drawn.push({ f, pa, pb, pc, z });
+      }
+      drawn.sort((a, b) => b.z - a.z);
+
+      const sphereZ = sphere.on ? project(sphere).z : 1e9;
+      const passes = sphere.on ? [0, 1] : [0];
+      for (const pass of passes) {
+        if (pass === 1) drawSphere();
+        for (let i = 0; i < drawn.length; i++) {
+          const d = drawn[i];
+          if (sphere.on) {
+            const behind = d.z > sphereZ + 0.02;
+            if (pass === 0 && !behind) continue;
+            if (pass === 1 && behind) continue;
+          }
+          const f = d.f;
+          const nx = (vnorm[f.a * 3] + vnorm[f.b * 3] + vnorm[f.c * 3]) / 3;
+          const ny = (vnorm[f.a * 3 + 1] + vnorm[f.b * 3 + 1] + vnorm[f.c * 3 + 1]) / 3;
+          const nz = (vnorm[f.a * 3 + 2] + vnorm[f.b * 3 + 2] + vnorm[f.c * 3 + 2]) / 3;
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          const rgb = shade(nx / nl, ny / nl, nz / nl, -view.x, -view.y, -view.z, false);
+          ctx.beginPath();
+          ctx.moveTo(d.pa.x, d.pa.y);
+          ctx.lineTo(d.pb.x, d.pb.y);
+          ctx.lineTo(d.pc.x, d.pc.y);
+          ctx.closePath();
+          ctx.fillStyle = `rgb(${rgb[0] | 0},${rgb[1] | 0},${rgb[2] | 0})`;
+          ctx.fill();
+          if (state.showMesh) {
+            ctx.strokeStyle = "rgba(243,234,220,0.12)";
+            ctx.lineWidth = 0.4;
+            ctx.stroke();
+          }
+        }
+      }
+      if (!sphere.on) drawSphere();
+
+      drawRod();
+      drawPins();
+    }
+
+    function drawRod() {
+      if (state.preset === "table") return;
+      let a = null;
+      let b = null;
+      if (state.preset === "flag") {
+        a = project({ x: particles[idx(0, 0)].x, y: particles[idx(0, 0)].y + 0.08, z: particles[idx(0, 0)].z });
+        const last = particles[idx(0, rows - 1)];
+        b = project({ x: last.x, y: floorY, z: last.z });
+      } else if (state.preset === "canopy") {
+        return;
+      } else {
+        const left = particles[idx(0, 0)];
+        const right = particles[idx(cols - 1, 0)];
+        a = project({ x: left.x - 0.06, y: left.y + 0.02, z: left.z });
+        b = project({ x: right.x + 0.06, y: right.y + 0.02, z: right.z });
+      }
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = "#b08a58";
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = "round";
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(236, 214, 170, 0.45)";
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    }
+
+    function drawPins() {
+      ctx.fillStyle = "#d4b483";
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        if (!p.pinned && i !== grabbed) continue;
+        const s = projCache[i] || project(p);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, i === grabbed ? 4.5 : 3.1, 0, Math.PI * 2);
+        ctx.fill();
+        if (i === grabbed) {
+          ctx.strokeStyle = "rgba(243,234,220,0.85)";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+      }
+    }
+
+    function drawMotes() {
+      if (reduced) return;
+      ctx.fillStyle = "rgba(232, 214, 180, 0.18)";
+      for (const m of motes) {
+        const p = project(m);
+        if (p.z < 0.2) continue;
+        const r = Math.max(0.4, m.s * p.s * 0.012);
+        ctx.globalAlpha = m.a;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function seedMotes() {
+      motes.length = 0;
+      for (let i = 0; i < 48; i++) {
+        motes.push({
+          x: (Math.random() - 0.5) * 4,
+          y: Math.random() * 2.2 - 0.6,
+          z: (Math.random() - 0.5) * 3,
+          s: 0.4 + Math.random(),
+          a: 0.08 + Math.random() * 0.16
+        });
+      }
+    }
+
+    function stepMotes(dt) {
+      const w = state.wind + state.gust;
+      for (const m of motes) {
+        m.x += (0.25 + w) * dt * 0.35;
+        m.y += Math.sin(state.t * 0.7 + m.z) * dt * 0.05;
+        m.z += Math.cos(state.t * 0.4 + m.x) * dt * 0.08;
+        if (m.x > 2.4) m.x = -2.4;
+      }
+    }
+
+    function drawCut() {
+      if (cutLine.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(cutLine[0].x, cutLine[0].y);
+      for (let i = 1; i < cutLine.length; i++) ctx.lineTo(cutLine[i].x, cutLine[i].y);
+      ctx.strokeStyle = "rgba(212,180,131,0.85)";
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+
+    function pickParticle(sx, sy, maxDist) {
+      let best = -1;
+      let bestD = maxDist;
+      for (let i = 0; i < particles.length; i++) {
+        const p = projCache[i] || project(particles[i]);
+        const d = Math.hypot(p.x - sx, p.y - sy);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      return best;
+    }
+
+    function pickSphere(sx, sy) {
+      if (!sphere.on) return false;
+      const c = project(sphere);
+      return Math.hypot(c.x - sx, c.y - sy) < sphere.r * c.s + 10;
+    }
+
+    function moveGrabbed(sx, sy) {
+      if (grabbed < 0) return;
+      const p = particles[grabbed];
+      const pr = project(p);
+      const dx = (sx - lastPx) / Math.max(8, pr.s);
+      const dy = -(sy - lastPy) / Math.max(8, pr.s);
+      p.px += cam.right.x * dx + cam.up.x * dy;
+      p.py += cam.right.y * dx + cam.up.y * dy;
+      p.pz += cam.right.z * dx + cam.up.z * dy;
+      p.x = p.px; p.y = p.py; p.z = p.pz;
+      p.ox = p.x; p.oy = p.y; p.oz = p.z;
+    }
+
+    function moveSphere(sx, sy) {
+      const c = project(sphere);
+      const dx = (sx - lastPx) / Math.max(8, c.s);
+      const dy = -(sy - lastPy) / Math.max(8, c.s);
+      sphere.x += cam.right.x * dx + cam.up.x * dy;
+      sphere.y += cam.right.y * dx + cam.up.y * dy;
+      sphere.z += cam.right.z * dx + cam.up.z * dy;
+      sphere.y = Math.max(floorY + sphere.r, Math.min(1.1, sphere.y));
+    }
+
+    function distSeg(ax, ay, bx, by, cx, cy, dx, dy) {
+      function distPoint(px, py, qx, qy, rx, ry) {
+        const vx = qx - px, vy = qy - py;
+        const wx = rx - px, wy = ry - py;
+        const c1 = vx * wx + vy * wy;
+        if (c1 <= 0) return Math.hypot(rx - px, ry - py);
+        const c2 = vx * vx + vy * vy;
+        if (c2 <= c1) return Math.hypot(rx - qx, ry - qy);
+        const t = c1 / c2;
+        return Math.hypot(rx - (px + t * vx), ry - (py + t * vy));
+      }
+      return Math.min(
+        distPoint(ax, ay, bx, by, cx, cy),
+        distPoint(ax, ay, bx, by, dx, dy),
+        distPoint(cx, cy, dx, dy, ax, ay),
+        distPoint(cx, cy, dx, dy, bx, by)
+      );
+    }
+
+    function applyCut(x0, y0, x1, y1) {
+      const hitR = 7;
+      for (let i = 0; i < constraints.length; i++) {
+        const c = constraints[i];
+        if (!c.alive) continue;
+        const a = projCache[c.i] || project(particles[c.i]);
+        const b = projCache[c.j] || project(particles[c.j]);
+        if (distSeg(x0, y0, x1, y1, a.x, a.y, b.x, b.y) < hitR) c.alive = false;
+      }
+    }
+
+    function togglePinAt(sx, sy) {
+      const i = pickParticle(sx, sy, 28);
+      if (i < 0) return;
+      const p = particles[i];
+      p.pinned = !p.pinned;
+      p.w = p.pinned ? 0 : 1;
+      if (p.pinned) {
+        p.px = p.x; p.py = p.y; p.pz = p.z;
+      }
+      announce(p.pinned ? "Point pinned" : "Point released");
+    }
+
+    function dropAll() {
+      for (const p of particles) {
+        p.pinned = false;
+        p.w = 1;
+      }
+      announce("All pins released");
+    }
+
+    function gust() {
+      state.gust = 1.35 + Math.random() * 0.4;
+      announce("Gust");
+    }
+
+    function setTool(tool) {
+      state.tool = tool;
+      canvas.classList.remove("tool-pin", "tool-cut", "tool-form");
+      if (tool === "pin") canvas.classList.add("tool-pin");
+      if (tool === "cut") canvas.classList.add("tool-cut");
+      if (tool === "form") canvas.classList.add("tool-form");
+      document.getElementById("toolGrab").setAttribute("aria-pressed", tool === "grab" ? "true" : "false");
+      document.getElementById("toolPin").setAttribute("aria-pressed", tool === "pin" ? "true" : "false");
+      document.getElementById("toolCut").setAttribute("aria-pressed", tool === "cut" ? "true" : "false");
+      document.getElementById("toolForm").setAttribute("aria-pressed", tool === "form" ? "true" : "false");
+    }
+
+    function resize() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      state.dpr = dpr;
+      state.w = canvas.clientWidth;
+      state.h = canvas.clientHeight;
+      canvas.width = Math.max(1, Math.floor(state.w * dpr));
+      canvas.height = Math.max(1, Math.floor(state.h * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function render() {
+      updateCamera();
+      drawBackground();
+      drawFloor();
+      drawMotes();
+      drawCloth();
+      drawCut();
+    }
+
+    function frame(ts) {
+      if (!lastTs) lastTs = ts;
+      let dt = Math.min(0.033, (ts - lastTs) / 1000);
+      lastTs = ts;
+      fpsEma = fpsEma * 0.9 + (1 / Math.max(0.001, dt)) * 0.1;
+      state.fps = fpsEma;
+      state.t += dt;
+      if (!reduced && !state.userOrbit && !orbiting) {
+        state.yaw += Math.sin(state.t * 0.18) * 0.00022;
+      }
+      acc += dt;
+      const stepDt = 1 / 60;
+      let guard = 0;
+      if (!state.paused) {
+        while (acc >= stepDt && guard++ < 3) {
+          step(stepDt);
+          acc -= stepDt;
+        }
+        stepMotes(dt);
+      } else {
+        acc = 0;
+      }
+      render();
+      const alive = constraints.reduce((n, c) => n + (c.alive ? 1 : 0), 0);
+      meterEl.textContent = `${Math.round(fpsEma)} FPS  ·  ${particles.length} pts  ·  ${alive} stitches`;
+      requestAnimationFrame(frame);
+    }
+
+    function pointerDown(e) {
+      if (help.open) return;
+      canvas.setPointerCapture(e.pointerId);
+      const x = e.clientX;
+      const y = e.clientY;
+      lastPx = x; lastPy = y;
+      const shift = e.shiftKey;
+      const right = e.button === 2 || e.altKey;
+
+      if (right) {
+        orbiting = true;
+        state.userOrbit = true;
+        canvas.classList.add("is-grabbing");
+        return;
+      }
+
+      if (shift || state.tool === "pin") {
+        togglePinAt(x, y);
+        return;
+      }
+
+      if (state.tool === "cut") {
+        cutting = true;
+        lastCut = { x, y };
+        cutLine = [{ x, y }];
+        return;
+      }
+
+      if (state.tool === "form" || (state.tool === "grab" && pickSphere(x, y) && pickParticle(x, y, 22) < 0)) {
+        if (pickSphere(x, y)) {
+          draggingSphere = true;
+          sphere.on = true;
+          state.showForm = true;
+          document.getElementById("formBtn").setAttribute("aria-pressed", "true");
+          canvas.classList.add("is-grabbing");
+          return;
+        }
+      }
+
+      const i = pickParticle(x, y, 36);
+      if (i >= 0) {
+        grabbed = i;
+        const p = particles[i];
+        p.px = p.x; p.py = p.y; p.pz = p.z;
+        canvas.classList.add("is-grabbing");
+      } else {
+        orbiting = true;
+        state.userOrbit = true;
+        canvas.classList.add("is-grabbing");
+      }
+    }
+
+    function pointerMove(e) {
+      const x = e.clientX;
+      const y = e.clientY;
+      if (orbiting) {
+        state.yaw += (x - lastPx) * 0.0055;
+        state.pitch = Math.max(-0.55, Math.min(0.72, state.pitch + (y - lastPy) * 0.004));
+      } else if (draggingSphere) {
+        moveSphere(x, y);
+      } else if (grabbed >= 0) {
+        moveGrabbed(x, y);
+      } else if (cutting && lastCut) {
+        applyCut(lastCut.x, lastCut.y, x, y);
+        lastCut = { x, y };
+        cutLine.push({ x, y });
+        if (cutLine.length > 80) cutLine.shift();
+      }
+      lastPx = x;
+      lastPy = y;
+    }
+
+    function pointerUp() {
+      grabbed = -1;
+      draggingSphere = false;
+      orbiting = false;
+      cutting = false;
+      lastCut = null;
+      cutLine = [];
+      canvas.classList.remove("is-grabbing");
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      state.dist = Math.max(2.1, Math.min(6.2, state.dist + e.deltaY * 0.0025));
+      state.userOrbit = true;
+    }
+
+    function syncOutputs() {
+      document.getElementById("windOut").textContent = Number(state.wind).toFixed(2);
+      document.getElementById("gravityOut").textContent = Number(state.gravity).toFixed(2);
+      document.getElementById("stiffOut").textContent = Number(state.stiff).toFixed(2);
+      document.getElementById("wind").value = String(state.wind);
+      document.getElementById("gravity").value = String(state.gravity);
+      document.getElementById("stiff").value = String(state.stiff);
+    }
+
+    function syncPresets() {
+      const root = document.getElementById("presets");
+      root.innerHTML = "";
+      for (const p of PRESETS) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chip";
+        b.textContent = p.name;
+        b.setAttribute("aria-pressed", p.id === state.preset ? "true" : "false");
+        b.addEventListener("click", () => applyPreset(p.id, true));
+        root.appendChild(b);
+      }
+    }
+
+    function syncSwatches() {
+      const root = document.getElementById("swatches");
+      root.innerHTML = "";
+      for (const f of FABRICS) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "swatch";
+        b.style.setProperty("--swatch", f.swatch);
+        b.setAttribute("aria-label", f.name);
+        b.setAttribute("aria-pressed", f.id === state.fabric.id ? "true" : "false");
+        b.addEventListener("click", () => {
+          state.fabric = f;
+          tagline.textContent = f.name + " — " + PRESETS.find((p) => p.id === state.preset).blurb;
+          syncSwatches();
+          announce(f.name);
+        });
+        root.appendChild(b);
+      }
+    }
+
+    document.getElementById("toolGrab").addEventListener("click", () => setTool("grab"));
+    document.getElementById("toolPin").addEventListener("click", () => setTool("pin"));
+    document.getElementById("toolCut").addEventListener("click", () => setTool("cut"));
+    document.getElementById("toolForm").addEventListener("click", () => {
+      setTool("form");
+      sphere.on = true;
+      state.showForm = true;
+      document.getElementById("formBtn").setAttribute("aria-pressed", "true");
+    });
+    document.getElementById("gustBtn").addEventListener("click", gust);
+    document.getElementById("dropBtn").addEventListener("click", dropAll);
+    document.getElementById("resetBtn").addEventListener("click", () => applyPreset(state.preset, true));
+    document.getElementById("pauseBtn").addEventListener("click", () => {
+      state.paused = !state.paused;
+      document.getElementById("pauseBtn").setAttribute("aria-pressed", state.paused ? "true" : "false");
+      document.getElementById("pauseBtn").textContent = state.paused ? "Play" : "Pause";
+      announce(state.paused ? "Paused" : "Playing");
+    });
+    document.getElementById("meshBtn").addEventListener("click", () => {
+      state.showMesh = !state.showMesh;
+      document.getElementById("meshBtn").setAttribute("aria-pressed", state.showMesh ? "true" : "false");
+    });
+    document.getElementById("formBtn").addEventListener("click", () => {
+      sphere.on = !sphere.on;
+      state.showForm = sphere.on;
+      document.getElementById("formBtn").setAttribute("aria-pressed", sphere.on ? "true" : "false");
+      announce(sphere.on ? "Form visible" : "Form hidden");
+    });
+    document.getElementById("helpBtn").addEventListener("click", () => help.showModal());
+    document.getElementById("closeHelp").addEventListener("click", () => help.close());
+
+    document.getElementById("wind").addEventListener("input", (e) => {
+      state.wind = Number(e.target.value);
+      syncOutputs();
+    });
+    document.getElementById("gravity").addEventListener("input", (e) => {
+      state.gravity = Number(e.target.value);
+      syncOutputs();
+    });
+    document.getElementById("stiff").addEventListener("input", (e) => {
+      state.stiff = Number(e.target.value);
+      syncOutputs();
+    });
+
+    canvas.addEventListener("pointerdown", pointerDown);
+    canvas.addEventListener("pointermove", pointerMove);
+    canvas.addEventListener("pointerup", pointerUp);
+    canvas.addEventListener("pointercancel", pointerUp);
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        if (help.open) help.close(); else help.showModal();
+        return;
+      }
+      if (help.open) {
+        if (e.key === "Escape") help.close();
+        return;
+      }
+      if (e.code === "Space") {
+        e.preventDefault();
+        document.getElementById("pauseBtn").click();
+      } else if (e.key === "r" || e.key === "R") applyPreset(state.preset, true);
+      else if (e.key === "g" || e.key === "G") gust();
+      else if (e.key === "d" || e.key === "D") dropAll();
+      else if (e.key === "1") applyPreset("banner", true);
+      else if (e.key === "2") applyPreset("flag", true);
+      else if (e.key === "3") applyPreset("canopy", true);
+      else if (e.key === "4") applyPreset("veil", true);
+      else if (e.key === "5") applyPreset("table", true);
+      else if (e.key === "q" || e.key === "Q") setTool("grab");
+      else if (e.key === "p" || e.key === "P") setTool("pin");
+      else if (e.key === "c" || e.key === "C") setTool("cut");
+      else if (e.key === "f" || e.key === "F") document.getElementById("toolForm").click();
+    });
+
+    window.addEventListener("resize", () => {
+      resize();
+    });
+
+    resize();
+    seedMotes();
+    applyPreset("banner", false);
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloth Simulation</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(16, 20, 30, 0.72);
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #e6eaf2;
+    --muted: #9aa4b2;
+    --accent: #7aa2ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #hud {
+    position: fixed; inset: 0; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 20px; z-index: 10;
+  }
+  .overlay { pointer-events: auto; }
+  .title h1 {
+    font-size: 20px; font-weight: 600; letter-spacing: 0.3px;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+  }
+  .title p {
+    font-size: 12.5px; color: var(--muted); margin-top: 4px;
+    max-width: 640px; line-height: 1.5;
+  }
+  .panel {
+    background: rgba(13, 17, 26, 0.82);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    width: 316px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  }
+  .controls { display: flex; gap: 8px; }
+  .btn {
+    flex: 1;
+    background: rgba(122, 162, 255, 0.14);
+    color: var(--text);
+    border: 1px solid rgba(122, 162, 255, 0.35);
+    border-radius: 9px;
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.05s ease;
+  }
+  .btn:hover { background: rgba(122, 162, 255, 0.24); }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: rgba(122, 162, 255, 0.25); }
+  .btn-primary:hover { background: rgba(122, 162, 255, 0.36); }
+  .stats { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 7px; }
+  .stats .row { display: flex; justify-content: space-between; gap: 10px; }
+  .stats b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 500; }
+  #fps { color: #7fe0a2; }
+  .hint {
+    font-size: 12px; color: var(--muted);
+    background: rgba(13, 17, 26, 0.82);
+    border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 14px;
+    width: fit-content;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div style="display:flex;flex-direction:column;align-items:flex-start;gap:14px;">
+    <div class="title">
+      <h1>Cloth Simulation</h1>
+      <p>Verlet-integration spring physics with iterative constraint relaxation. Drag the cloth with your mouse or finger, then let it fall, fold, and ripple in the wind.</p>
+    </div>
+    <div class="panel controls">
+      <button id="wind" class="btn">Wind: On</button>
+      <button id="restart" class="btn btn-primary">Restart</button>
+    </div>
+    <div class="panel stats">
+      <div class="row"><span>Points</span><b id="points">—</b></div>
+      <div class="row"><span>Cells rendered</span><b id="cells">—</b></div>
+      <div class="row"><span>FPS</span><b id="fps">—</b></div>
+    </div>
+  </div>
+  <div class="hint">Drag the cloth &middot; Space toggles wind &middot; R restarts</div>
+</div>
+
+<script>
+"use strict";
+(function () {
+  /* =========================================================================
+   * Cloth simulation
+   * -------------------------------------------------------------------------
+   * A grid of points connected by distance constraints (structural + shear +
+   * bend). Verlet integration with iterative constraint relaxation; the whole
+   * hang is pinned along the top edge and drapes under gravity. Wind adds a
+   * time-varying horizontal force. The fabric is rendered as a paintes-sorted
+   * checker quilt whose shading follows the local surface normal.
+   * ========================================================================= */
+
+  // ---- tunables ------------------------------------------------------------
+  const SPACING   = 6;      // world units between adjacent lattice points
+  const NUM       = 61;     // lattice points per side (61^2 = 3721 points)
+  const GRAVITY   = 180;    // gravity acceleration (units/s^2)
+  const DAMPING   = 0.98;   // per-substep velocity retention
+  const STIFF     = 0.72;   // constraint relaxation stiffness per iteration
+  const SOLVE_ITS = 6;      // constraint iterations per substep
+  const SUBSTEPS  = 2;      // physics substeps per render frame
+  const PIN_Y     = 4;      // height of the curtain rail
+
+  // ---- canvas --------------------------------------------------------------
+  const cv = document.getElementById("scene");
+  const RES = 0.75;              // internal render resolution scale (CSS upscales)
+  let cw  = Math.floor(window.innerWidth * RES);
+  let ch  = Math.floor(window.innerHeight * RES);
+  let ctx = cv.getContext("2d");
+  let groundGrad = null;
+  function resize() {
+    cw = Math.floor(window.innerWidth * RES);
+    ch = Math.floor(window.innerHeight * RES);
+    cv.width  = cw;
+    cv.height = ch;
+    ctx = cv.getContext("2d");
+    groundGrad = ctx.createRadialGradient(cw / 2, ch * 0.66, 20, cw / 2, ch * 0.66, cw * 0.42);
+    groundGrad.addColorStop(0, "rgba(0,0,0,0.22)");
+    groundGrad.addColorStop(1, "rgba(0,0,0,0)");
+  }
+  resize();
+
+  /* =========================================================================
+   * Mesh + constraint system
+   * ========================================================================= */
+  const M  = NUM - 1;            // cells per side
+  const N  = NUM * NUM;          // points
+  const CELLS = M * M;
+
+  // Positions (x,y,z). y grows downward (screen), z is depth toward viewer.
+  const P    = new Float32Array(N * 3);
+  const PREV = new Float32Array(N * 3);
+
+  // Structural/shear constraints: [i, j, restLength]
+  const springJ = [];
+  const springLen = [];
+  {
+    for (let y = 0; y < NUM; y++) {
+      for (let x = 0; x < NUM; x++) {
+        const o = y * NUM + x;
+        if (x + 1 < NUM) { springJ.push(o, o + 1);       springLen.push(SPACING); }
+        if (y + 1 < NUM) { springJ.push(o, o + NUM);     springLen.push(SPACING); }
+        if (x + 1 < NUM && y + 1 < NUM) {
+          springJ.push(o, o + NUM + 1);                  springLen.push(SPACING * Math.SQRT2);
+          springJ.push(o + 1, o + NUM);                  springLen.push(SPACING * Math.SQRT2);
+        }
+      }
+    }
+  }
+  // Bend constraints: every other structural spring restrains folding.
+  for (let y = 0; y < NUM; y++) {
+    for (let x = 0; x < NUM; x++) {
+      const o = y * NUM + x;
+      if (x + 2 < NUM) { springJ.push(o, o + 2);         springLen.push(SPACING * 2); }
+      if (y + 2 < NUM) { springJ.push(o, o + 2 * NUM);   springLen.push(SPACING * 2); }
+    }
+  }
+
+  // ---- initial shape: a flat curtain hanging from a rail --------------------
+  function resetCloth() {
+    for (let y = 0; y < NUM; y++) {
+      for (let x = 0; x < NUM; x++) {
+        const o = (y * NUM + x) * 3;
+        const u = x / M;
+        const w = Math.sin(u * Math.PI);
+        P[o]     = x * SPACING;
+        P[o + 1] = PIN_Y + (y === 0 ? 0 : 1) * (1 - w) * 1.5 + w * 0.5;
+        P[o + 2] = (x - M / 2) * 0.12;
+        PREV[o]     = P[o];
+        PREV[o + 1] = P[o + 1] + 0.2;
+        PREV[o + 2] = P[o + 2];
+      }
+    }
+    windT = 0;
+    drag.clear();
+    dragIdx = -1;
+  }
+
+  const SC = springJ.length / 2;     // spring count
+  const SI = new Int32Array(springJ);
+  const SL = new Float32Array(springLen);
+
+  /* =========================================================================
+   * Simulation
+   * ========================================================================= */
+  let windT = 0;
+  let windOn = true;
+
+  // Points the pointer currently drags: index -> target world coords.
+  const drag = new Map();
+  let dragIdx = -1;                       // index of the grabbed point
+  let dragBias = { x: 0, y: 0 };          // grab offset so the cloth doesn't snap
+  resetCloth();
+
+  function substep(dt, wAccel, wDir) {
+    const dt2 = dt * dt;
+    const g = GRAVITY * dt2;
+    // gentle jitter so the fabric shivers, scaled like an acceleration
+    const jit = 22 * dt2;
+
+    for (let i = 0; i < N; i++) {
+      const o = i * 3;
+      const jx = Math.sin(windT * 1.9 + i * 0.61) * jit + Math.sin(windT * 0.7 + i * 1.9) * jit * 0.6;
+      const ax = wAccel * dt2 * wDir[0] + jx;
+      const ay = g + Math.sin(windT * 2.3 + i * 1.13) * jit * 0.4;
+      const az = wAccel * dt2 * wDir[2] + Math.sin(windT * 1.2 + i * 2.1) * jit;
+
+      const dpx = P[o]     - PREV[o];
+      const dpy = P[o + 1] - PREV[o + 1];
+      const dpz = P[o + 2] - PREV[o + 2];
+
+      PREV[o]     = P[o];
+      PREV[o + 1] = P[o + 1];
+      PREV[o + 2] = P[o + 2];
+
+      P[o]     += dpx * DAMPING + ax;
+      P[o + 1] += dpy * DAMPING + ay;
+      P[o + 2] += dpz * DAMPING + az;
+    }
+
+    // drag: pull grabbed points toward the pointer
+    for (const [idx, t] of drag) {
+      const o = idx * 3;
+      P[o]     += (t.x - P[o]) * 0.45;
+      P[o + 1] += (t.y - P[o + 1]) * 0.45;
+      P[o + 2] += (t.z - P[o + 2]) * 0.45;
+    }
+
+    // constraint relaxation
+    for (let it = 0; it < SOLVE_ITS; it++) {
+      for (let s = 0; s < SC; s++) {
+        const i = SI[s * 2], j = SI[s * 2 + 1];
+        const oi = i * 3, oj = j * 3;
+        let dx = P[oj]     - P[oi];
+        let dy = P[oj + 1] - P[oi + 1];
+        let dz = P[oj + 2] - P[oi + 2];
+        let d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d < 1e-9) { dx = 1e-6; d = 1e-6; }
+        const diff = (d - SL[s]) / d;
+        const f = diff * STIFF * 0.5;
+        dx *= f; dy *= f; dz *= f;
+        P[oi]     += dx; P[oi + 1] += dy; P[oi + 2] += dz;
+        P[oj]     -= dx; P[oj + 1] -= dy; P[oj + 2] -= dz;
+      }
+    }
+
+    // pin the whole top edge to the rail
+    for (let x = 0; x < NUM; x++) {
+      const o = x * 3;
+      P[o]     = x * SPACING;
+      P[o + 1] = PIN_Y;
+      P[o + 2] = (x - M / 2) * 0.12;
+      PREV[o]     = P[o];
+      PREV[o + 1] = P[o + 1];
+      PREV[o + 2] = P[o + 2];
+    }
+  }
+
+  /* =========================================================================
+   * Rendering (painter's-sorted quilt)
+   * ========================================================================= */
+
+  // scratch per-cell data
+  const proj = new Float32Array(N * 3);    // [screenX, screenY, depthZ]
+  const cx = new Float32Array(N * 3);
+
+  const order = new Uint32Array(CELLS);
+  const cellD  = new Float32Array(CELLS);
+
+  const PALETTE = [
+    [0.50, 0.66, 0.98],  // light indigo
+    [0.94, 0.55, 0.42],  // warm coral
+  ];
+
+  // cached ground shadow gradient (rebuilt on resize)
+  function render() {
+    ctx.clearRect(0, 0, cw, ch);
+
+    // scale so the cloth spans ~34% of the viewport width
+    const viewW = (cw * 0.34) / (M * SPACING);
+
+    // project all points
+    for (let i = 0; i < N; i++) {
+      const o = i * 3;
+      const x = P[o], y = P[o + 1], z = P[o + 2];
+      proj[o]     = cw * 0.5 + (x + z * 0.03) * viewW;
+      proj[o + 1] = ch * 0.40 + (y + z * 0.08) * viewW;
+      proj[o + 2] = z;
+      cx[o] = x; cx[o + 1] = y; cx[o + 2] = z;
+    }
+
+    // per-cell average screen-y depth for paint order; store index for sort
+    for (let j = 0; j < M; j++) {
+      for (let i = 0; i < M; i++) {
+        const c = j * M + i;
+        const o00 = (j * NUM + i) * 3;
+        const o10 = (j * NUM + i + 1) * 3;
+        const o01 = ((j + 1) * NUM + i) * 3;
+        const o11 = ((j + 1) * NUM + i + 1) * 3;
+        cellD[c] = (proj[o00 + 1] + proj[o10 + 1] + proj[o01 + 1] + proj[o11 + 1]) * 0.25;
+      }
+    }
+    // sort lowest first (painter's: near/front drawn last)
+    for (let i = 0; i < CELLS; i++) order[i] = i;
+    order.sort((a, b) => cellD[a] - cellD[b]);
+
+    // ground shadow
+    ctx.fillStyle = groundGrad;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // palettes for checker
+    const [cA, cB] = PALETTE;
+
+    for (let qi = 0; qi < CELLS; qi++) {
+      const c = order[qi];
+      const j = (c / M) | 0, i = c % M;
+
+      const o00 = (j * NUM + i) * 3;
+      const o10 = (j * NUM + i + 1) * 3;
+      const o01 = ((j + 1) * NUM + i) * 3;
+      const o11 = ((j + 1) * NUM + i + 1) * 3;
+
+      const ax0 = proj[o00],     ay0 = proj[o00 + 1];
+      const bx0 = proj[o10],     by0 = proj[o10 + 1];
+      const cx0 = proj[o01],     cy0 = proj[o01 + 1];
+      const dx0 = proj[o11],     dy0 = proj[o11 + 1];
+
+      // surface normal z-component (facing brightness) from world coords
+      const wx0 = cx[o00], wy0 = cx[o00 + 1];
+      const wx1 = cx[o10], wy1 = cx[o10 + 1];
+      const wx2 = cx[o01], wy2 = cx[o01 + 1];
+      // normal = (e1 x e2), nz = e1.x*e2.y - e1.y*e2.x
+      const nzAbs = Math.abs((wx1 - wx0) * (wy2 - wy0) - (wy1 - wy0) * (wx2 - wx0));
+      const norm = nzAbs / (SPACING * SPACING); // approx, normalized by cell area
+      let light = 0.55 + 0.45 * Math.min(1, norm * 1.15);
+
+      // depth shading adds gentle vertical gradient
+      const depthShade = 0.9 + 0.1 * Math.min(1, (proj[o00 + 1] - ch * 0.40) / (ch * 0.6));
+      light *= depthShade;
+
+      const check = ((i + j) & 1) === 0;
+      const base = check ? cA : cB;
+      const r = Math.min(255, base[0] * 255 * light);
+      const g = Math.min(255, base[1] * 255 * light);
+      const b = Math.min(255, base[2] * 255 * light);
+      const col = "rgb(" + (r | 0) + "," + (g | 0) + "," + (b | 0) + ")";
+
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(ax0, ay0);
+      ctx.lineTo(bx0, by0);
+      ctx.lineTo(dx0, dy0);
+      ctx.lineTo(cx0, cy0);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  /* =========================================================================
+   * Helpers / input
+   * ========================================================================= */
+  function toWorld(sx, sy) {
+    const viewW = (cw * 0.34) / (M * SPACING);
+    return { x: (sx - cw * 0.5) / viewW, y: (sy - ch * 0.40) / viewW, z: 0 };
+  }
+
+  function nearestPoint(sx, sy) {
+    const w = toWorld(sx, sy);
+    const viewW = (cw * 0.34) / (M * SPACING);
+    const grabWorld = 3.2 * SPACING; // grab radius in world units
+    let best = -1, bestD = Infinity;
+    for (let k = 0; k < N; k++) {
+      // ignore pinned rail strongly (falling to bottom half is easier)
+      const dx = P[k * 3]     - w.x;
+      const dy = P[k * 3 + 1] - w.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    if (Math.sqrt(bestD) < grabWorld) return best;
+    return -1;
+  }
+
+  function pointerPos(e) {
+    const rect = cv.getBoundingClientRect();
+    const s = cw / rect.width;   // client px -> internal canvas px
+    if (e.touches && e.touches.length) return { x: (e.touches[0].clientX - rect.left) * s, y: (e.touches[0].clientY - rect.top) * s };
+    if (e.changedTouches && e.changedTouches.length) return { x: (e.changedTouches[0].clientX - rect.left) * s, y: (e.changedTouches[0].clientY - rect.top) * s };
+    return { x: (e.clientX - rect.left) * s, y: (e.clientY - rect.top) * s };
+  }
+
+  let dragging = false;
+
+  function onDown(e) {
+    const s = pointerPos(e);
+    dragging = true;
+    const idx = nearestPoint(s.x, s.y);
+    if (idx >= 0) {
+      dragIdx = idx;
+      const w = toWorld(s.x, s.y);
+      dragBias = { x: P[idx * 3] - w.x, y: P[idx * 3 + 1] - w.y };
+      w.z = P[idx * 3 + 2];
+      drag.set(idx, w);
+    } else {
+      dragIdx = -1;
+    }
+  }
+  function onMove(e) {
+    if (!dragging || dragIdx < 0) return;
+    const s = pointerPos(e);
+    const w = toWorld(s.x, s.y);
+    w.x += dragBias.x;
+    w.y += dragBias.y;
+    w.z = P[dragIdx * 3 + 2];
+    drag.set(dragIdx, w);
+  }
+  function onUp() {
+    dragging = false;
+    drag.clear();
+    dragIdx = -1;
+  }
+
+  cv.addEventListener("pointerdown", onDown);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  cv.addEventListener("touchstart", (e) => { e.preventDefault(); onDown(e); }, { passive: false });
+  cv.addEventListener("touchmove", (e) => { e.preventDefault(); onMove(e); }, { passive: false });
+  window.addEventListener("touchend", onUp);
+
+  /* =========================================================================
+   * HUD
+   * ========================================================================= */
+  const btnWind = document.getElementById("wind");
+  const btnRestart = document.getElementById("restart");
+  const elPoints = document.getElementById("points");
+  const elCells = document.getElementById("cells");
+  const elFps = document.getElementById("fps");
+
+  function setWind(on) {
+    windOn = on;
+    btnWind.textContent = "Wind: " + (on ? "On" : "Off");
+  }
+  btnWind.addEventListener("click", () => setWind(!windOn));
+  btnRestart.addEventListener("click", resetCloth);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") { e.preventDefault(); setWind(!windOn); }
+    else if (e.key === "r" || e.key === "R") resetCloth();
+  });
+
+  window.addEventListener("resize", resize);
+
+  elPoints.textContent = N.toLocaleString();
+  elCells.textContent = CELLS.toLocaleString();
+
+  /* =========================================================================
+   * Main loop
+   * ========================================================================= */
+  let last = performance.now();
+  let fps = 60;
+  let fpsTimer = 0;
+
+  function frame(now) {
+    const elapsed = (now - last) / 1000;
+    last = now;
+    const dt = Math.min(0.033, Math.max(0.001, elapsed));
+
+    if (windOn) windT += dt;
+
+    // time-varying wind acceleration (sideways + gusty lift)
+    const wAccel = windOn ? (95 + 65 * Math.sin(windT * 0.45)) : 0;
+    const wDir = [Math.cos(windT * 0.9) * 0.55, 0, Math.sin(windT * 0.7) * 0.5];
+
+    const subDt = dt / SUBSTEPS;
+    for (let s = 0; s < SUBSTEPS; s++) substep(subDt, wAccel, wDir);
+
+    render();
+
+    // FPS (smoothed, uses real wall-clock interval; DOM updated ~4x/s)
+    if (elapsed > 0) fps = fps * 0.9 + (1 / elapsed) * 0.1;
+    fpsTimer += elapsed;
+    if (fpsTimer >= 0.25) {
+      fpsTimer = 0;
+      elFps.textContent = Math.round(fps) + " fps";
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

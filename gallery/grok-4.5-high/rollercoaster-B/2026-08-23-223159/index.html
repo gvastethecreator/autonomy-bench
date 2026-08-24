@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nightfall Coaster</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050810;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #e8f0ff;
+      cursor: none;
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.55) 100%);
+      opacity: 0.85;
+    }
+    #speedlines {
+      position: absolute;
+      inset: 0;
+      background: repeating-radial-gradient(
+        ellipse at 50% 45%,
+        transparent 0,
+        transparent 40%,
+        rgba(180, 220, 255, 0.03) 48%,
+        transparent 55%
+      );
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      mix-blend-mode: screen;
+    }
+    #title {
+      position: absolute;
+      top: 28px;
+      left: 36px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: rgba(200, 230, 255, 0.55);
+      font-weight: 500;
+    }
+    #title strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+      color: rgba(230, 245, 255, 0.92);
+      font-weight: 600;
+      text-shadow: 0 0 24px rgba(80, 160, 255, 0.45);
+    }
+    #meter {
+      position: absolute;
+      bottom: 32px;
+      left: 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 180px;
+    }
+    #meter .label {
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(180, 210, 255, 0.5);
+    }
+    #meter .bar {
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #meter .fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4cc9f0, #f72585);
+      border-radius: 2px;
+      box-shadow: 0 0 12px rgba(247, 37, 133, 0.6);
+      transition: width 0.05s linear;
+    }
+    #meter .stats {
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      color: rgba(210, 230, 255, 0.75);
+      letter-spacing: 0.04em;
+    }
+    #hint {
+      position: absolute;
+      bottom: 32px;
+      right: 36px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(180, 210, 255, 0.4);
+      text-align: right;
+    }
+    #cross {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 10px;
+      height: 10px;
+      margin: -5px 0 0 -5px;
+      opacity: 0.25;
+    }
+    #cross::before, #cross::after {
+      content: "";
+      position: absolute;
+      background: #cfe8ff;
+      border-radius: 1px;
+    }
+    #cross::before { left: 4px; top: 0; width: 2px; height: 10px; }
+    #cross::after { left: 0; top: 4px; width: 10px; height: 2px; }
+    #boot {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      background: #050810;
+      transition: opacity 0.8s ease, visibility 0.8s;
+    }
+    #boot.hide {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    #boot .pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4cc9f0;
+      box-shadow: 0 0 24px #4cc9f0;
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.5; }
+      50% { transform: scale(1.25); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="boot"><div class="pulse" aria-hidden="true"></div></div>
+  <div id="hud">
+    <div id="vignette"></div>
+    <div id="speedlines"></div>
+    <div id="title">Nightfall Park<strong>Apex Drop</strong></div>
+    <div id="meter">
+      <div class="label">Velocity</div>
+      <div class="bar"><div class="fill" id="speedFill"></div></div>
+      <div class="stats" id="speedText">0 km/h · climb</div>
+    </div>
+    <div id="hint">Continuous loop · look ahead</div>
+    <div id="cross"></div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+import * as THREE from "three";
+
+/* ─────────────────────────────────────────────────────────────
+   Nightfall Coaster — first-person continuous ride
+───────────────────────────────────────────────────────────── */
+
+const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  powerPreference: "high-performance",
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x050810, 1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x071018, 0.0042);
+
+const camera = new THREE.PerspectiveCamera(
+  72,
+  window.innerWidth / window.innerHeight,
+  0.15,
+  900
+);
+scene.add(camera);
+
+/* ---------- Atmosphere ---------- */
+scene.add(new THREE.AmbientLight(0x1a2840, 0.55));
+const hemi = new THREE.HemisphereLight(0x6a8ec8, 0x0a1520, 0.55);
+scene.add(hemi);
+
+const moon = new THREE.DirectionalLight(0xc8d8ff, 0.65);
+moon.position.set(-40, 80, -30);
+moon.castShadow = true;
+moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.camera.near = 10;
+moon.shadow.camera.far = 220;
+moon.shadow.camera.left = -90;
+moon.shadow.camera.right = 90;
+moon.shadow.camera.top = 90;
+moon.shadow.camera.bottom = -90;
+moon.shadow.bias = -0.0003;
+scene.add(moon);
+
+const neonPink = new THREE.PointLight(0xff2d95, 4.5, 70, 2);
+neonPink.position.set(0, 8, 0);
+scene.add(neonPink);
+const neonCyan = new THREE.PointLight(0x2de2ff, 3.8, 65, 2);
+neonCyan.position.set(35, 12, -20);
+scene.add(neonCyan);
+const neonAmber = new THREE.PointLight(0xffb347, 2.8, 55, 2);
+neonAmber.position.set(-30, 10, 25);
+scene.add(neonAmber);
+
+/* ---------- Sky / stars ---------- */
+{
+  const starGeo = new THREE.BufferGeometry();
+  const N = 1800;
+  const pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const r = 280 + Math.random() * 180;
+    const th = Math.random() * TAU;
+    const ph = Math.acos(2 * Math.random() - 1);
+    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = Math.abs(r * Math.cos(ph)) * 0.55 + 40;
+    pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+  }
+  starGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const stars = new THREE.Points(
+    starGeo,
+    new THREE.PointsMaterial({
+      color: 0xddeeff,
+      size: 0.55,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    })
+  );
+  scene.add(stars);
+}
+
+/* Soft moon disc */
+{
+  const moonMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(8, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xe8f0ff })
+  );
+  moonMesh.position.set(-90, 95, -120);
+  scene.add(moonMesh);
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(14, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xa8c4ff,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+    })
+  );
+  moonMesh.add(glow);
+}
+
+/* ---------- Ground ---------- */
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(220, 64),
+  new THREE.MeshStandardMaterial({
+    color: 0x0b1520,
+    roughness: 0.95,
+    metalness: 0.05,
+  })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* Soft ground grid glow */
+{
+  const grid = new THREE.GridHelper(200, 40, 0x1a3a55, 0x0d1e2e);
+  grid.position.y = 0.05;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.35;
+  scene.add(grid);
+}
+
+/* Distant hills silhouette */
+{
+  const hillMat = new THREE.MeshStandardMaterial({
+    color: 0x081018,
+    roughness: 1,
+    flatShading: true,
+  });
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU;
+    const r = 150 + (i % 3) * 18;
+    const h = 18 + (i % 5) * 8;
+    const hill = new THREE.Mesh(
+      new THREE.ConeGeometry(28 + (i % 4) * 6, h, 5),
+      hillMat
+    );
+    hill.position.set(Math.cos(a) * r, h * 0.35, Math.sin(a) * r);
+    hill.rotation.y = a;
+    scene.add(hill);
+  }
+}
+
+/* ---------- Park props ---------- */
+function makeLamp(x, z, hue = 0.55) {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.16, 6, 8),
+    new THREE.MeshStandardMaterial({ color: 0x222833, metalness: 0.7, roughness: 0.35 })
+  );
+  pole.position.y = 3;
+  pole.castShadow = true;
+  g.add(pole);
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.35, 12, 12),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color().setHSL(hue, 0.85, 0.55),
+      emissive: new THREE.Color().setHSL(hue, 0.9, 0.4),
+      emissiveIntensity: 2.2,
+      roughness: 0.3,
+    })
+  );
+  bulb.position.y = 6.2;
+  g.add(bulb);
+  const light = new THREE.PointLight(
+    new THREE.Color().setHSL(hue, 0.85, 0.6),
+    1.6,
+    22,
+    2
+  );
+  light.position.y = 6.2;
+  g.add(light);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  return g;
+}
+
+const lampSpots = [
+  [18, 12, 0.92], [-22, 8, 0.55], [8, -28, 0.08],
+  [-12, -18, 0.72], [32, -8, 0.48], [-35, 22, 0.12],
+  [0, 38, 0.85], [45, 20, 0.6],
+];
+lampSpots.forEach(([x, z, h]) => makeLamp(x, z, h));
+
+/* Neon arch at station */
+{
+  const arch = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xff2d95,
+    emissive: 0xff2d95,
+    emissiveIntensity: 1.8,
+    metalness: 0.4,
+    roughness: 0.3,
+  });
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.4, 8, 0.4), mat);
+  left.position.set(-4, 4, 0);
+  const right = left.clone();
+  right.position.x = 4;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.4, 0.4), mat);
+  top.position.set(0, 8, 0);
+  arch.add(left, right, top);
+  arch.position.set(0, 0, 8);
+  scene.add(arch);
+}
+
+/* Floating neon rings for depth cues */
+{
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x2de2ff,
+    transparent: true,
+    opacity: 0.55,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 5; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(4 + i * 0.4, 0.08, 8, 48), ringMat.clone());
+    ring.material.color.setHSL(0.5 + i * 0.06, 0.9, 0.55);
+    ring.position.set(
+      Math.cos(i * 1.4) * 55,
+      22 + i * 6,
+      Math.sin(i * 1.4) * 55
+    );
+    ring.rotation.x = Math.PI / 2 + i * 0.2;
+    scene.add(ring);
+  }
+}
+
+/* ---------- Track path (closed loop with climb, drop, helix, banked turns) ---------- */
+const pathPoints = [
+  new THREE.Vector3(0, 3.2, 10),
+  new THREE.Vector3(8, 3.5, 22),
+  new THREE.Vector3(22, 4, 28),
+  new THREE.Vector3(34, 6, 18),
+  new THREE.Vector3(38, 10, 4),
+  new THREE.Vector3(32, 16, -12),
+  new THREE.Vector3(18, 24, -22),
+  new THREE.Vector3(2, 32, -20),       // climb apex approach
+  new THREE.Vector3(-8, 38, -8),       // peak
+  new THREE.Vector3(-6, 36, 6),
+  new THREE.Vector3(4, 28, 14),        // first drop start
+  new THREE.Vector3(14, 14, 10),
+  new THREE.Vector3(18, 6, -2),        // valley
+  new THREE.Vector3(10, 5, -16),
+  new THREE.Vector3(-4, 8, -24),
+  new THREE.Vector3(-18, 14, -18),
+  new THREE.Vector3(-26, 18, -4),      // second climb
+  new THREE.Vector3(-24, 22, 12),
+  new THREE.Vector3(-12, 20, 22),
+  new THREE.Vector3(2, 12, 26),
+  new THREE.Vector3(12, 8, 18),
+  new THREE.Vector3(8, 18, 4),         // into helix
+  new THREE.Vector3(-2, 24, -4),
+  new THREE.Vector3(-14, 20, 2),
+  new THREE.Vector3(-16, 12, 14),
+  new THREE.Vector3(-8, 6, 20),
+  new THREE.Vector3(4, 4, 18),
+  new THREE.Vector3(0, 3.2, 10),
+];
+
+const curve = new THREE.CatmullRomCurve3(pathPoints, true, "catmullrom", 0.45);
+curve.arcLengthDivisions = 800;
+const trackLen = curve.getLength();
+
+/* Frenet frames along track */
+const FRAME_COUNT = 600;
+const frames = [];
+{
+  const up = new THREE.Vector3(0, 1, 0);
+  let prevBinormal = new THREE.Vector3(0, 0, 1);
+  for (let i = 0; i < FRAME_COUNT; i++) {
+    const t = i / FRAME_COUNT;
+    const pos = curve.getPointAt(t);
+    const tangent = curve.getTangentAt(t).normalize();
+    let normal = new THREE.Vector3().crossVectors(prevBinormal, tangent);
+    if (normal.lengthSq() < 1e-6) {
+      normal = new THREE.Vector3().crossVectors(up, tangent);
+    }
+    normal.normalize();
+    const binormal = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+    // Prefer world-up bias so the ride stays mostly upright
+    const desiredUp = up.clone();
+    const side = new THREE.Vector3().crossVectors(tangent, desiredUp);
+    if (side.lengthSq() > 1e-5) {
+      side.normalize();
+      const betterNormal = new THREE.Vector3().crossVectors(side, tangent).normalize();
+      // Blend toward upright, with extra bank on high-curvature turns
+      const nextT = ((i + 1) % FRAME_COUNT) / FRAME_COUNT;
+      const nextTan = curve.getTangentAt(nextT).normalize();
+      const turn = 1 - Math.max(-1, Math.min(1, tangent.dot(nextTan)));
+      const bankStrength = Math.min(1, turn * 4.5);
+      normal.lerp(betterNormal, 0.82).normalize();
+      // Bank into turns
+      const bankAxis = tangent.clone();
+      const bankQuat = new THREE.Quaternion().setFromAxisAngle(
+        bankAxis,
+        (side.dot(prevBinormal) > 0 ? -1 : 1) * bankStrength * 0.55
+      );
+      normal.applyQuaternion(bankQuat).normalize();
+      binormal.copy(new THREE.Vector3().crossVectors(tangent, normal).normalize());
+    }
+    prevBinormal = binormal.clone();
+    frames.push({ pos, tangent, normal, binormal, t });
+  }
+}
+
+function sampleFrame(u) {
+  const x = ((u % 1) + 1) % 1;
+  const f = x * FRAME_COUNT;
+  const i0 = Math.floor(f) % FRAME_COUNT;
+  const i1 = (i0 + 1) % FRAME_COUNT;
+  const a = f - Math.floor(f);
+  const A = frames[i0];
+  const B = frames[i1];
+  return {
+    pos: A.pos.clone().lerp(B.pos, a),
+    tangent: A.tangent.clone().lerp(B.tangent, a).normalize(),
+    normal: A.normal.clone().lerp(B.normal, a).normalize(),
+    binormal: A.binormal.clone().lerp(B.binormal, a).normalize(),
+  };
+}
+
+/* ---------- Build rails ---------- */
+const railOffset = 0.55;
+const railMat = new THREE.MeshStandardMaterial({
+  color: 0xb8c4d8,
+  metalness: 0.92,
+  roughness: 0.22,
+  envMapIntensity: 1,
+});
+const tieMat = new THREE.MeshStandardMaterial({
+  color: 0x2a1a14,
+  roughness: 0.85,
+  metalness: 0.1,
+});
+const supportMat = new THREE.MeshStandardMaterial({
+  color: 0x3a4558,
+  metalness: 0.7,
+  roughness: 0.4,
+});
+const glowRailMat = new THREE.MeshStandardMaterial({
+  color: 0x1a2030,
+  emissive: 0x2de2ff,
+  emissiveIntensity: 0.35,
+  metalness: 0.5,
+  roughness: 0.4,
+});
+
+function buildTube(offsetSign, radius = 0.07, tubular = 500) {
+  const pts = [];
+  for (let i = 0; i <= tubular; i++) {
+    const fr = sampleFrame(i / tubular);
+    pts.push(
+      fr.pos
+        .clone()
+        .add(fr.binormal.clone().multiplyScalar(offsetSign * railOffset))
+        .add(fr.normal.clone().multiplyScalar(0.05))
+    );
+  }
+  const c = new THREE.CatmullRomCurve3(pts, true);
+  const mesh = new THREE.Mesh(
+    new THREE.TubeGeometry(c, tubular, radius, 8, true),
+    offsetSign === 0 ? glowRailMat : railMat
+  );
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+const trackGroup = new THREE.Group();
+trackGroup.add(buildTube(1));
+trackGroup.add(buildTube(-1));
+// Center glow spine
+{
+  const pts = [];
+  for (let i = 0; i <= 400; i++) {
+    const fr = sampleFrame(i / 400);
+    pts.push(fr.pos.clone().add(fr.normal.clone().multiplyScalar(-0.15)));
+  }
+  const spine = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 400, 0.035, 6, true),
+    glowRailMat
+  );
+  trackGroup.add(spine);
+}
+
+/* Ties */
+{
+  const tieGeo = new THREE.BoxGeometry(railOffset * 2 + 0.35, 0.08, 0.22);
+  for (let i = 0; i < 180; i++) {
+    const fr = sampleFrame(i / 180);
+    const tie = new THREE.Mesh(tieGeo, tieMat);
+    tie.position.copy(fr.pos).add(fr.normal.clone().multiplyScalar(-0.08));
+    const m = new THREE.Matrix4().makeBasis(fr.binormal, fr.normal, fr.tangent);
+    tie.quaternion.setFromRotationMatrix(m);
+    tie.castShadow = true;
+    trackGroup.add(tie);
+  }
+}
+
+/* Support columns */
+{
+  for (let i = 0; i < 40; i++) {
+    const fr = sampleFrame(i / 40);
+    if (fr.pos.y < 4.5) continue;
+    const h = fr.pos.y - 0.2;
+    const col = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.28, h, 6),
+      supportMat
+    );
+    col.position.set(fr.pos.x, h / 2, fr.pos.z);
+    col.castShadow = true;
+    col.receiveShadow = true;
+    trackGroup.add(col);
+    // Cross brace to neighbor
+    const fr2 = sampleFrame((i + 0.5) / 40);
+    if (fr2.pos.y > 5) {
+      const mid = fr.pos.clone().lerp(fr2.pos, 0.5);
+      mid.y *= 0.55;
+      const brace = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.1, fr.pos.distanceTo(fr2.pos) * 0.9),
+        supportMat
+      );
+      brace.position.copy(mid);
+      brace.lookAt(fr2.pos.x, mid.y, fr2.pos.z);
+      trackGroup.add(brace);
+    }
+  }
+}
+scene.add(trackGroup);
+
+/* ---------- Rider car (barely visible cockpit edges) ---------- */
+const car = new THREE.Group();
+{
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: 0x11151c,
+    metalness: 0.8,
+    roughness: 0.3,
+  });
+  const accent = new THREE.MeshStandardMaterial({
+    color: 0xff2d95,
+    emissive: 0xff2d95,
+    emissiveIntensity: 0.9,
+    metalness: 0.5,
+    roughness: 0.35,
+  });
+  // Lap bar visible at bottom of view
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 0.06), accent);
+  bar.position.set(0, -0.55, -0.35);
+  car.add(bar);
+  const railL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.9), frameMat);
+  railL.position.set(-0.55, -0.5, -0.1);
+  const railR = railL.clone();
+  railR.position.x = 0.55;
+  car.add(railL, railR);
+  // Soft dashboard glow
+  const dashLight = new THREE.PointLight(0xff2d95, 0.35, 2.5, 2);
+  dashLight.position.set(0, -0.4, -0.2);
+  car.add(dashLight);
+}
+camera.add(car);
+
+/* ---------- Wind particles ---------- */
+const windCount = 280;
+const windGeo = new THREE.BufferGeometry();
+const windPos = new Float32Array(windCount * 3);
+const windVel = [];
+for (let i = 0; i < windCount; i++) {
+  windPos[i * 3] = (Math.random() - 0.5) * 4;
+  windPos[i * 3 + 1] = (Math.random() - 0.5) * 3;
+  windPos[i * 3 + 2] = -Math.random() * 18;
+  windVel.push(1.5 + Math.random() * 3);
+}
+windGeo.setAttribute("position", new THREE.BufferAttribute(windPos, 3));
+const wind = new THREE.Points(
+  windGeo,
+  new THREE.PointsMaterial({
+    color: 0xb8e0ff,
+    size: 0.045,
+    transparent: true,
+    opacity: 0.0,
+    depthWrite: false,
+  })
+);
+camera.add(wind);
+
+/* ---------- Ride physics / pacing ---------- */
+let progress = 0; // 0..1 along track
+let speed = 0.018; // normalized units / second (base)
+const MIN_SPEED = 0.012;
+const MAX_SPEED = 0.085;
+let lookAhead = 0.012;
+let shake = 0;
+let phaseLabel = "station";
+
+const speedFill = document.getElementById("speedFill");
+const speedText = document.getElementById("speedText");
+const speedlines = document.getElementById("speedlines");
+
+function heightAt(u) {
+  return sampleFrame(u).pos.y;
+}
+
+function updateSpeed(dt) {
+  const y0 = heightAt(progress);
+  const y1 = heightAt((progress + 0.008) % 1);
+  const slope = (y1 - y0) / 0.008; // rise over run in param space
+  // Gravity-ish: accelerate on descent, slow on climb
+  const accel = -slope * 0.0018;
+  speed += accel * dt * 60;
+  // Mild drag
+  speed *= 1 - 0.35 * dt;
+  // Floor near station / helix mid
+  speed = THREE.MathUtils.clamp(speed, MIN_SPEED, MAX_SPEED);
+
+  // Phase labels for HUD
+  if (y0 > 30 && slope > 0.5) phaseLabel = "apex";
+  else if (slope < -8) phaseLabel = "free fall";
+  else if (slope < -2) phaseLabel = "plunge";
+  else if (slope > 4) phaseLabel = "climb";
+  else if (y0 < 6) phaseLabel = "station";
+  else phaseLabel = "banked run";
+
+  lookAhead = THREE.MathUtils.lerp(0.008, 0.022, (speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED));
+  shake = THREE.MathUtils.lerp(shake, Math.max(0, (speed - 0.04) * 8), 0.1);
+}
+
+function placeCamera(dt) {
+  const fr = sampleFrame(progress);
+  const look = sampleFrame((progress + lookAhead) % 1);
+
+  // Seat offset above ties
+  const seat = fr.pos.clone().add(fr.normal.clone().multiplyScalar(1.05));
+  // Subtle lateral sway at speed
+  const sway = Math.sin(performance.now() * 0.008) * shake * 0.04;
+  seat.add(fr.binormal.clone().multiplyScalar(sway));
+  if (shake > 0.05) {
+    seat.x += (Math.random() - 0.5) * shake * 0.03;
+    seat.y += (Math.random() - 0.5) * shake * 0.02;
+  }
+
+  camera.position.copy(seat);
+
+  const target = look.pos.clone().add(look.normal.clone().multiplyScalar(0.95));
+  // Blend look direction with track tangent for stability
+  const lookDir = target.clone().sub(camera.position).normalize();
+  const blended = lookDir.lerp(fr.tangent, 0.25).normalize();
+  const aim = camera.position.clone().add(blended);
+  camera.up.copy(fr.normal);
+  camera.lookAt(aim);
+
+  // FOV punch on fast sections
+  const targetFov = THREE.MathUtils.lerp(68, 88, (speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED));
+  camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+  camera.updateProjectionMatrix();
+
+  // Wind streaks
+  const spdNorm = (speed - MIN_SPEED) / (MAX_SPEED - MIN_SPEED);
+  wind.material.opacity = THREE.MathUtils.clamp(spdNorm * 1.2 - 0.15, 0, 0.75);
+  const arr = wind.geometry.attributes.position.array;
+  for (let i = 0; i < windCount; i++) {
+    arr[i * 3 + 2] += windVel[i] * spdNorm * dt * 40;
+    if (arr[i * 3 + 2] > 1.5) {
+      arr[i * 3] = (Math.random() - 0.5) * 5;
+      arr[i * 3 + 1] = (Math.random() - 0.5) * 3.5;
+      arr[i * 3 + 2] = -12 - Math.random() * 10;
+    }
+  }
+  wind.geometry.attributes.position.needsUpdate = true;
+
+  // HUD
+  const kmh = Math.round(THREE.MathUtils.lerp(12, 118, spdNorm));
+  speedFill.style.width = `${Math.round(spdNorm * 100)}%`;
+  speedText.textContent = `${kmh} km/h · ${phaseLabel}`;
+  speedlines.style.opacity = String(THREE.MathUtils.clamp(spdNorm * 1.4 - 0.35, 0, 0.85));
+}
+
+/* ---------- Ambient sparkles along track ---------- */
+{
+  const N = 120;
+  const geo = new THREE.BufferGeometry();
+  const p = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const fr = sampleFrame(i / N);
+    const o = fr.pos
+      .clone()
+      .add(fr.normal.clone().multiplyScalar(0.4 + Math.random() * 1.5))
+      .add(fr.binormal.clone().multiplyScalar((Math.random() - 0.5) * 3));
+    p[i * 3] = o.x;
+    p[i * 3 + 1] = o.y;
+    p[i * 3 + 2] = o.z;
+  }
+  geo.setAttribute("position", new THREE.BufferAttribute(p, 3));
+  scene.add(
+    new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({
+        color: 0xff9ecd,
+        size: 0.18,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+      })
+    )
+  );
+}
+
+/* ---------- Resize ---------- */
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ---------- Loop ---------- */
+const clock = new THREE.Clock();
+let ready = false;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!ready) return;
+
+  updateSpeed(dt);
+  progress = (progress + speed * dt) % 1;
+  placeCamera(dt);
+
+  // Neon breathing
+  const t = clock.elapsedTime;
+  neonPink.intensity = 4.2 + Math.sin(t * 1.7) * 0.6;
+  neonCyan.intensity = 3.5 + Math.sin(t * 2.1 + 1) * 0.5;
+  neonAmber.intensity = 2.5 + Math.sin(t * 1.3 + 2) * 0.4;
+
+  renderer.render(scene, camera);
+}
+
+// Warm-start: place once, hide boot, then ride
+progress = 0.02;
+speed = 0.02;
+placeCamera(0.016);
+renderer.render(scene, camera);
+ready = true;
+document.getElementById("boot").classList.add("hide");
+animate();
+  </script>
+</body>
+</html>

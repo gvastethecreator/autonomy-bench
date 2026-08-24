@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warehouse Flow — Inbound → Outbound</title>
+<style>
+  :root {
+    --panel: rgba(17, 20, 28, 0.82);
+    --panel-border: rgba(255, 255, 255, 0.10);
+    --text: #e8ecf4;
+    --muted: #9aa3b2;
+    --accent: #4dabf7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0d1017;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--text);
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    display: block;
+    background: #0d1017;
+  }
+  #stage canvas { display: block; }
+
+  .panel {
+    position: fixed;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    z-index: 10;
+    user-select: none;
+  }
+
+  /* Top-left: title + stats */
+  #hud {
+    top: 16px; left: 16px;
+    padding: 12px 14px;
+    width: 248px;
+  }
+  #hud h1 {
+    font-size: 15px; font-weight: 700; letter-spacing: 0.04em;
+  }
+  #hud h1 .sub {
+    display: block;
+    font-size: 10.5px; font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+  #stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  #stats .s { display: flex; flex-direction: column; }
+  #stats .s .k { color: var(--muted); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+  #stats .s .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #stats .s .v small { font-size: 11px; color: var(--muted); font-weight: 600; }
+  #hud .bar-row { margin-top: 10px; }
+  #hud .bar-row .k { color: var(--muted); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 3px; }
+  #hud .bar { height: 7px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  #hud .bar > i { display: block; height: 100%; width: 0%; border-radius: 4px; transition: width 0.25s linear; }
+
+  /* Bottom-right: activity log */
+  #log {
+    right: 16px; bottom: 16px;
+    padding: 12px 14px;
+    width: 300px;
+  }
+  #log .t {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--muted);
+    margin-bottom: 8px;
+  }
+  #log ul { list-style: none; }
+  #log li {
+    font-size: 11.5px;
+    color: var(--text);
+    padding: 3px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.06);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #log li .tick { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+  /* Bottom-center: controls */
+  #controls {
+    bottom: 16px; left: 50%;
+    transform: translateX(-50%);
+    padding: 9px 12px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  #controls button {
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 12.5px; font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s, border-color 0.15s;
+    font-family: inherit;
+  }
+  #controls button:hover { background: rgba(255,255,255,0.13); }
+  #controls button:active { transform: translateY(1px); }
+  #controls button.on {
+    background: var(--accent);
+    border-color: transparent;
+    color: #0b1524;
+  }
+  #controls .sep { width: 1px; height: 22px; background: rgba(255,255,255,0.12); }
+  #controls .hint { color: var(--muted); font-size: 11px; padding: 0 4px; }
+  #controls button:disabled { opacity: 0.4; cursor: default; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="scene"></canvas></div>
+
+<div id="hud" class="panel">
+  <h1>🏭 WAREHOUSE FLOW<span class="sub">Inbound → Outbound</span></h1>
+  <div id="stats">
+    <div class="s"><span class="k">Delivered</span><span class="v" id="st-delivered">0</span></div>
+    <div class="s"><span class="k">Inbound</span><span class="v" id="st-inbound">0</span></div>
+    <div class="s"><span class="k">In buffer</span><span class="v" id="st-buffer">0</span></div>
+    <div class="s"><span class="k">Workers busy</span><span class="v" id="st-busy">0</span></div>
+  </div>
+  <div class="bar-row">
+    <div class="k">Workers</div>
+    <div class="bar" id="bar-workers"><i style="background:#74c0fc"></i></div>
+  </div>
+</div>
+
+<div id="log" class="panel">
+  <div class="t">Activity</div>
+  <ul id="log-list"></ul>
+</div>
+
+<div id="controls" class="panel">
+  <button id="btn-pause">⏸ Pause</button>
+  <span class="sep"></span>
+  <span class="hint">Speed</span>
+  <button id="spd1" class="on">1×</button>
+  <button id="spd2">2×</button>
+  <button id="spd4">4×</button>
+  <span class="sep"></span>
+  <button id="btn-reset">↺ Reset</button>
+</div>
+
+<script>
+"use strict";
+
+/* ============================== Setup ============================== */
+const W = 1600, H = 900;                 // virtual world size
+const WALL_T = 120, WALL_B = 780;        // interior top / bottom
+const WALL_L = 180, WALL_R = 1420;       // interior left / right
+const DOCK_YS = [235, 450, 665];         // dock rows
+const TRAILER_W = 210, TRAILER_H = 86;
+const CAB_W = 64, CAB_H = 78;
+
+const PALETTE = ["#ff6b6b","#ffa94d","#ffd43b","#69db7c","#38d9a9",
+                 "#4dabf7","#748ffc","#da77f2","#f783ac","#a9e34b"];
+let nextColor = 0;
+
+const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d");
+
+let cw = 0, ch = 0, scale = 1, ox = 0, oy = 0;
+function resize() {
+  cw = window.innerWidth; ch = window.innerHeight;
+  canvas.width = cw; canvas.height = ch;
+  scale = Math.min(cw / W, ch / H);
+  ox = (cw - W * scale) / 2;
+  oy = (ch - H * scale) / 2;
+}
+window.addEventListener("resize", resize);
+resize();
+
+function toScreen(x, y) { return [ox + x * scale, oy + y * scale]; }
+
+/* ---- helpers ---- */
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+function dist2(x1, y1, x2, y2) { const dx = x2 - x1, dy = y2 - y1; return dx * dx + dy * dy; }
+function rrect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function shade(hex, f) { // lighten (f>0) / darken (f<0)
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (f > 0) { r += (255 - r) * f; g += (255 - g) * f; b += (255 - b) * f; }
+  else { r *= (1 + f); g *= (1 + f); b *= (1 + f); }
+  return `rgb(${r | 0},${g | 0},${b | 0})`;
+}
+
+/* ---- sim state ---- */
+let sim = null;
+
+function makeSim() {
+  return {
+    trucks: [],
+    workers: [],
+    freeIn: [true, true, true],   // receiving dock free?
+    freeOut: [true, true, true],  // shipping dock free?
+    slots: [],                    // buffer pallet slots
+    restSpots: [],                // idle waiting spots
+    spawnInT: rand(2, 5),
+    spawnOutT: rand(3, 7),
+    clock: 0,
+    tick: 0,
+    delivered: 0,
+    received: 0,
+    bufferDrops: 0,
+    events: [],
+    speed: 1,
+    paused: false,
+  };
+}
+
+/* ============================== Buffer & rest ============================== */
+function buildBufferAndRest() {
+  const slots = [];
+  for (const x of [760, 980]) {
+    for (const y of [235, 380, 525, 670]) {
+      slots.push({ x, y, w: 108, h: 66, pkg: null });
+    }
+  }
+  const rest = [
+    { x: 560, y: 668 }, { x: 720, y: 668 }, { x: 880, y: 668 }, { x: 1040, y: 668 },
+    { x: 560, y: 745 }, { x: 720, y: 745 }, { x: 880, y: 745 }, { x: 1040, y: 745 },
+  ];
+  return { slots, rest };
+}
+
+/* ============================== Packages ============================== */
+let pkgId = 0;
+function makePackage(color, truckId) {
+  return { id: ++pkgId, color, truckId, claimed: false, x: 0, y: 0 };
+}
+
+/* ============================== Trucks ============================== */
+const FREE_SPEED = 150;
+
+function truckRect(t) {
+  if (t.role === "in") {
+    return { x: t.x - CAB_W - 6, y: t.dockY - TRAILER_H / 2 - 6, w: CAB_W + 6 + TRAILER_W, h: TRAILER_H + 12 };
+  }
+  return { x: t.x, y: t.dockY - TRAILER_H / 2 - 6, w: TRAILER_W + 6 + CAB_W, h: TRAILER_H + 12 };
+}
+
+function spawnIncoming(dockIndex, s) {
+  const col = PALETTE[nextColor % PALETTE.length]; nextColor++;
+  const cargo = randInt(10, 18);
+  const t = {
+    id: "IN-" + (s.truckSeq = (s.truckSeq || 0) + 1),
+    role: "in",
+    dockIndex,
+    dockY: DOCK_YS[dockIndex],
+    state: "entering",
+    x: -460,                 // trailer top-left
+    targetX: WALL_L - TRAILER_W,
+    cargo,                   // remaining boxes in the trailer
+    capacity: 0,
+    color: col,
+    loadCount: 0,
+    popTimer: rand(0.15, 0.6),
+    closeT: 0,
+    departT: 0,
+    popSeq: 0,
+  };
+  s.trucks.push(t);
+  s.freeIn[dockIndex] = false;
+  pushEvent(s, `${t.id} arriving at receiving bay ${dockIndex + 1}`, col);
+  return t;
+}
+
+function spawnOutgoing(dockIndex, s) {
+  const cap = randInt(8, 14);
+  const t = {
+    id: "OUT-" + (s.truckSeq = (s.truckSeq || 0) + 1),
+    role: "out",
+    dockIndex,
+    dockY: DOCK_YS[dockIndex],
+    state: "entering",
+    x: W + 480,              // trailer top-left (comes from right)
+    targetX: WALL_R,
+    cargo: 0,
+    capacity: cap,
+    color: "#c8d0dd",
+    loadCount: 0,
+    loadedCols: [],
+    popTimer: 0,
+    closeT: 0,
+    departT: 0,
+    popSeq: 0,
+  };
+  s.trucks.push(t);
+  s.freeOut[dockIndex] = false;
+  pushEvent(s, `${t.id} arriving at shipping bay ${dockIndex + 1} (needs ${cap})`, "#69db7c");
+  return t;
+}
+
+/* package spawn position for incoming pile */
+function pileSlotFor(t, idx) {
+  const row = Math.floor(idx / 4), col = idx % 4;
+  return { x: WALL_L + 66 + col * 33, y: t.dockY - 40 + row * 32 };
+}
+
+function updateTruck(t, dt, s) {
+  if (t.role === "in") {
+    if (t.state === "entering") {
+      t.x = Math.min(t.targetX, t.x + FREE_SPEED * dt);
+      if (t.x >= t.targetX) { t.state = "unloading"; t.popTimer = 0.5; }
+    } else if (t.state === "unloading") {
+      t.popTimer -= dt;
+      if (t.popTimer <= 0 && t.cargo > 0) {
+        t.cargo--;
+        const p = makePackage(t.color, t.id);
+        const slot = pileSlotFor(t, t.popSeq++);
+        p.x = slot.x; p.y = slot.y;
+        t.packages = t.packages || [];
+        t.packages.push(p);
+        s.received++;
+        t.popTimer = rand(0.7, 1.25);
+      }
+      if (t.cargo === 0) { t.state = "closing"; t.closeT = 0.6; }
+    } else if (t.state === "closing") {
+      t.closeT -= dt;
+      if (t.closeT <= 0) { t.state = "leaving"; t.departT = 0; }
+    } else if (t.state === "leaving") {
+      t.x -= FREE_SPEED * 0.9 * dt;
+      if (t.x < -560) {
+        s.freeIn[t.dockIndex] = true;
+        t.state = "gone";
+        pushEvent(s, `${t.id} departed`, "#9aa3b2");
+      }
+    }
+  } else {
+    if (t.state === "entering") {
+      t.x = Math.max(t.targetX, t.x - FREE_SPEED * dt);
+      if (t.x <= t.targetX) { t.state = "loading"; }
+    } else if (t.state === "loading") {
+      if (t.loadCount >= t.capacity) {
+        t.state = "closing"; t.closeT = 1.0;
+      }
+    } else if (t.state === "closing") {
+      t.closeT -= dt;
+      if (t.closeT <= 0) { t.state = "leaving"; }
+    } else if (t.state === "leaving") {
+      t.x += FREE_SPEED * 0.95 * dt;
+      if (t.x > W + 560) {
+        s.freeOut[t.dockIndex] = true;
+        t.state = "gone";
+        pushEvent(s, `${t.id} departed with ${t.loadCount} boxes`, "#69db7c");
+      }
+    }
+  }
+}
+
+/* ============================== Workers ============================== */
+const WORKER_SPEED = 150;
+const ARRIVE_R = 20;
+const SEP_R = 30;
+
+function makeWorker(i, s, spawn) {
+  const w = {
+    id: i,
+    name: "W" + (i + 1),
+    pos: { x: spawn.x, y: spawn.y },
+    vel: { x: 0, y: 0 },
+    restSpot: spawn,
+    phase: "idle",
+    t: 0,
+    pickTarget: null,     // package to collect
+    dropType: null,       // "truck" | "buffer"
+    dropTruck: null,
+    dropSlot: null,
+    dropPos: null,
+    carried: null,
+    thinkT: rand(0, 0.4),
+    bob: rand(0, 6.28),
+  };
+  spawn.claimed = w;
+  return w;
+}
+
+function setRest(w, s) {
+  let best = null, bd = Infinity;
+  for (const r of s.restSpots) {
+    if (r.claimed) continue;
+    const d = dist2(w.pos.x, w.pos.y, r.x, r.y);
+    if (d < bd) { bd = d; best = r; }
+  }
+  w.restSpot = best;
+  if (best) best.claimed = w;
+}
+
+function releaseRest(w) {
+  if (w.restSpot && w.restSpot.claimed === w) w.restSpot.claimed = null;
+  w.restSpot = null;
+}
+
+/* candidate sources / destinations */
+function pileCandidates(s) {
+  const out = [];
+  for (const t of s.trucks) {
+    if (t.role === "in" && t.packages) {
+      for (const p of t.packages) if (!p.claimed) out.push({ pkg: p, kind: "pile" });
+    }
+  }
+  return out;
+}
+function bufferCandidates(s) {
+  const out = [];
+  for (const sl of s.slots) if (sl.pkg && !sl.pkg.claimed) out.push({ pkg: sl.pkg, kind: "buffer", slot: sl });
+  return out;
+}
+function shippingTrucks(s) {
+  return s.trucks.filter(t => t.role === "out" && t.state === "loading" && t.loadCount < t.capacity);
+}
+function freeSlots(s) {
+  return s.slots.filter(sl => !sl.pkg);
+}
+
+function decideDrop(s, w, hintTruck) {
+  const trucks = shippingTrucks(s);
+  if (trucks.length > 0) {
+    let truck = hintTruck;
+    if (!truck || truck.state !== "loading" || truck.loadCount >= truck.capacity) {
+      let best = null, bd = Infinity;
+      for (const t of trucks) {
+        const d = dist2(w.pos.x, w.pos.y, t.x + 70, t.dockY);
+        if (d < bd) { bd = d; best = t; }
+      }
+      truck = best;
+    }
+    if (truck) {
+      return { type: "truck", truck, pos: { x: truck.x + 78, y: truck.dockY } };
+    }
+  }
+  const slots = freeSlots(s);
+  if (slots.length > 0) {
+    let best = null, bd = Infinity;
+    for (const sl of slots) {
+      const d = dist2(w.pos.x, w.pos.y, sl.x, sl.y);
+      if (d < bd) { bd = d; best = sl; }
+    }
+    if (best) return { type: "buffer", slot: best, pos: { x: best.x, y: best.y } };
+  }
+  return null;
+}
+
+/* Find a job for an idle worker. Priority:
+   1) buffer -> shipping truck   (keep buffer from overflowing)
+   2) pile   -> shipping truck
+   3) pile   -> free buffer slot (stage when no truck is waiting)
+   Sources are selected by proximity so workers spread across the yard
+   instead of piling on the first truck.
+*/
+function findJob(s, w) {
+  const truck = shippingTrucks(s)[0];
+  if (truck) {
+    const bc = bufferCandidates(s);
+    if (bc.length > 0) return { src: nearestSrc(w, bc), dest: decideDrop(s, w, truck) };
+    const pc = pileCandidates(s);
+    if (pc.length > 0) return { src: nearestSrc(w, pc), dest: decideDrop(s, w, truck) };
+    return null;
+  }
+  const pc = pileCandidates(s);
+  if (pc.length > 0 && freeSlots(s).length > 0) {
+    return { src: nearestSrc(w, pc), dest: decideDrop(s, w, null) };
+  }
+  return null;
+}
+
+function nearestSrc(w, list) {
+  let best = list[0], bd = Infinity;
+  for (const c of list) {
+    const d = dist2(w.pos.x, w.pos.y, c.pkg.x, c.pkg.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
+}
+
+function updateWorker(w, dt, s) {
+  w.bob += dt * 6;
+  // --- steering forces ---
+  let fx = 0, fy = 0;
+  const steerTarget = w.steerTarget; // set per-phase
+
+  if (steerTarget) {
+    const dx = steerTarget.x - w.pos.x, dy = steerTarget.y - w.pos.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 0.001) {
+      const k = Math.min(1, d / 40);
+      fx += (dx / d) * WORKER_SPEED * k;
+      fy += (dy / d) * WORKER_SPEED * k;
+    }
+  }
+
+  // separation from other workers (softened near the active target so
+  // final arrival is not blocked by anti-clustering)
+  const nearTarget = steerTarget ? dist2(w.pos.x, w.pos.y, steerTarget.x, steerTarget.y) < 95 * 95 : false;
+  const sepK = nearTarget ? 0.22 : 1;
+  for (const o of s.workers) {
+    if (o === w) continue;
+    const dx = w.pos.x - o.pos.x, dy = w.pos.y - o.pos.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < SEP_R * SEP_R && d2 > 0.0001) {
+      const d = Math.sqrt(d2);
+      const f = (SEP_R - d) / SEP_R;
+      fx += (dx / d) * 90 * f * sepK;
+      fy += (dy / d) * 90 * f * sepK;
+    }
+  }
+
+  // avoid trucks and wall segments
+  for (const t of s.trucks) {
+    if (t.state === "gone") continue;
+    // when dropping inside this truck, stand down the avoidance
+    if (w.dropType === "truck" && w.dropTruck === t) continue;
+    const r = truckRect(t);
+    const cx = clamp(w.pos.x, r.x, r.x + r.w);
+    const cy = clamp(w.pos.y, r.y, r.y + r.h);
+    const dx = w.pos.x - cx, dy = w.pos.y - cy;
+    const d2 = dx * dx + dy * dy;
+    const margin = 30;
+    if (d2 < margin * margin) {
+      const d = Math.sqrt(d2) || 0.001;
+      const f = (margin - d) / margin;
+      fx += (dx / d) * 130 * f;
+      fy += (dy / d) * 130 * f;
+    }
+  }
+  avoidWalls(w, (px, py) => { fx += px; fy += py; });
+
+  // integrate (kinematic: keep some of previous motion for smoothness)
+  w.vel.x = w.vel.x * 0.5 + fx * 0.5;
+  w.vel.y = w.vel.y * 0.5 + fy * 0.5;
+  const sp = Math.hypot(w.vel.x, w.vel.y);
+  if (sp > WORKER_SPEED) { w.vel.x *= WORKER_SPEED / sp; w.vel.y *= WORKER_SPEED / sp; }
+  w.pos.x += w.vel.x * dt;
+  w.pos.y += w.vel.y * dt;
+  // hard bounds: keep people inside the yard (they may step into truck bays)
+  w.pos.x = clamp(w.pos.x, WALL_L - 60, WALL_R + 95);
+  w.pos.y = clamp(w.pos.y, WALL_T + 8, WALL_B + 6);
+  if (sp > 6) w.dir = Math.atan2(w.vel.y, w.vel.x);
+
+  // --- state machine ---
+  if (w.phase === "idle") {
+    w.thinkT -= dt;
+    if (w.thinkT <= 0) {
+      w.thinkT = 0.25;
+      const job = findJob(s, w);
+      if (job && job.dest) {
+        releaseRest(w);
+        w.pickTarget = job.src.pkg;
+        w.pickTarget.claimed = true;
+        w.jobSrc = job.src;
+        if (job.dest.type === "truck") {
+          w.dropType = "truck";
+          w.dropTruck = job.dest.truck;
+          w.dropSlot = null;
+        } else {
+          w.dropType = "buffer";
+          w.dropSlot = job.dest.slot;
+          w.dropTruck = null;
+        }
+        w.steerTarget = { x: w.pickTarget.x, y: w.pickTarget.y };
+        w.phase = "walk_pickup";
+        w.t = rand(0.25, 0.45);
+      } else {
+        // idle — stand at a rest spot
+        if (!w.restSpot && !w.steerTarget) setRest(w, s);
+        if (w.restSpot) w.steerTarget = { x: w.restSpot.x, y: w.restSpot.y };
+        else w.steerTarget = null; // no free spot: hold still
+      }
+    }
+  } else if (w.phase === "walk_pickup") {
+    const d2 = dist2(w.pos.x, w.pos.y, w.pickTarget.x, w.pickTarget.y);
+    if (d2 < ARRIVE_R * ARRIVE_R) { w.steerTarget = null; w.phase = "pickup"; w.t = 0.3; }
+  } else if (w.phase === "pickup") {
+    w.t -= dt;
+    if (w.t <= 0) {
+      // take the package
+      const p = w.pickTarget;
+      const src = w.jobSrc;
+      if (src.kind === "pile") {
+        const tt = s.trucks.find(t => t.role === "in" && t.packages && t.packages.includes(p));
+        if (tt) { const i = tt.packages.indexOf(p); tt.packages.splice(i, 1); }
+      } else if (src.kind === "buffer") {
+        if (src.slot.pkg === p) src.slot.pkg = null;
+      }
+      w.carried = p;
+      w.phase = "walk_drop";
+      // validate the plan for the drop
+      const dest = decideDrop(s, w, w.dropType === "truck" ? w.dropTruck : null);
+      if (dest) {
+        if (dest.type === "truck") { w.dropType = "truck"; w.dropTruck = dest.truck; w.dropSlot = null; }
+        else { w.dropType = "buffer"; w.dropSlot = dest.slot; w.dropTruck = null; }
+        const dp = dest.pos;
+        w.steerTarget = { x: dp.x, y: dp.y };
+        w.dropPos = dp;
+      } else {
+        w.holdT = 0;
+        w.phase = "hold";
+        w.steerTarget = null;
+      }
+    }
+  } else if (w.phase === "walk_drop") {
+    const d2 = dist2(w.pos.x, w.pos.y, w.dropPos.x, w.dropPos.y);
+    if (d2 < ARRIVE_R * ARRIVE_R) { w.steerTarget = null; w.phase = "drop"; w.t = 0.28; }
+  } else if (w.phase === "drop") {
+    w.t -= dt;
+    if (w.t <= 0) {
+      if (w.dropType === "truck" && w.dropTruck &&
+          w.dropTruck.state === "loading" && w.dropTruck.loadCount < w.dropTruck.capacity) {
+        w.dropTruck.loadCount++;
+        w.dropTruck.loadedCols.push(w.carried.color);
+        s.delivered++;
+        if (w.carried) {
+          pushEvent(s, `${w.name} loaded ${w.carried.truckId} box into ${w.dropTruck.id}`, w.carried.color);
+        }
+      } else if (w.dropType === "buffer" && w.dropSlot && !w.dropSlot.pkg) {
+        w.dropSlot.pkg = w.carried;
+        w.dropSlot.pkg.claimed = false;
+        s.bufferDrops++;
+      } else {
+        // destination became invalid — re-route
+        w.phase = "hold";
+        w.holdT = 0.2;
+        w.dropType = null;
+        w.steerTarget = null;
+        return;
+      }
+      w.carried = null;
+      w.dropType = null; w.dropTruck = null; w.dropSlot = null; w.dropPos = null;
+      w.phase = "idle";
+      w.thinkT = 0.1;
+    }
+  } else if (w.phase === "hold") {
+    w.holdT -= dt;
+    if (w.holdT <= 0) {
+      const dest = decideDrop(s, w, null);
+      if (dest) {
+        if (dest.type === "truck") { w.dropType = "truck"; w.dropTruck = dest.truck; w.dropSlot = null; }
+        else { w.dropType = "buffer"; w.dropSlot = dest.slot; w.dropTruck = null; }
+        const dp = dest.pos;
+        w.steerTarget = { x: dp.x, y: dp.y };
+        w.dropPos = dp;
+        w.phase = "walk_drop";
+      } else {
+        w.holdT = 0.3;
+      }
+    }
+  }
+}
+
+function avoidWalls(w, push) {
+  for (const n of wallSegments()) {
+    const px = clamp(w.pos.x, n.x, n.x + n.w);
+    const py = clamp(w.pos.y, n.y, n.y + n.h);
+    const dx = w.pos.x - px, dy = w.pos.y - py;
+    const d2 = dx * dx + dy * dy;
+    const margin = 34;
+    if (d2 < margin * margin) {
+      const d = Math.sqrt(d2) || 0.001;
+      const f = (margin - d) / margin;
+      // normal points toward the interior of the warehouse
+      push(n.nx * 220 * f, n.ny * 220 * f);
+    }
+  }
+}
+
+function wallSegments() {
+  const segs = [];
+  const t = 18, bayHalf = 44;
+  // left wall (interior to the right)
+  let y0 = WALL_T;
+  for (const dy of DOCK_YS) {
+    if (dy - bayHalf > y0) segs.push({ x: WALL_L - t, y: y0, w: t, h: dy - bayHalf - y0, nx: 1, ny: 0 });
+    y0 = dy + bayHalf;
+  }
+  if (WALL_B > y0) segs.push({ x: WALL_L - t, y: y0, w: t, h: WALL_B - y0, nx: 1, ny: 0 });
+  // right wall (interior to the left)
+  y0 = WALL_T;
+  for (const dy of DOCK_YS) {
+    if (dy - bayHalf > y0) segs.push({ x: WALL_R, y: y0, w: t, h: dy - bayHalf - y0, nx: -1, ny: 0 });
+    y0 = dy + bayHalf;
+  }
+  if (WALL_B > y0) segs.push({ x: WALL_R, y: y0, w: t, h: WALL_B - y0, nx: -1, ny: 0 });
+  // top wall (interior downward)
+  segs.push({ x: WALL_L, y: WALL_T - t, w: WALL_R - WALL_L, h: t, nx: 0, ny: 1 });
+  // bottom wall (interior upward)
+  segs.push({ x: WALL_L, y: WALL_B, w: WALL_R - WALL_L, h: t, nx: 0, ny: -1 });
+  return segs;
+}
+
+/* ============================== Events ============================== */
+function pushEvent(s, text, color) {
+  s.events.unshift({ text, color, t: s.clock });
+  if (s.events.length > 24) s.events.length = 24;
+}
+
+/* ============================== Spawning ============================== */
+function flowExists(s) {
+  for (const t of s.trucks) if (t.role === "in" && ((t.packages && t.packages.length) || t.cargo > 0)) return true;
+  for (const sl of s.slots) if (sl.pkg) return true;
+  for (const w of s.workers) if (w.carried || w.phase === "walk_pickup" || w.phase === "pickup") return true;
+  return false;
+}
+
+function updateSpawning(dt, s) {
+  s.spawnInT -= dt;
+  if (s.spawnInT <= 0) {
+    s.spawnInT = rand(7, 14);
+    const free = s.freeIn.map((f, i) => f ? i : -1).filter(i => i >= 0);
+    const active = s.trucks.filter(t => t.role === "in" && t.state !== "gone").length;
+    if (free.length > 0 && active < 4) {
+      spawnIncoming(free[randInt(0, free.length - 1)], s);
+    }
+  }
+  s.spawnOutT -= dt;
+  if (s.spawnOutT <= 0) {
+    s.spawnOutT = rand(4, 9);
+    const free = s.freeOut.map((f, i) => f ? i : -1).filter(i => i >= 0);
+    const active = s.trucks.filter(t => t.role === "out" && t.state !== "gone").length;
+    if (free.length > 0 && active < 3 && flowExists(s)) {
+      spawnOutgoing(free[randInt(0, free.length - 1)], s);
+    }
+  }
+}
+
+/* ============================== Build & reset ============================== */
+function resetSim() {
+  pkgId = 0;
+  const s = makeSim();
+  const b = buildBufferAndRest();
+  s.slots = b.slots;
+  s.restSpots = b.rest;
+  s.workers = [];
+  const NW = 8;
+  const spots = [...s.restSpots];
+  for (let i = spots.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spots[i], spots[j]] = [spots[j], spots[i]];
+  }
+  for (let i = 0; i < NW; i++) s.workers.push(makeWorker(i, s, spots[i]));
+  // prime the yard so it is already alive on first paint
+  spawnIncoming(0, s);
+  spawnIncoming(2, s);
+  sim = s;
+  syncControls();
+}
+
+/* ============================== Drawing ============================== */
+function drawFloor() {
+  // base floor
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#262a34");
+  g.addColorStop(1, "#1e222b");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // subtle grid
+  ctx.strokeStyle = "rgba(255,255,255,0.032)";
+  ctx.lineWidth = 1;
+  for (let x = 20; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 20; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // zone tints
+  const tint = (x, w, col) => {
+    ctx.fillStyle = col;
+    ctx.fillRect(x, WALL_T, w, WALL_B - WALL_T);
+  };
+  tint(WALL_L, 250, "rgba(77,150,255,0.05)");
+  tint(2 * WALL_R - 250 - (WALL_R - WALL_L) / 2, (WALL_R - WALL_L) / 2, "rgba(255,190,80,0.045)");
+  tint(WALL_R - 250, 250, "rgba(105,220,140,0.05)");
+
+  // dock bay markings (floor stripes where trucks park)
+  for (let i = 0; i < 3; i++) {
+    const y = DOCK_YS[i];
+    // receiving
+    ctx.strokeStyle = "rgba(255,200,60,0.35)";
+    ctx.setLineDash([14, 10]);
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(WALL_L, y - 46); ctx.lineTo(WALL_L - 92, y - 46); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(WALL_L, y + 46); ctx.lineTo(WALL_L - 92, y + 46); ctx.stroke();
+    // shipping
+    ctx.strokeStyle = "rgba(105,220,140,0.35)";
+    ctx.beginPath(); ctx.moveTo(WALL_R, y - 46); ctx.lineTo(WALL_R + 92, y - 46); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(WALL_R, y + 46); ctx.lineTo(WALL_R + 92, y + 46); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    ctx.font = "600 15px 'Segoe UI', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("RECEIVING " + (i + 1), WALL_L - 2, y - 54);
+    ctx.textAlign = "right";
+    ctx.fillText("SHIPPING " + (i + 1), WALL_R + 2, y - 54);
+  }
+
+  // flow arrows
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  for (const y of [300, 610]) {
+    for (let x = 430; x < 1240; x += 130) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 8); ctx.lineTo(x + 16, y); ctx.lineTo(x, y + 8);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  // zone labels
+  ctx.fillStyle = "rgba(255,255,255,0.16)";
+  ctx.font = "700 22px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("RECEIVING", 300, 96);
+  ctx.fillText("STAGING", 800, 96);
+  ctx.fillText("SHIPPING", 1300, 96);
+}
+
+function drawWalls() {
+  const segs = wallSegments();
+  ctx.fillStyle = "#2f3542";
+  for (const b of segs) {
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.fillRect(b.x, b.y, 4, b.h);
+    ctx.fillStyle = "#2f3542";
+  }
+}
+
+function drawBuffer(s) {
+  for (const sl of s.slots) {
+    // pallet
+    ctx.fillStyle = "#3b311f";
+    rrect(sl.x - sl.w / 2, sl.y - sl.h / 2, sl.w, sl.h, 6); ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
+    rrect(sl.x - sl.w / 2, sl.y - sl.h / 2, sl.w, sl.h, 6); ctx.stroke();
+    const sy = sl.h / 2 - 14;
+    ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sl.x - sl.w / 2 + 8, sl.y - sy); ctx.lineTo(sl.x + sl.w / 2 - 8, sl.y - sy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sl.x - sl.w / 2 + 8, sl.y + sy); ctx.lineTo(sl.x + sl.w / 2 - 8, sl.y + sy); ctx.stroke();
+    if (sl.pkg) drawPackage(sl.pkg, sl.x, sl.y - 2, 30);
+  }
+}
+
+function drawPackage(p, x, y, size, idleT) {
+  const bob = idleT !== undefined ? Math.sin(idleT * 4 + p.id) * 2 : 0;
+  const xx = x, yy = y + bob;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  rrect(xx - size / 2 + 3, yy - size / 2 + 4, size, size, 3); ctx.fill();
+  ctx.fillStyle = p.color;
+  rrect(xx - size / 2, yy - size / 2, size, size, 3); ctx.fill();
+  ctx.strokeStyle = shade(p.color, -0.35); ctx.lineWidth = 1.5;
+  rrect(xx - size / 2, yy - size / 2, size, size, 3); ctx.stroke();
+  // tape lines
+  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.beginPath(); ctx.moveTo(xx - size / 2, yy - size / 2 + 3); ctx.lineTo(xx - size / 2, yy + size / 2 - 3); ctx.stroke();
+}
+
+function drawPiles(s) {
+  for (const t of s.trucks) {
+    if (t.role !== "in" || !t.packages) continue;
+    for (const p of t.packages) drawPackage(p, p.x, p.y, 26, sim.clock);
+  }
+}
+
+function drawTruck(t) {
+  const y = t.dockY;
+  const bodyCol = t.role === "in" ? "#d7dce4" : "#d0d6e0";
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(t.x + (t.role === "in" ? 60 : 130), y + TRAILER_H / 2 + 8, 150, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const cabX = t.role === "in" ? t.x - CAB_W - 6 : t.x + TRAILER_W + 6;
+
+  // trailer
+  ctx.fillStyle = bodyCol;
+  rrect(t.x, y - TRAILER_H / 2, TRAILER_W, TRAILER_H, 7); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 2;
+  rrect(t.x, y - TRAILER_H / 2, TRAILER_W, TRAILER_H, 7); ctx.stroke();
+  // trailer stripe
+  const stripeCol = t.color;
+  ctx.fillStyle = stripeCol;
+  ctx.fillRect(t.x + 6, y - TRAILER_H / 2 + 10, t.role === "in" ? TRAILER_W - 12 : TRAILER_W - 12, 8);
+
+  // cargo boxes in trailer
+  const bw = 24, bh = 18;
+  if (t.role === "in") {
+    const n = t.cargo;
+    const cols = Math.max(1, Math.floor((TRAILER_W - 16) / bw));
+    const rows = Math.ceil(n / cols);
+    const x0 = t.x + 8 + (t.role === "out" ? 0 : 0);
+    for (let i = 0; i < n; i++) {
+      const r = Math.floor(i / cols), c = i % cols;
+      const bx = x0 + c * bw + 1, by = y - TRAILER_H / 2 + 24 + r * bh + 1;
+      ctx.fillStyle = t.color;
+      ctx.fillRect(bx, by, bw - 2, bh - 2);
+      ctx.strokeStyle = shade(t.color, -0.35); ctx.lineWidth = 1;
+      ctx.strokeRect(bx, by, bw - 2, bh - 2);
+    }
+  } else {
+    const n = t.loadedCols.length;
+    if (n > 0) {
+      const cols = 6, bs = 20, gap = 2, step = bs + gap;
+      const rows = Math.ceil(n / cols);
+      for (let i = 0; i < n; i++) {
+        const r = Math.floor(i / cols), c = i % cols;
+        const bx = t.x + 12 + c * step;
+        const by = y + TRAILER_H / 2 - 16 - r * step; // fill from the bed up
+        ctx.fillStyle = t.loadedCols[i];
+        rrect(bx, by, bs, bs, 2); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.3)"; ctx.lineWidth = 1;
+        rrect(bx, by, bs, bs, 2); ctx.stroke();
+      }
+    }
+  }
+
+  // cab
+  ctx.fillStyle = "#39404e";
+  rrect(cabX, y - CAB_H / 2, CAB_W, CAB_H, 6); ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 2;
+  rrect(cabX, y - CAB_H / 2, CAB_W, CAB_H, 6); ctx.stroke();
+  // windshield
+  ctx.fillStyle = "rgba(140,200,255,0.55)";
+  if (t.role === "in") rrect(t.x - CAB_W - 4, y - CAB_H / 2 + 8, CAB_W - 8, 20, 3); else rrect(t.x + TRAILER_W + 12, y - CAB_H / 2 + 8, CAB_W - 8, 20, 3);
+  ctx.fill();
+
+  // wheels
+  ctx.fillStyle = "#16181e";
+  const wx1 = t.role === "in" ? t.x + 24 : t.x + TRAILER_W - 34;
+  const wx2 = t.role === "in" ? t.x + TRAILER_W - 30 : t.x + 10;
+  ctx.fillRect(wx1, y + TRAILER_H / 2 - 4, 34, 12);
+  ctx.fillRect(wx2, y + TRAILER_H / 2 - 4, 34, 12);
+  ctx.fillRect(t.role === "in" ? cabX + 8 : cabX + 8, y + CAB_H / 2 - 4, 32, 12);
+
+  // id label
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "700 15px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(t.id, t.x + TRAILER_W / 2, y - TRAILER_H / 2 - 12);
+
+  // status tag
+  let tag = "";
+  if (t.state === "entering") tag = "arriving";
+  else if (t.state === "unloading") tag = "unloading";
+  else if (t.state === "loading") tag = `${t.loadCount}/${t.capacity}`;
+  else if (t.state === "closing") tag = "closing";
+  else if (t.state === "leaving") tag = "departing";
+  if (tag) {
+    ctx.fillStyle = "rgba(10,13,20,0.72)";
+    rrect(t.x + TRAILER_W / 2 - 34, y + TRAILER_H / 2 + 12, 68, 20, 5); ctx.fill();
+    ctx.fillStyle = t.role === "in" ? "#ffd43b" : "#69db7c";
+    ctx.font = "600 11.5px 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(tag, t.x + TRAILER_W / 2, y + TRAILER_H / 2 + 26);
+  }
+}
+
+function drawWorker(w) {
+  const x = w.pos.x, y = w.pos.y;
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath(); ctx.ellipse(x, y + 14, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
+
+  // carried box
+  if (w.carried) {
+    drawPackage(w.carried, x - 6, y - 26, 22, w.bob);
+  } else if (w.phase === "pickup") {
+    // reaching animation
+    const f = 1 - Math.max(0, w.t) / 0.3;
+    const ox = Math.cos(w.dir || 0) * 8 * f;
+    const oy = Math.sin(w.dir || 0) * 8 * f;
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    rrect(x + ox - 10, y - 22 + oy - 10, 20, 20, 3); ctx.fill();
+  }
+
+  // legs
+  const step = Math.sin(w.bob * 0.7) * 4 * (Math.hypot(w.vel.x, w.vel.y) > 8 ? 1 : 0.2);
+  ctx.strokeStyle = "#1f2430"; ctx.lineWidth = 5; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(x - 5, y - 4); ctx.lineTo(x - 8 + step, y + 12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 5, y - 4); ctx.lineTo(x + 8 - step, y + 12); ctx.stroke();
+
+  // body (vest)
+  ctx.fillStyle = "#2e4b6e";
+  ctx.beginPath(); ctx.arc(x, y - 4, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y - 4, 10, 0, Math.PI * 2); ctx.stroke();
+  // vest stripe
+  ctx.fillStyle = "#ffd43b";
+  ctx.beginPath();
+  ctx.arc(x, y - 4, 10, Math.PI * 0.25, Math.PI * 0.75);
+  ctx.arc(x, y - 12, 4, Math.PI * 0.75, Math.PI * 0.25, true);
+  ctx.closePath(); ctx.fill();
+
+  // head
+  ctx.fillStyle = "#f2c49b";
+  ctx.beginPath(); ctx.arc(x, y - 20, 8, 0, Math.PI * 2); ctx.fill();
+  // hard hat
+  ctx.fillStyle = "#ffd43b";
+  ctx.beginPath(); ctx.arc(x, y - 24, 9, Math.PI, 0); ctx.fill();
+  ctx.fillRect(x - 11, y - 26, 22, 4);
+
+  // face direction
+  const d = w.dir || 0;
+  ctx.fillStyle = "#20242e";
+  const fx = Math.cos(d), fy = Math.sin(d);
+  ctx.beginPath(); ctx.arc(x + fx * 4, y - 20 + fy * 3 - 1, 1.6, 0, Math.PI * 2); ctx.fill();
+
+  // name
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.font = "600 10.5px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(w.name, x, y + 28);
+}
+
+/* ============================== Main loop ============================== */
+function updateSim(dt, s) {
+  if (s.paused) return;
+  const d = dt * s.speed;
+  s.clock += d;
+
+  for (const w of s.workers) updateWorker(w, d, s);
+
+  // trucks (iterate copy-safe: filter gone)
+  for (const t of s.trucks) updateTruck(t, d, s);
+  s.trucks = s.trucks.filter(t => t.state !== "gone");
+
+  updateSpawning(d, s);
+  s.tick++;
+}
+
+const statsEl = {
+  delivered: document.getElementById("st-delivered"),
+  inbound: document.getElementById("st-inbound"),
+  buffer: document.getElementById("st-buffer"),
+  busy: document.getElementById("st-busy"),
+};
+let statTimer = 0;
+
+function updateStats(s, dt) {
+  statTimer -= dt;
+  if (statTimer > 0) return;
+  statTimer = 0.25;
+
+  let inbound = 0, busy = 0;
+  for (const t of s.trucks) {
+    if (t.role === "in") inbound += t.cargo + (t.packages ? t.packages.length : 0);
+  }
+  for (const w of s.workers) if (w.phase !== "idle" && w.phase !== "hold") busy++;
+  statsEl.delivered.textContent = s.delivered;
+  statsEl.inbound.textContent = inbound;
+  statsEl.buffer.textContent = s.slots.filter(sl => sl.pkg).length;
+  statsEl.busy.textContent = busy;
+
+  const pct = Math.round((busy / s.workers.length) * 100);
+  document.getElementById("bar-workers").querySelector("i").style.width = pct + "%";
+}
+
+function renderLog(s) {
+  const list = document.getElementById("log-list");
+  const items = s.events.slice(0, 6);
+  let html = "";
+  for (const e of items) {
+    const tt = Math.floor(e.t);
+    const mm = String(Math.floor(tt / 60)).padStart(2, "0");
+    const ss = String(tt % 60).padStart(2, "0");
+    html += `<li><span class="tick">${mm}:${ss}</span><span style="color:${e.color}">●</span> ${e.text}</li>`;
+  }
+  if (list.innerHTML !== html) list.innerHTML = html;
+}
+
+let last = performance.now();
+function frame(now) {
+  const raw = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  updateSim(raw, sim);
+  updateStats(sim, raw);
+  renderLog(sim);
+
+  // draw
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0d1017";
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(scale, scale);
+
+  drawFloor();
+  drawWalls();
+  drawBuffer(sim);
+  drawPiles(sim);
+  for (const t of sim.trucks) drawTruck(t);
+  for (const w of sim.workers) drawWorker(w);
+
+  // vignette
+  ctx.restore();
+  const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * 0.35, cw / 2, ch / 2, Math.max(cw, ch) * 0.72);
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,0,0.42)");
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, cw, ch);
+
+  requestAnimationFrame(frame);
+}
+
+/* ============================== Controls ============================== */
+const btnPause = document.getElementById("btn-pause");
+const spd1 = document.getElementById("spd1");
+const spd2 = document.getElementById("spd2");
+const spd4 = document.getElementById("spd4");
+const btnReset = document.getElementById("btn-reset");
+
+function syncControls() {
+  btnPause.textContent = sim.paused ? "▶ Resume" : "⏸ Pause";
+  sim.speed = sim.speed || 1;
+  spd1.classList.toggle("on", sim.speed === 1);
+  spd2.classList.toggle("on", sim.speed === 2);
+  spd4.classList.toggle("on", sim.speed === 4);
+}
+btnPause.addEventListener("click", () => { sim.paused = !sim.paused; syncControls(); });
+spd1.addEventListener("click", () => { sim.speed = 1; syncControls(); });
+spd2.addEventListener("click", () => { sim.speed = 2; syncControls(); });
+spd4.addEventListener("click", () => { sim.speed = 4; syncControls(); });
+btnReset.addEventListener("click", () => { resetSim(); });
+
+/* ============================== Boot ============================== */
+resetSim();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

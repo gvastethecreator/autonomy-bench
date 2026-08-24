@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Field Lines — Cursor Field Experiment</title>
+<style>
+:root{ color-scheme:dark; --mc:#4dd8ff; }
+*{ box-sizing:border-box; margin:0; padding:0; }
+html,body{ width:100%; height:100%; overflow:hidden; background:#04050b; }
+body{ font-family:ui-monospace,"Cascadia Code",Consolas,"SF Mono",monospace; }
+#c{ position:fixed; inset:0; display:block; cursor:none; touch-action:none; }
+.ui{ position:fixed; color:#cfe3ff; pointer-events:none; z-index:10;
+     text-shadow:0 1px 10px rgba(0,0,0,.85); transition:opacity .9s ease; }
+body.dim .ui{ opacity:.16; }
+#head{ top:22px; left:24px; }
+#head h1{ font-size:15px; letter-spacing:.2em; font-weight:600; color:#eaf4ff; text-transform:uppercase; }
+#head h1 span{ color:var(--mc); transition:color .4s ease; }
+#head p{ margin-top:7px; font-size:11px; letter-spacing:.06em; color:#7f93b8; max-width:400px; line-height:1.7; }
+#stats{ top:22px; right:24px; text-align:right; font-size:11px; color:#7f93b8;
+        letter-spacing:.05em; line-height:1.9; }
+#stats b{ color:#9fd4ff; font-weight:600; }
+#stats #modeName{ color:var(--mc); transition:color .4s ease; text-transform:uppercase; letter-spacing:.12em; }
+#modes{ bottom:24px; left:50%; transform:translateX(-50%); display:flex; gap:8px; pointer-events:auto; }
+.mode{ padding:7px 14px; border:1px solid rgba(140,170,220,.28); border-radius:999px; font-size:11px;
+       letter-spacing:.12em; text-transform:uppercase; color:#93a9cc; cursor:pointer;
+       background:rgba(8,12,24,.55); transition:all .18s ease; user-select:none; -webkit-user-select:none; }
+.mode:hover{ border-color:rgba(160,200,255,.55); color:#d7e8ff; }
+.mode.active{ border-color:transparent; background:var(--mc); color:#06101f; font-weight:700; box-shadow:0 0 20px var(--mc); }
+#hint{ bottom:24px; right:24px; text-align:right; font-size:11px; color:#5f7291; letter-spacing:.08em; line-height:1.9; }
+#hint kbd{ color:#8fa5c8; }
+@media (max-width:760px){
+  #stats{ display:none; }
+  #hint{ display:none; }
+  #modes{ gap:5px; bottom:16px; flex-wrap:wrap; justify-content:center; max-width:92vw; }
+  .mode{ padding:6px 10px; font-size:10px; }
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ui" id="head">
+  <h1>field <span>lines</span></h1>
+  <p>an interactive cursor experiment — your pointer is the source of a force field. every particle you see is reacting, every frame, to where you move.</p>
+</div>
+<div class="ui" id="stats">
+  <div><b id="fps">&ndash;</b> fps</div>
+  <div><b id="np">&ndash;</b> particles</div>
+  <div>field <b id="modeName">attract</b></div>
+</div>
+<div class="ui" id="modes"></div>
+<div class="ui" id="hint">
+  move the cursor to shape the field<br>
+  click to cycle fields &middot; <kbd>1</kbd>&ndash;<kbd>5</kbd> switch directly
+</div>
+<script>
+'use strict';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+let W = 0, H = 0, DPR = 1;
+let vignette = null;
+
+function makeVignette(){
+  const v = document.createElement('canvas');
+  const w = Math.max(2, Math.floor(W/2)), h = Math.max(2, Math.floor(H/2));
+  v.width = w; v.height = h;
+  const c = v.getContext('2d');
+  const g = c.createRadialGradient(w/2, h/2, Math.min(w,h)*0.34, w/2, h/2, Math.max(w,h)*0.74);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.5)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, w, h);
+  vignette = v;
+}
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.max(1, Math.round(W*DPR));
+  canvas.height = Math.max(1, Math.round(H*DPR));
+  canvas.style.width = W+'px';
+  canvas.style.height = H+'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  makeVignette();
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------------- particles ---------------- */
+const MAX = 6000;
+const PX = new Float32Array(MAX);
+const PY = new Float32Array(MAX);
+const VX = new Float32Array(MAX);
+const VY = new Float32Array(MAX);
+const PH = new Float32Array(MAX);  /* per-particle phase, used for jitter & swirl direction */
+const SZ = new Float32Array(MAX);  /* base size */
+let active = 3000;
+
+const clamp = (v,a,b) => v<a ? a : (v>b ? b : v);
+const rand = (a,b) => a + Math.random()*(b-a);
+
+function initParticle(i, spread){
+  if (spread){
+    PX[i] = Math.random()*W;
+    PY[i] = Math.random()*H;
+  } else {
+    PX[i] = clamp(cursor.x + rand(-140,140), 0, W);
+    PY[i] = clamp(cursor.y + rand(-140,140), 0, H);
+  }
+  VX[i] = rand(-40,40);
+  VY[i] = rand(-40,40);
+  PH[i] = Math.random()*Math.PI*2;
+  SZ[i] = rand(0.9, 2.4);
+}
+for (let i=0;i<MAX;i++) initParticle(i, true);
+
+/* ---------------- cursor ---------------- */
+const cursor = { x:W/2, y:H/2, vx:0, vy:0, speed:0, inside:false };
+let lastMoveT = 0;
+
+function setPointer(x, y, t){
+  const px = cursor.x, py = cursor.y;
+  cursor.x = x; cursor.y = y;
+  const dtms = Math.max(1, t - lastMoveT || 1);
+  lastMoveT = t;
+  const k = Math.min(1, 16/dtms);
+  cursor.vx = cursor.vx + ((x-px)/dtms*1000 - cursor.vx)*k;
+  cursor.vy = cursor.vy + ((y-py)/dtms*1000 - cursor.vy)*k;
+  cursor.speed = Math.hypot(cursor.vx, cursor.vy);
+  cursor.inside = true;
+}
+
+window.addEventListener('pointermove', e => setPointer(e.clientX, e.clientY, e.timeStamp));
+window.addEventListener('pointerdown', e => {
+  if (e.target.closest && e.target.closest('.mode')) return;
+  setPointer(e.clientX, e.clientY, e.timeStamp);
+  rings.push({ x:e.clientX, y:e.clientY, r:8, vr: Math.max(160, cursor.speed*2.5 + 140), life:1 });
+  cycleMode();
+});
+window.addEventListener('pointerout', e => { if (!e.relatedTarget) cursor.inside = false; });
+
+/* ---------------- modes ---------------- */
+const MODES = [
+  { name:'attract',    color:'#4dd8ff', hue:196, key:'1' },
+  { name:'repel',      color:'#ff9a4d', hue:28,  key:'2' },
+  { name:'orbit',      color:'#ff5fd0', hue:315, key:'3' },
+  { name:'turbulence', color:'#5fff9a', hue:150, key:'4' },
+  { name:'echo',       color:'#a98bff', hue:262, key:'5' }
+];
+let modeIndex = 0;
+
+const modesEl = document.getElementById('modes');
+const modeButtons = MODES.map((m, i) => {
+  const b = document.createElement('button');
+  b.className = 'mode';
+  b.textContent = m.name;
+  b.addEventListener('click', ev => { ev.stopPropagation(); setMode(i); });
+  modesEl.appendChild(b);
+  return b;
+});
+
+function setMode(i){
+  modeIndex = ((i % MODES.length) + MODES.length) % MODES.length;
+  document.documentElement.style.setProperty('--mc', MODES[modeIndex].color);
+  document.getElementById('modeName').textContent = MODES[modeIndex].name;
+  modeButtons.forEach((b,k) => b.classList.toggle('active', k === modeIndex));
+}
+function cycleMode(){ setMode(modeIndex + 1); }
+setMode(0);
+
+window.addEventListener('keydown', e => {
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= 5) setMode(n - 1);
+});
+
+/* ---------------- rings (shockwaves) ---------------- */
+const rings = [];
+let lastRingT = 0;
+function spawnRings(t){
+  if (t - lastRingT > 40){
+    lastRingT = t;
+    rings.push({ x:cursor.x, y:cursor.y, r:6, vr: 70 + cursor.speed*2.0, life:1 });
+    if (rings.length > 60) rings.splice(0, rings.length - 60);
+  }
+}
+
+/* ---------------- palette ---------------- */
+const PAL = [];
+for (let i=0;i<48;i++){
+  const t = i/47;
+  PAL.push('hsl(' + ((205 + t*115)|0) + ',92%,' + ((52 + t*14)|0) + '%)');
+}
+
+/* ---------------- simulation ---------------- */
+let time = 0;
+
+function update(dt){
+  time += dt;
+  const m = modeIndex;
+  const cx = cursor.x, cy = cursor.y;
+  const nRings = rings.length;
+
+  for (let i=0;i<active;i++){
+    const x = PX[i], y = PY[i];
+    let ax = 0, ay = 0;
+    const dx = cx - x, dy = cy - y;
+    const d2 = dx*dx + dy*dy;
+    const d = Math.sqrt(d2) + 1e-3;
+    const inv = 1/d;
+
+    if (m === 0 || m === 2){                        /* attract / orbit */
+      const g = Math.min(1.9e6/d2, m === 2 ? 80 : 150);
+      ax += dx*inv*g;
+      ay += dy*inv*g;
+      const near = Math.min(1, (m === 2 ? 220 : 170)*inv);
+      const sw = (m === 2 ? 150 : 48) * near * (m === 0 && PH[i] < Math.PI ? -1 : 1);
+      ax += -dy*inv*sw;
+      ay +=  dx*inv*sw;
+    } else if (m === 1){                            /* repel */
+      const g = Math.min(2.4e6/d2, 240);
+      ax -= dx*inv*g;
+      ay -= dy*inv*g;
+      const sw = 34 * Math.min(1, 130*inv) * (PH[i] < Math.PI ? -1 : 1);
+      ax += -dy*inv*sw;
+      ay +=  dx*inv*sw;
+    } else if (m === 3){                            /* turbulence */
+      ax += (Math.sin(x*0.0031 + time*0.50) + Math.sin(y*0.0039 - time*0.42)) * 95;
+      ay += (Math.cos(y*0.0031 + time*0.46) + Math.sin(x*0.0043 + time*0.38)) * 95;
+      const sw = 130 * Math.min(1, 260*inv);
+      ax += -dy*inv*sw;
+      ay +=  dx*inv*sw;
+    } else {                                        /* echo: ambient drift */
+      ax += Math.sin(time*0.28 + PH[i]) * 42;
+      ay += Math.cos(time*0.25 + PH[i]) * 42;
+    }
+
+    for (let r=0;r<nRings;r++){
+      const R = rings[r];
+      const rdx = x - R.x, rdy = y - R.y;
+      const rd = Math.sqrt(rdx*rdx + rdy*rdy) + 1e-3;
+      const band = Math.abs(rd - R.r);
+      if (band < 30){
+        const push = (1 - band/30) * 330 * R.life;
+        ax += (rdx/rd)*push;
+        ay += (rdy/rd)*push;
+      }
+    }
+
+    VX[i] += ax*dt;
+    VY[i] += ay*dt;
+    const fr = m === 3 ? 0.992 : m === 4 ? 0.988 : 0.99;
+    VX[i] *= fr; VY[i] *= fr;
+    const v2 = VX[i]*VX[i] + VY[i]*VY[i];
+    if (v2 > 810000){ const s = 900/Math.sqrt(v2); VX[i] *= s; VY[i] *= s; }
+    PX[i] += VX[i]*dt;
+    PY[i] += VY[i]*dt;
+    if (PX[i] < -24) PX[i] = W+24; else if (PX[i] > W+24) PX[i] = -24;
+    if (PY[i] < -24) PY[i] = H+24; else if (PY[i] > H+24) PY[i] = -24;
+  }
+
+  for (let i=nRings-1;i>=0;i--){
+    const R = rings[i];
+    R.r += R.vr*dt;
+    R.vr *= Math.pow(0.985, dt*60);
+    R.life -= dt*0.5;
+    if (R.life <= 0) rings.splice(i,1);
+  }
+
+  if (m === 4) spawnRings(performance.now());
+}
+
+/* ---------------- rendering ---------------- */
+const trail = [];
+function pushTrail(now){
+  if (!cursor.inside) return;
+  trail.push({ x:cursor.x, y:cursor.y, t:now });
+  while (trail.length && now - trail[0].t > 450) trail.shift();
+}
+
+function render(now){
+  const hue = MODES[modeIndex].hue;
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(4,5,11,0.30)';
+  ctx.fillRect(0, 0, W, H);
+  if (vignette) ctx.drawImage(vignette, 0, 0, W, H);
+
+  pushTrail(now);
+
+  ctx.globalCompositeOperation = 'lighter';
+
+  /* cursor aura */
+  const rg = ctx.createRadialGradient(cursor.x, cursor.y, 0, cursor.x, cursor.y, 150);
+  rg.addColorStop(0, 'hsla(' + hue + ',90%,68%,0.26)');
+  rg.addColorStop(1, 'hsla(' + hue + ',90%,68%,0)');
+  ctx.fillStyle = rg;
+  ctx.fillRect(cursor.x-150, cursor.y-150, 300, 300);
+
+  /* motion trail */
+  if (trail.length > 1){
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i=1;i<trail.length;i++){
+      const p0 = trail[i-1], p1 = trail[i];
+      const f = i/trail.length;
+      ctx.strokeStyle = 'hsla(' + hue + ',92%,66%,' + (f*0.4).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(0.6, (2.2 + cursor.speed*0.05) * f);
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+  }
+
+  /* shockwave rings */
+  for (let r=0;r<rings.length;r++){
+    const R = rings[r];
+    const a = Math.max(0, R.life);
+    ctx.strokeStyle = 'hsla(262,85%,76%,' + (a*0.55).toFixed(3) + ')';
+    ctx.lineWidth = 1.5 + a*2.5;
+    ctx.beginPath();
+    ctx.arc(R.x, R.y, R.r, 0, Math.PI*2);
+    ctx.stroke();
+  }
+
+  /* particles */
+  for (let i=0;i<active;i++){
+    const x = PX[i], y = PY[i];
+    const dx = x - cursor.x, dy = y - cursor.y;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    const vq = VX[i]*VX[i] + VY[i]*VY[i];
+    const spd = Math.sqrt(vq);
+    let ci = (spd*0.045)|0;
+    if (ci > 47) ci = 47;
+    const a = Math.min(1, 0.14 + 1/(1 + d*d*0.00002));
+    const sz = (SZ[i] + Math.min(2.2, spd*0.007)) * (0.8 + 0.25*Math.sin(time*6 + PH[i]));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = PAL[ci];
+    ctx.fillRect(x - sz*0.5, y - sz*0.5, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+
+  /* cursor reticle */
+  if (cursor.inside){
+    ctx.globalCompositeOperation = 'source-over';
+    const rr = 16 + cursor.speed*0.45 + Math.sin(time*4.2)*2;
+    ctx.strokeStyle = 'hsla(' + hue + ',92%,72%,0.85)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(cursor.x, cursor.y, rr, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.strokeStyle = 'hsla(' + hue + ',92%,72%,0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cursor.x, cursor.y, rr*2.1, 0, Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ---------------- loop + adaptive quality ---------------- */
+let frames = 0, fpsT = performance.now(), fps = 60, raf = 0;
+
+function measure(now){
+  frames++;
+  if (now - fpsT >= 1000){
+    fps = frames * 1000 / (now - fpsT);
+    frames = 0;
+    fpsT = now;
+    document.getElementById('fps').textContent = Math.round(fps);
+    document.getElementById('np').textContent = active;
+    if (fps < 50 && active > 1200){
+      active = Math.max(1200, (active*0.93)|0);
+    } else if (fps > 57 && active < MAX){
+      const next = Math.min(MAX, (active*1.06)|0);
+      for (let i=active;i<next;i++) initParticle(i, false);
+      active = next;
+    }
+  }
+}
+
+let last = performance.now();
+function frame(now){
+  const dt = Math.min(0.05, (now - last)/1000);
+  last = now;
+  update(dt);
+  render(now);
+  measure(now);
+  if (now - lastActivity > 4000) document.body.classList.add('dim');
+  raf = requestAnimationFrame(frame);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){
+    cancelAnimationFrame(raf);
+  } else {
+    last = performance.now();
+    lastRingT = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+});
+
+let lastActivity = performance.now();
+function activity(){ lastActivity = performance.now(); document.body.classList.remove('dim'); }
+window.addEventListener('pointermove', activity);
+window.addEventListener('pointerdown', activity);
+window.addEventListener('keydown', activity);
+
+raf = requestAnimationFrame(frame);
+</script>
+</body>
+</html>
