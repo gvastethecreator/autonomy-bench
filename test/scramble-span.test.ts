@@ -44,5 +44,6 @@ describe('canScrambleText', () => {
     expect(canScrambleText('')).toBe(false);
     expect(canScrambleText('a < b')).toBe(false);
     expect(canScrambleText('Rollercoaster Bench')).toBe(true);
+    expect(canScrambleText('🎢')).toBe(true);
   });
 });

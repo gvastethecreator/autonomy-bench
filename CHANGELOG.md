@@ -10,7 +10,7 @@
 - Require cell receipts to record generation time (`startedAt`, `completedAt`, `durationMs`) and token spend (`tokenUsage`) from observable harness or CLI output.
 - Add **Open full size** on multi-take cards so a take can open in Single.
 - Add previous and next arrows on the View dropdown.
-- Show the experiment emoji, desaturated, beside the gallery title.
+- Show the experiment emoji, desaturated, beside the gallery title. The emoji slot stays reserved and scrambles with the title.
 
 ## 0.7.1 — 2026-08-24
 
