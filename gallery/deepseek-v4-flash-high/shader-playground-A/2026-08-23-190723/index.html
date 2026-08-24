@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shader Playground</title>
+<meta name="description" content="A live WebGL shader playground. Edit GLSL, compile instantly, watch it render." />
+<link rel="icon" href="data:," />
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #0e1220;
+    --panel-2: #111726;
+    --border: #1e2636;
+    --border-2: #29334a;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #7c5cff;
+    --accent-2: #4cc2ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --mono: 'Cascadia Code', 'JetBrains Mono', Consolas, 'SF Mono', Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+  }
+
+  body { display: flex; flex-direction: column; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    height: 52px;
+    background: linear-gradient(180deg, #121828, #0d1220);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: .3px;
+    white-space: nowrap;
+  }
+  .brand .gem {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: conic-gradient(from 180deg, var(--accent), var(--accent-2), #ff6ad5, var(--accent));
+    box-shadow: 0 0 12px rgba(124, 92, 255, .8);
+  }
+
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+
+  label.ctl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  select, button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: #161d2e;
+    border: 1px solid var(--border-2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  select:hover, button:hover { border-color: var(--accent); }
+  select:focus-visible, button:focus-visible { box-shadow: 0 0 0 2px rgba(124, 92, 255, .35); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: linear-gradient(180deg, #6a4bff, #5b3cf5); border-color: #7a5cff; }
+  button.primary:hover { box-shadow: 0 0 12px rgba(124, 92, 255, .5); }
+  button.ghost { background: transparent; }
+  button.help { border-radius: 50%; width: 30px; height: 30px; padding: 0; font-weight: 700; }
+
+  .stats {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #565e6b; flex: none; }
+  .dot.ok   { background: var(--ok); box-shadow: 0 0 6px rgba(63, 185, 80, .9); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 6px rgba(210, 153, 34, .9); }
+  .dot.err  { background: var(--err); box-shadow: 0 0 6px rgba(248, 81, 73, .9); }
+  .dot.busy { background: var(--accent-2); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  /* ---------- stage ---------- */
+  #stage {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  #canvasWrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    background:
+      radial-gradient(120% 120% at 50% 0%, #10162a 0%, #090c13 60%) ,
+      var(--bg);
+  }
+  #glCanvas { display: block; width: 100%; height: 100%; }
+
+  /* mouse marker (optional overlay) */
+  #cross {
+    position: absolute; left: 0; top: 0; width: 0; height: 0;
+    pointer-events: none; display: none; z-index: 3;
+  }
+  #cross::before, #cross::after {
+    content: ''; position: absolute; background: rgba(255,255,255,.5);
+  }
+  #cross::before { width: 14px; height: 1px; left: -7px; top: -0.5px; }
+  #cross::after  { width: 1px; height: 14px; left: -0.5px; top: -7px; }
+  body.mouse-on #cross { display: block; }
+
+  /* divider */
+  #divider {
+    flex: none;
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    border-left: 1px solid var(--border);
+    transition: background .15s;
+    z-index: 5;
+  }
+  #divider:hover, #divider.drag { background: rgba(124, 92, 255, .35); }
+
+  /* editor */
+  #editorPane {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    width: var(--edw, 440px);
+    min-width: 280px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    z-index: 4;
+  }
+  #editorPane.hidden { display: none; }
+
+  #editorHead {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  #editorHead .t { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; font-size: 12px; }
+  #editorHead .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #editorHead .spec {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    border: 1px solid var(--border-2);
+    border-radius: 4px;
+    color: var(--accent-2);
+  }
+
+  #editorBox { position: relative; flex: 1; min-height: 0; }
+
+  #hl, #code {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    border: none;
+    padding: 14px 16px;
+    font: 13px/1.6 var(--mono);
+    letter-spacing: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    tab-size: 2;
+  }
+
+  #hl {
+    overflow: hidden;
+    pointer-events: none;
+    color: var(--text);
+    background: transparent;
+  }
+  #hl .k { color: #ff7b72; }
+  #hl .t { color: #79c0ff; }
+  #hl .b { color: #d2a8ff; }
+  #hl .s { color: #a5d6ff; }
+  #hl .n { color: #79c0ff; }
+  #hl .c { color: #62707f; font-style: italic; }
+  #hl .p { color: #ffa657; }
+
+  #code {
+    background: transparent;
+    resize: none;
+    outline: none;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: #e6edf3;
+    z-index: 2;
+  }
+  #code::selection { background: rgba(124, 92, 255, .35); }
+
+  /* ---------- footer ---------- */
+  .foot {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 30px;
+    padding: 4px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .foot .msg {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .foot .msg.err { color: var(--err); }
+  .foot .msg.warn { color: var(--warn); }
+  .foot .msg.ok { color: var(--ok); }
+  .foot button.log { flex: none; display: none; font-size: 12px; padding: 2px 8px; }
+
+  /* ---------- modal ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 100;
+    display: grid; place-items: center;
+    background: rgba(5, 8, 14, .72);
+    padding: 24px;
+  }
+  .modal.hidden { display: none; }
+  .modal-card {
+    width: min(680px, 94vw);
+    max-height: 80vh;
+    background: var(--panel-2);
+    border: 1px solid var(--border-2);
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  .modal-body { padding: 16px; overflow: auto; font-size: 13.5px; }
+  .modal-body pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: #080b12;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    overflow: auto;
+    white-space: pre-wrap;
+    color: #f0e6e6;
+  }
+  .modal-body ul { margin: 8px 0 0; padding-left: 20px; }
+  .modal-body li { margin: 4px 0; }
+  .modal-body code { font-family: var(--mono); color: var(--accent-2); background: #0b0f1c; padding: 1px 5px; border-radius: 4px; }
+  .close { border-radius: 50%; width: 28px; height: 28px; padding: 0; line-height: 1; }
+
+  @media (max-width: 860px) {
+    #editorPane {
+      position: absolute;
+      top: 0; right: 0; bottom: 0;
+      width: min(88vw, 440px);
+      box-shadow: -12px 0 40px rgba(0,0,0,.5);
+    }
+    #divider { display: none; }
+    .brand { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="gem"></span>Shader Playground</div>
+
+  <div class="controls">
+    <label class="ctl">Preset
+      <select id="preset" aria-label="Select shader preset"></select>
+    </label>
+    <button id="runBtn" class="primary" title="Compile &amp; run the current shader (Ctrl+Enter)">Run</button>
+    <button id="pauseBtn" title="Pause / resume the animation clock">Pause</button>
+    <button id="resetBtn" title="Reset the animation clock to 0">Reset time</button>
+    <button id="editorBtn" class="ghost" title="Show / hide the shader editor" aria-pressed="true">Editor</button>
+    <button id="helpBtn" class="help ghost" title="Help &amp; uniform reference">?</button>
+  </div>
+
+  <div class="stats">
+    <span class="stat"><span class="dot" id="statusDot"></span><span id="statusText">idle</span></span>
+    <span class="stat" id="timeStat" title="Elapsed shader time">t&nbsp;<span id="time">0.0s</span></span>
+    <span class="stat" id="fpsStat" title="Frames per second">fps&nbsp;<span id="fps">–</span></span>
+  </div>
+</header>
+
+<main id="stage">
+  <div id="canvasWrap">
+    <canvas id="glCanvas" aria-label="Shader output"></canvas>
+    <div id="cross"></div>
+  </div>
+
+  <div id="divider" role="separator" aria-orientation="vertical" title="Drag to resize the editor"></div>
+
+  <aside id="editorPane">
+    <div id="editorHead">
+      <span class="t">GLSL fragment shader</span>
+      <span class="spec" id="spec">GLSL ES 3.00</span>
+      <span class="hint">uniforms: u_time · u_resolution · u_mouse · u_frame</span>
+    </div>
+    <div id="editorBox">
+      <pre id="hl" aria-hidden="true"></pre>
+      <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
+        wrap="soft" aria-label="GLSL fragment shader editor"></textarea>
+    </div>
+  </aside>
+</main>
+
+<footer class="foot">
+  <span class="msg" id="footMsg">Ready. Pick a preset or edit the shader — it recompiles live.</span>
+  <button class="ghost log" id="logBtn">View log</button>
+</footer>
+
+<div class="modal hidden" id="help">
+  <div class="modal-card">
+    <div class="modal-head"><span>Shader Playground — help</span><button class="close ghost" data-close="help">✕</button></div>
+    <div class="modal-body">
+      <p>This is a live <b>WebGL</b> playground. A fullscreen quad renders one GLSL ES fragment
+      shader on the canvas. The shader <b>body</b> you edit is wrapped in a hidden preamble that
+      declares the uniforms below.</p>
+      <ul>
+        <li><code>u_time</code> — float seconds since the last time reset (accumulates while playing).</li>
+        <li><code>u_resolution</code> — vec2 size of the drawing buffer in pixels (device-pixel aware).</li>
+        <li><code>u_mouse</code> — vec2 normalized pointer position over the canvas, y points up (0…1).</li>
+        <li><code>u_frame</code> — float frame counter (0, 1, 2, …).</li>
+      </ul>
+      <p>Write a <code>void main()</code> that sets <code>gl_FragColor</code>. Typical start:
+      <pre>void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  float d = length(uv);
+  gl_FragColor = vec4(0.5 + 0.5 * sin(d * 8.0 - u_time * 3.0));
+}
+      </pre></p>
+      <ul>
+        <li><b>Ctrl/Cmd + Enter</b> — compile now.</li>
+        <li><b>Tab</b> — insert indentation in the editor.</li>
+        <li>Compilation errors and shader logs appear in the status bar at the bottom.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="modal hidden" id="logview">
+  <div class="modal-card">
+    <div class="modal-head"><span>Shader compile log</span><button class="close ghost" data-close="logview">✕</button></div>
+    <div class="modal-body"><pre id="logText"></pre></div>
+  </div>
+</div>
+
+<div class="modal hidden" id="fatal">
+  <div class="modal-card">
+    <div class="modal-head"><span>WebGL unavailable</span></div>
+    <div class="modal-body" id="fatalMsg">Your browser does not expose a WebGL context.</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =========================================================================
+   Shader Playground — single-file WebGL shader editor
+   ========================================================================= */
+
+const $  = (id) => document.getElementById(id);
+const el = {
+  canvas: $('glCanvas'), code: $('code'), hl: $('hl'),
+  preset: $('preset'), run: $('runBtn'), pause: $('pauseBtn'), reset: $('resetBtn'),
+  editorBtn: $('editorBtn'), helpBtn: $('helpBtn'),
+  statusDot: $('statusDot'), statusText: $('statusText'),
+  time: $('time'), fps: $('fps'), spec: $('spec'),
+  footMsg: $('footMsg'), logBtn: $('logBtn'),
+  editorPane: $('editorPane'), stage: $('stage'), divider: $('divider'),
+  canvasWrap: $('canvasWrap'), cross: $('cross'),
+};
+
+/* ----------------------------- presets --------------------------------- */
+
+const PRESETS = [
+{
+  name: 'Neon Waves',
+  code: `// Neon waves — a gentle starter.
+// Uniforms injected by the preamble: u_time, u_resolution, u_mouse, u_frame.
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  float d = length(uv);
+  float a = atan(uv.y, uv.x);
+
+  float w = sin(5.0 * a + 4.0 * d - u_time * 2.0);
+  vec3 col = 0.5 + 0.5 * cos(u_time * 0.7 + w * 2.0 + vec3(0.0, 2.1, 4.2));
+  col *= exp(-d * 0.9);
+  col += vec3(0.02, 0.05, 0.12) * smoothstep(2.2, 0.8, d);
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Plasma Flow',
+  code: `// Classic layered plasma.
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+  vec2 p = uv * 3.0;
+
+  float v = sin(p.x + u_time)
+          + sin((p.y + u_time) * 0.9)
+          + sin((p.x + p.y + u_time * 0.7) * 0.55);
+
+  vec2 q = vec2(cos(p.y * 2.0 + u_time * 0.5), sin(p.x * 2.0 - u_time * 0.5));
+  v += dot(q, vec2(sin(u_time * 0.3), cos(u_time * 0.4))) * 0.6;
+
+  float c = sin(v * 2.0) * 0.5 + 0.5;
+  vec3 col = 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + c));
+  col = pow(col, vec3(0.9));
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Spiral Tunnel',
+  code: `// Animated swirl tunnel.
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  float r = length(uv);
+  float a = atan(uv.y, uv.x);
+
+  float depth = u_time * 2.5 + 5.0 / max(r, 0.02);
+  float twist = sin(depth + a * 7.0);
+  float rings = sin(depth * 9.0);
+
+  vec3 col = vec3(0.0);
+  col += 0.9 * (0.5 + 0.5 * twist) * exp(-r * r * 4.0) * vec3(0.9, 0.2, 0.7);
+  col += 0.7 * (0.5 + 0.5 * rings) * exp(-r * 2.4) * vec3(0.2, 0.6, 1.0);
+  col *= 1.3 - r * 0.5;
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Raymarch Sphere Field',
+  code: `// Raymarched field of bouncing spheres over a checkerboard floor.
+// Move the mouse to see the pointer helpers in other presets; here just enjoy.
+
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+
+float map(vec3 p) {
+  vec3 sp = p;
+  sp.x = mod(sp.x + 1.0, 2.0) - 1.0;   // repeat spheres on a 2x2 grid
+  sp.z = mod(sp.z + 1.0, 2.0) - 1.0;
+  sp.y -= 0.35 + 0.35 * sin(u_time * 1.5 + sp.x * 3.0 + sp.z * 3.0);
+  return min(sdSphere(sp, 0.42), p.y); // floor at y = 0
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+
+  vec3 ro = vec3(0.0, 1.2, -3.4);
+  vec3 rd = normalize(vec3(uv, 1.25));
+  rd.y -= 0.15;                         // look slightly down
+  rd = normalize(rd);
+
+  float t = 0.0;
+  bool hit = false;
+  for (int i = 0; i < 70; i++) {
+    vec3 p = ro + rd * t;
+    float d = map(p);
+    if (d < 0.0008) { hit = true; break; }
+    if (t > 12.0) break;
+    t += d * 0.85;
+  }
+
+  vec3 col = vec3(0.015, 0.02, 0.05);   // deep fog background
+  if (hit) {
+    vec3 p   = ro + rd * t;
+    vec2 e   = vec2(0.002, 0.0);
+    vec3 n   = normalize(vec3(
+      map(p + e.xyy) - map(p - e.xyy),
+      map(p + e.yxy) - map(p - e.yxy),
+      map(p + e.yyx) - map(p - e.yyx)));
+
+    vec3 ld = normalize(vec3(0.7, 1.1, 0.4));
+    float dif = max(dot(n, ld), 0.0);
+    vec3 hv   = normalize(ld - rd);
+    float spe = pow(max(dot(n, hv), 0.0), 42.0);
+    float fre = pow(1.0 + dot(n, rd), 3.0);
+    float amb = 0.25 + 0.75 * (0.5 + 0.5 * n.y);
+
+    if (abs(n.y) > 0.6 && p.y < 0.03) {
+      // checkerboard floor
+      float chk = mod(floor(p.x * 2.0) + floor(p.z * 2.0), 2.0);
+      col = mix(vec3(0.05, 0.07, 0.12), vec3(0.13, 0.16, 0.28), chk);
+      col *= dif * 0.85 + amb * 0.5;
+      col += vec3(0.2, 0.4, 0.8) * spe * 0.15;
+    } else {
+      col = vec3(0.7, 0.35, 0.95);
+      col *= dif * 0.85 + amb * 0.5;
+      col += vec3(1.0) * spe * 0.9;
+      col += vec3(0.55, 0.3, 1.0) * fre * 0.5;
+    }
+    col = mix(col, vec3(0.015, 0.02, 0.05) * 2.0, 1.0 - exp(-t * 0.06));
+  }
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Kaleidoscope Mandala',
+  code: `// Radial petals with spirals — mouse moves the center.
+
+void main() {
+  vec2 off = u_mouse * 2.0 - 1.0;
+  vec2 uv  = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  uv -= off * 0.35;
+
+  float r = length(uv);
+  float a = atan(uv.y, uv.x);
+
+  float petals = 5.0;
+  float wa = mod(a, 6.2831 / petals);
+  wa = abs(wa - 3.14159 / petals) * petals;
+
+  float glow   = exp(-wa * 2.2) * pow(1.0 - smoothstep(0.0, 2.4, r), 2.0);
+  float pulse  = 0.5 + 0.5 * sin(u_time * 2.2);
+  float spiral = sin(r * 24.0 - u_time * 6.0 + wa * 4.0);
+  float rings  = sin(r * 18.0 + u_time * 3.0);
+
+  vec3 col = vec3(0.0);
+  col += vec3(1.0, 0.25, 0.55) * glow * (0.5 + 0.5 * spiral) * (0.4 + 0.6 * pulse);
+  col += vec3(0.2, 0.55, 1.0)  * glow * (0.5 + 0.5 * rings) * 0.8;
+  col += vec3(0.9, 0.8, 0.4)   * exp(-wa * 6.0) * exp(-r * 2.5) * pulse;
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Mandelbrot Zoom',
+  code: `// Infinitely zooming Mandelbrot set with a slow wander.
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  uv.x *= u_resolution.x / u_resolution.y;
+
+  float zoom = exp(u_time * 0.22);
+  float t0   = u_time * 0.25;
+  vec2 c     = vec2(-0.7436 + 0.02 * sin(t0 * 0.8),
+                      0.1318 + 0.02 * cos(t0));
+
+  vec2 z = uv / zoom + c;
+  int it = 0;
+  for (int i = 0; i < 160; i++) {
+    z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+    if (dot(z, z) > 4.0) break;
+    it++;
+  }
+
+  float f = float(it) / 160.0;
+  vec3 col = 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.35, 0.7) + f) + u_time * 0.1);
+  col = mix(vec3(0.0), col, smoothstep(0.0, 0.35, f) * 0.85 + 0.15);
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Ripple Pools',
+  code: `// Mouse-following ripples with a specular highlight.
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  vec2 m  = u_mouse * 2.0 - 1.0;
+  vec2 d  = uv - m;
+  float r = length(d);
+
+  float wave = sin(r * 28.0 - u_time * 5.0) * exp(-r * 1.2);
+
+  vec3 col = vec3(0.02, 0.06, 0.16);
+  col += vec3(0.1, 0.45, 0.85) * (0.5 + 0.5 * wave) * exp(-r * 2.5);
+  col += vec3(1.0, 0.95, 0.7) * exp(-r * 18.0) * (0.6 + 0.4 * sin(u_time * 9.0));
+  col += wave * vec3(0.3, 0.7, 1.0) * 0.5;
+
+  float ag = atan(uv.y, uv.x);
+  col += vec3(0.15, 0.2, 0.5) * (0.5 + 0.5 * sin(ag * 6.0 + u_time * 0.6))
+          * exp(-length(uv) * 1.4) * 0.5;
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Voronoi Cells',
+  code: `// Animated Voronoi cells with crisp edges.
+
+vec2 hash2(vec2 p) {
+  return fract(sin(vec2(dot(p, vec2(127.1, 311.7)),
+                        dot(p, vec2(269.5, 183.3)))) * 43758.5453123);
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  vec2 p  = uv * 3.0 + vec2(0.0, u_time * 0.15);
+
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+
+  float d1 = 8.0, d2 = 8.0;
+  vec2 mp = vec2(0.0);
+
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 o  = vec2(float(x), float(y));
+      vec2 c  = hash2(i + o);
+      vec2 d  = o + c - f;
+      float dd = dot(d, d);
+      if (dd < d1) { d2 = d1; d1 = dd; mp = c; }
+      else if (dd < d2) { d2 = dd; }
+    }
+  }
+
+  float edge = smoothstep(0.02, 0.12, sqrt(d2) - sqrt(d1));
+  vec3 col   = 0.5 + 0.5 * cos(6.2831 * (vec3(mp, mp.y * 0.5) + vec3(0.0, 0.33, 0.67)));
+  col = mix(col, vec3(0.0), edge * 0.8);
+  col *= 0.3 + 0.7 * exp(-d1 * 4.0);
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Star Tunnel',
+  code: `// Hyperspace star tunnel.
+
+float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+  float a = atan(uv.y, uv.x);
+  float r = length(uv);
+
+  float z  = u_time * 1.2;
+  vec2 id  = vec2(floor(a * 6.0 / 6.2831), floor(z));
+  float h  = hash21(id);
+  float fa = fract(a * 6.0 / 6.2831 + h);
+  float fz = fract(z + h);
+
+  float dd  = length(vec2(fa - 0.5, fz - 0.5));
+  float core = smoothstep(0.10, 0.02, dd);
+  float halo = exp(-dd * 40.0);
+
+  vec3 col = vec3(0.0);
+  col += vec3(1.0, 0.85, 0.6) * core * (0.35 + 0.65 * h);
+  col += vec3(0.2, 0.5, 1.0)  * halo * (0.5 + 0.5 * h) * 0.3;
+  col += vec3(0.5, 0.2, 0.9)  * exp(-r * 1.1) * (0.5 + 0.5 * sin(a * 5.0 + u_time * 0.8));
+  col += vec3(0.1, 0.1, 0.2)  * (1.0 - exp(-r * 0.8));
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+{
+  name: 'Tron Grid',
+  code: `// Flying infinite grid — classic Tron floor.
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution) / u_resolution.y;
+
+  vec3 ro = vec3(0.0, 0.7, -2.8);
+  vec3 rd = normalize(vec3(uv, 1.2));
+  rd.y -= 0.25;
+  rd = normalize(rd);
+
+  vec3 col = vec3(0.01, 0.015, 0.04);
+  float t = -ro.y / rd.y;
+
+  if (t > 0.0) {
+    vec3 p   = ro + rd * t;
+    vec2 f   = abs(fract(p.xz) - 0.5);
+    vec2 line = 1.0 - smoothstep(0.0, 0.03, f);
+    float fade = exp(-length(p) * 0.16);
+
+    col += vec3(0.0, 0.85, 1.0) * (line.x + line.y) * fade * 1.6;
+
+    vec2 id = floor(p.xz);
+    float h = fract(sin(dot(id, vec2(12.9898, 78.233))) * 43758.5453);
+    col += vec3(0.3, 0.5, 1.0) * h * (1.0 - smoothstep(0.0, 0.45, length(f))) * fade * 0.35;
+  }
+
+  float horizon = exp(-abs(uv.y + 0.25) * 6.0);
+  col += vec3(0.9, 0.3, 0.6) * horizon * 0.35;
+
+  gl_FragColor = vec4(col, 1.0);
+}`
+},
+];
+
+/* --------------------------- WebGL bootstrap --------------------------- */
+
+let gl = null;
+let isWebGL2 = false;
+let program = null;
+let uniforms = {};
+let preambleText = '';
+let preambleLines = 0;
+let quadVao = null;
+
+function initGL() {
+  const opts = {
+    antialias: false, depth: false, stencil: false, alpha: false,
+    powerPreference: 'high-performance',
+  };
+  gl = el.canvas.getContext('webgl2', opts)
+    || el.canvas.getContext('webgl', opts)
+    || el.canvas.getContext('experimental-webgl', opts);
+  if (!gl) {
+    el.fatalMsg.textContent = 'This browser does not support WebGL (WebGL2 or WebGL1). ' +
+      'Try a current version of Chrome, Edge, Firefox, or Safari with hardware acceleration enabled.';
+    $('fatal').classList.remove('hidden');
+    return false;
+  }
+  isWebGL2 = /WebGL\s*2/i.test(String(gl.getParameter(gl.VERSION)));
+  el.spec.textContent = isWebGL2 ? 'GLSL ES 3.00' : 'GLSL ES 1.00';
+
+  // fullscreen quad (two triangles)
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1, -1,   1, -1,  -1, 1,
+    -1,  1,   1, -1,   1, 1,
+  ]), gl.STATIC_DRAW);
+
+  if (isWebGL2) {
+    quadVao = gl.createVertexArray();
+    gl.bindVertexArray(quadVao);
+  }
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  if (isWebGL2) gl.bindVertexArray(null);
+  else gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return true;
+}
+
+function buildPreamble() {
+  let p = '';
+  if (isWebGL2) {
+    p += '#version 300 es\n';
+  }
+  // Default float precision must be declared BEFORE any float-based
+  // declaration, including the out variable used in the WebGL2 path.
+  p += '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
+  if (isWebGL2) {
+    p += '#define gl_FragColor _outColor\n';
+    p += 'out vec4 _outColor;\n';
+  }
+  p += 'uniform float u_time;\n';
+  p += 'uniform vec2 u_resolution;\n';
+  p += 'uniform vec2 u_mouse;\n';
+  p += 'uniform float u_frame;\n';
+  p += '\n';
+  return p;
+}
+
+function vertexSource() {
+  if (isWebGL2) {
+    return '#version 300 es\n' +
+      'precision highp float;\n' +
+      'layout(location = 0) in vec2 a_position;\n' +
+      'void main() { gl_Position = vec4(a_position, 0.0, 1.0); }\n';
+  }
+  return 'precision highp float;\n' +
+    'attribute vec2 a_position;\n' +
+    'void main() { gl_Position = vec4(a_position, 0.0, 1.0); }\n';
+}
+
+/* ------------------------------ compile -------------------------------- */
+
+function compileShader(type, source) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, source);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s) || 'unknown compile error';
+    gl.deleteShader(s);
+    const kind = type === gl.FRAGMENT_SHADER ? 'fragment shader' : 'vertex shader';
+    throw new Error(kind + ': ' + String(log).trim());
+  }
+  return s;
+}
+
+function linkProgram(userCode) {
+  const vs = compileShader(gl.VERTEX_SHADER, vertexSource());
+  let fs;
+  try {
+    fs = compileShader(gl.FRAGMENT_SHADER, preambleText + userCode);
+  } catch (e) {
+    gl.deleteShader(vs);
+    throw e;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  if (!isWebGL2) gl.bindAttribLocation(prog, 0, 'a_position');
+  gl.linkProgram(prog);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(prog) || 'unknown link error';
+    gl.deleteProgram(prog);
+    throw new Error('link: ' + String(log).trim());
+  }
+  if (isWebGL2) {
+    gl.bindVertexArray(quadVao);
+  }
+  return prog;
+}
+
+let lastGoodLines = 0;
+
+function build(userCode) {
+  const t0 = performance.now();
+  const prog = linkProgram(userCode);
+  program = prog;
+  uniforms = {};
+  ['u_time', 'u_resolution', 'u_mouse', 'u_frame'].forEach((n) => {
+    uniforms[n] = gl.getUniformLocation(prog, n);
+  });
+  return performance.now() - t0;
+}
+
+/* --------------------------- error formatting --------------------------- */
+
+function formatError(err) {
+  const raw = String(err && err.message ? err.message : err).trim();
+  if (!raw) return raw;
+  const m = raw.match(/(\d+):\s*(\d+)\s*:/);
+  if (m && preambleLines > 0) {
+    const shaderLine = parseInt(m[2], 10);
+    const editorLine = shaderLine - preambleLines + 1; // see preamble layout note
+    let note;
+    if (editorLine >= 1) note = 'editor line ' + editorLine;
+    else if (editorLine === 0) note = 'in the hidden preamble (line 1)';
+    else note = 'in the hidden preamble';
+    return raw + '\n\n→ ' + note;
+  }
+  return raw;
+}
+
+/* ------------------------------ state ---------------------------------- */
+
+let timeElapsed = 0;
+let lastTick = performance.now();
+let paused = false;
+let frame = 0;
+let playingProgram = null;      // last successfully built program
+let pendingProgram = null;      // currently rendering program
+let buildError = null;
+const mouse = { x: 0, y: 0, nx: 0, ny: 0 };
+
+let fpsFrames = 0;
+let fpsLast = performance.now();
+let statusMode = 'ok'; // ok | warn | err | busy
+
+function setStatus(mode, text, detail) {
+  statusMode = mode;
+  el.statusDot.className = 'dot ' + mode;
+  el.statusText.textContent = text || '';
+  el.footMsg.className = 'msg ' + (mode === 'warn' ? 'warn' : mode);
+  el.footMsg.textContent = detail || text || '';
+  el.logBtn.style.display = detail ? 'inline-block' : 'none';
+  if (detail) el.logBtn.dataset.log = detail;
+}
+function clearLogButton() { el.logBtn.style.display = 'none'; }
+
+/* ------------------------------ rendering ------------------------------- */
+
+function resizeRenderer() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.floor(el.canvas.clientWidth * dpr));
+  const h = Math.max(1, Math.floor(el.canvas.clientHeight * dpr));
+  if (el.canvas.width !== w || el.canvas.height !== h) {
+    el.canvas.width = w;
+    el.canvas.height = h;
+  }
+  gl.viewport(0, 0, el.canvas.width, el.canvas.height);
+}
+
+function draw(now) {
+  resizeRenderer();
+
+  if (!paused) {
+    timeElapsed += (now - lastTick) / 1000;
+  }
+  lastTick = now;
+  frame++;
+
+  gl.clearColor(0.02, 0.03, 0.06, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  if (pendingProgram) {
+    gl.useProgram(pendingProgram);
+    if (uniforms.u_time       != null) gl.uniform1f(uniforms.u_time, timeElapsed);
+    if (uniforms.u_resolution != null) gl.uniform2f(uniforms.u_resolution, el.canvas.width, el.canvas.height);
+    if (uniforms.u_mouse      != null) gl.uniform2f(uniforms.u_mouse, mouse.nx, mouse.ny);
+    if (uniforms.u_frame      != null) gl.uniform1f(uniforms.u_frame, frame);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  } else {
+    gl.drawArrays(gl.TRIANGLES, 0, 6); // clear only; no program bound
+  }
+
+  // FPS meter
+  fpsFrames++;
+  const e = performance.now();
+  if (e - fpsLast >= 500) {
+    el.fps.textContent = Math.round((fpsFrames * 1000) / (e - fpsLast));
+    fpsFrames = 0;
+    fpsLast = e;
+  }
+  el.time.textContent = timeElapsed.toFixed(1) + 's';
+
+  requestAnimationFrame(draw);
+}
+
+/* ------------------------------ highlight ------------------------------- */
+
+const HL_KEYWORDS = new Set([
+  'if', 'else', 'for', 'while', 'do', 'return', 'break', 'continue', 'discard',
+  'in', 'out', 'inout', 'uniform', 'attribute', 'varying', 'const', 'struct',
+  'switch', 'case', 'default', 'true', 'false',
+]);
+const HL_TYPES = new Set([
+  'void', 'bool', 'int', 'uint', 'float', 'double',
+  'vec2', 'vec3', 'vec4', 'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
+  'bvec2', 'bvec3', 'bvec4', 'mat2', 'mat3', 'mat4', 'mat2x2', 'mat2x3', 'mat2x4',
+  'mat3x2', 'mat3x3', 'mat3x4', 'mat4x2', 'mat4x3', 'mat4x4',
+  'sampler2D', 'samplerCube', 'sampler3D', 'sampler2DShadow', 'samplerCubeShadow',
+  'lowp', 'mediump', 'highp', 'precision', 'flat', 'smooth', 'centroid', 'layout',
+]);
+const HL_BUILTINS = new Set([
+  'radians', 'degrees', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh',
+  'tanh', 'asinh', 'acosh', 'atanh', 'pow', 'exp', 'log', 'exp2', 'log2', 'sqrt',
+  'inversesqrt', 'abs', 'sign', 'floor', 'trunc', 'round', 'roundEven', 'ceil',
+  'fract', 'mod', 'modf', 'min', 'max', 'clamp', 'mix', 'step', 'smoothstep',
+  'isnan', 'isinf', 'floatBitsToInt', 'floatBitsToUint', 'intBitsToFloat',
+  'uintBitsToFloat', 'length', 'distance', 'dot', 'cross', 'normalize', 'faceforward',
+  'reflect', 'refract', 'matrixCompMult', 'outerProduct', 'transpose', 'determinant',
+  'inverse', 'lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual', 'equal',
+  'notEqual', 'any', 'all', 'not', 'dFdx', 'dFdy', 'fwidth', 'texture2D',
+  'texture2DProj', 'texture2DLod', 'textureCube', 'texture', 'textureLod',
+  'textureProj', 'textureOffset', 'texelFetch', 'gl_FragCoord', 'gl_FragColor',
+]);
+
+function escHTML(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const TOKEN_RE = /(\/\/[^\n]*|"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')|(0[xX][0-9a-fA-F]+)|\b(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+\b)\b|\b([A-Za-z_][A-Za-z0-9_]*)\b|([#][^\n]*)|([/][*])|([*][/])|(\s+)|(.)/g;
+
+function highlightGLSL(src) {
+  const out = [];
+  const lines = src.split('\n');
+  let inBlock = false;
+
+  for (const line of lines) {
+    let i = 0;
+    const n = line.length;
+    while (i < n) {
+      // escape and push by token kind
+      const push = (text, cls) => {
+        if (cls) out.push('<span class="' + cls + '">' + escHTML(text) + '</span>');
+        else out.push(escHTML(text));
+      };
+      if (inBlock) {
+        const end = line.indexOf('*/', i);
+        if (end === -1) { push(line.slice(i), 'c'); i = n; }
+        else { push(line.slice(i, end + 2), 'c'); i = end + 2; inBlock = false; }
+        continue;
+      }
+      const rest = line.slice(i);
+      const m = TOKEN_RE.exec(line.slice(i));
+      if (!m) break;
+      const tok = m[0];
+      i += tok.length;
+      if (m[1]) push(tok, inBlock ? 'c' : 's');
+      else if (m[2]) push(tok, 'n');
+      else if (m[3]) push(tok, 'n');
+      else if (m[4]) {
+        if (HL_KEYWORDS.has(tok)) push(tok, 'k');
+        else if (HL_TYPES.has(tok)) push(tok, 't');
+        else if (HL_BUILTINS.has(tok)) push(tok, 'b');
+        else push(tok, null);
+      }
+      else if (m[5]) push(tok, 'p');
+      else if (m[6]) { push(tok, 'c'); inBlock = true; }
+      else if (m[7]) push(tok, 'c');
+      else if (m[8]) push(tok, null);
+      else push(tok, null);
+      TOKEN_RE.lastIndex = 0;
+    }
+    out.push('\n');
+  }
+  out.push('\u200b'); // zero-width space so the pre keeps the trailing newline's height
+  return out.join('');
+}
+
+function updateHighlight() {
+  el.hl.innerHTML = highlightGLSL(el.code.value);
+}
+
+/* -------------------------------- editor -------------------------------- */
+
+let compileTimer = null;
+
+function scheduleCompile() {
+  setStatus('busy', 'compiling…', null);
+  clearTimeout(compileTimer);
+  compileTimer = setTimeout(doCompile, 200);
+}
+
+function doCompile() {
+  if (!gl || !program || program !== playingProgram) { /* no current baseline yet — fine */ }
+  const src = el.code.value;
+  try {
+    const ms = build(src);
+    pendingProgram = program;
+    playingProgram = program;
+    buildError = null;
+    const notes = getShaderNotes(src);
+    if (notes) setStatus('warn', 'compiled (' + ms.toFixed(1) + 'ms)', 'compiled with notes:\n' + notes);
+    else setStatus('ok', 'compiled ' + ms.toFixed(1) + 'ms', null);
+  } catch (e) {
+    buildError = e;
+    const msg = formatError(e);
+    setStatus('err', 'error compiling', msg);
+    if (!playingProgram) pendingProgram = null; // nothing valid to render
+  }
+  clearLogButton();
+}
+
+// surfacing non-fatal driver notes (warnings) after a successful link
+function getShaderNotes(src) {
+  // cheap re-check: compile fragment again and read info log
+  let s;
+  try { s = compileShader(gl.FRAGMENT_SHADER, preambleText + src); }
+  catch (e) { return null; }
+  const log = String(gl.getShaderInfoLog(s) || '').trim();
+  gl.deleteShader(s);
+  const clean = log.replace(/^SUCCESS.*$/im, '').trim();
+  return clean || null;
+}
+
+function loadPreset(name) {
+  const p = PRESETS.find((x) => x.name === name);
+  if (!p) return;
+  el.code.value = p.code;
+  updateHighlight();
+  el.code.scrollTop = 0;
+  el.hl.scrollTop = 0;
+  doCompile();
+}
+
+function togglePause() {
+  paused = !paused;
+  el.pause.textContent = paused ? 'Play' : 'Pause';
+  if (!paused) lastTick = performance.now();
+}
+
+/* ------------------------------- pointer -------------------------------- */
+
+function onPointerMove(e) {
+  const r = el.canvas.getBoundingClientRect();
+  if (r.width === 0) return;
+  mouse.x = e.clientX - r.left;
+  mouse.y = r.height - (e.clientY - r.top);         // y up
+  mouse.nx = Math.min(1, Math.max(0, mouse.x / r.width));
+  mouse.ny = Math.min(1, Math.max(0, mouse.y / r.height));
+  el.cross.style.left = mouse.x + 'px';
+  el.cross.style.top = (r.height - mouse.y) + 'px';
+}
+
+/* ------------------------------- events --------------------------------- */
+
+function bindEvents() {
+  // preset select
+  PRESETS.forEach((p) => {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = p.name;
+    el.preset.appendChild(o);
+  });
+  el.preset.value = PRESETS[0].name;
+  el.preset.addEventListener('change', () => loadPreset(el.preset.value));
+
+  el.run.addEventListener('click', doCompile);
+  el.reset.addEventListener('click', () => { timeElapsed = 0; });
+  el.pause.addEventListener('click', togglePause);
+
+  el.editorBtn.addEventListener('click', () => {
+    const hide = !el.editorPane.classList.contains('hidden');
+    el.editorPane.classList.toggle('hidden', hide);
+    el.editorBtn.setAttribute('aria-pressed', String(!hide));
+  });
+  el.helpBtn.addEventListener('click', () => $('help').classList.remove('hidden'));
+
+  el.logBtn.addEventListener('click', () => {
+    const txt = el.logBtn.dataset.log;
+    if (txt) { $('logText').textContent = txt; $('logview').classList.remove('hidden'); }
+  });
+
+  document.querySelectorAll('.close').forEach((b) => {
+    b.addEventListener('click', () => $(b.dataset.close).classList.add('hidden'));
+  });
+  $('fatal').addEventListener('click', (e) => { if (e.target === $('fatal')) $('fatal').classList.add('hidden'); });
+  $('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').classList.add('hidden'); });
+  $('logview').addEventListener('click', (e) => { if (e.target === $('logview')) $('logview').classList.add('hidden'); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      ['help', 'logview'].forEach((id) => $(id).classList.add('hidden'));
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doCompile(); }
+  });
+
+  // editor: live editing, tabs, scroll sync
+  el.code.addEventListener('input', () => {
+    updateHighlight();
+    scheduleCompile();
+  });
+  el.code.addEventListener('scroll', () => {
+    el.hl.scrollTop = el.code.scrollTop;
+    el.hl.scrollLeft = el.code.scrollLeft;
+  });
+  el.code.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      el.code.setRangeText('  ', el.code.selectionStart, el.code.selectionEnd, 'end');
+      updateHighlight();
+      scheduleCompile();
+    }
+  });
+
+  // pointer on canvas
+  el.canvas.addEventListener('pointermove', onPointerMove);
+  el.canvas.addEventListener('pointerdown', () => document.body.classList.add('mouse-on'));
+  el.canvas.addEventListener('pointerup', () => document.body.classList.remove('mouse-on'));
+  el.canvas.addEventListener('pointerleave', () => document.body.classList.remove('mouse-on'));
+
+  // editor resize divider
+  el.divider.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    el.divider.classList.add('drag');
+    el.divider.setPointerCapture(e.pointerId);
+  });
+  el.divider.addEventListener('pointermove', (e) => {
+    if (!el.divider.classList.contains('drag')) return;
+    const w = el.stage.getBoundingClientRect().right - e.clientX;
+    el.editorPane.style.setProperty('--edw', Math.min(760, Math.max(300, w)) + 'px');
+  });
+  el.divider.addEventListener('pointerup', () => {
+    el.divider.classList.remove('drag');
+  });
+
+  window.addEventListener('resize', resizeRenderer);
+}
+
+/* -------------------------------- boot ---------------------------------- */
+
+function boot() {
+  if (!initGL()) return;               // fatal overlay shown
+  preambleText = buildPreamble();
+  preambleLines = preambleText.split('\n').length;
+  bindEvents();
+  updateHighlightOnce();
+  el.code.value = PRESETS[0].code;
+  updateHighlight();
+  loadPreset(PRESETS[0].name);
+  requestAnimationFrame(draw);
+}
+
+function updateHighlightOnce() { /* placeholder to keep boot simple */ }
+
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>
