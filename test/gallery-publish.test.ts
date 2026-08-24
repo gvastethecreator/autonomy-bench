@@ -7,6 +7,7 @@ import {
   indexPublishedCells,
   parseGalleryArgs,
   publishRun,
+  stripNoHtmlGalleryTakes,
   stripRetiredGalleryBenchmarks,
   writeCatalogFile,
 } from '../scripts/gallery-publish.mjs';
@@ -92,6 +93,7 @@ describe('publishRun', () => {
     expect(cells[0].src).toContain('index.html');
     expect(cells[0].glance.durationMs).toBe(1200);
     expect(cells[0].glance.harness).toBe('cursor');
+    expect(cells[0].glance.showcaseFixed).toBe(false);
     const catalog = writeCatalogFile(galleryDir, suite);
     expect(catalog.cells[0].prompt).toBeUndefined();
     expect(catalog.cells[0].receipt).toBeUndefined();
@@ -129,7 +131,7 @@ describe('publishRun', () => {
     expect(cells[0].src).toBeTruthy();
   });
 
-  it('does not set src when a receipt has no html', () => {
+  it('skips a receipt that has no html', () => {
     const root = tempDir();
     const runDir = join(root, 'run');
     const galleryDir = join(root, 'gallery');
@@ -167,9 +169,20 @@ describe('publishRun', () => {
       tokenUsage: 'not captured',
     });
     publishRun({ runDir, galleryDir, suite });
-    const cells = indexPublishedCells(galleryDir, suite);
-    expect(cells[0].src).toBeNull();
-    expect(cells[0].receiptSrc).toBeTruthy();
+    expect(indexPublishedCells(galleryDir, suite)).toEqual([]);
+  });
+
+  it('removes published folders that have no HTML', () => {
+    const galleryDir = tempDir();
+    mkdirSync(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000', 'receipt.json'),
+      '{}',
+    );
+    expect(stripNoHtmlGalleryTakes(galleryDir)).toBe(1);
+    expect(indexPublishedCells(galleryDir, suite)).toEqual([]);
   });
 
   it('removes retired benchmark folders', () => {

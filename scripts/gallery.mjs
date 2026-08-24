@@ -7,6 +7,7 @@ import {
   liveBenchmarkIds,
   parseGalleryArgs,
   publishRun,
+  stripNoHtmlGalleryTakes,
   stripRetiredGalleryBenchmarks,
   writeCatalogFile,
   writeGalleryViewer,
@@ -36,9 +37,15 @@ function listRuns() {
   return runs;
 }
 
+function logStripped(retired, empty) {
+  if (retired) console.log(`removed ${retired} retired gallery folders`);
+  if (empty) console.log(`removed ${empty} gallery folders with no HTML`);
+}
+
 function finishGallery(extras, counts) {
   const suite = loadSuite();
-  const dropped = stripRetiredGalleryBenchmarks(GALLERY, suite);
+  const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite);
+  const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
   const known = liveBenchmarkIds(suite);
   const experimentOrder = [...(extras.experimentOrder || [])].filter(
     (id) => !known.size || known.has(id),
@@ -61,7 +68,7 @@ function finishGallery(extras, counts) {
   console.log(
     `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
   );
-  if (dropped) console.log(`removed ${dropped} retired gallery folders`);
+  logStripped(droppedRetired, droppedEmpty);
   console.log(`viewer sha256 ${hash}`);
 }
 
@@ -72,6 +79,7 @@ function cmdGallery(args) {
   const seenExp = new Set();
   let last = null;
   stripRetiredGalleryBenchmarks(GALLERY, suite);
+  stripNoHtmlGalleryTakes(GALLERY);
   const runs =
     args.all || (!args.run && !args.viewer)
       ? listRuns()
@@ -111,7 +119,8 @@ try {
   const command = galleryCommand(args);
   const suite = loadSuite();
   if (command === 'viewer') {
-    const dropped = stripRetiredGalleryBenchmarks(GALLERY, suite);
+    const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite);
+    const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
     const catalog = writeCatalogFile(GALLERY, suite);
     const hash = writeGalleryViewer({
       galleryDir: GALLERY,
@@ -122,7 +131,7 @@ try {
     console.log(
       `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
     );
-    if (dropped) console.log(`removed ${dropped} retired gallery folders`);
+    logStripped(droppedRetired, droppedEmpty);
     console.log(`viewer sha256 ${hash}`);
   } else {
     cmdGallery(args);

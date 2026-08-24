@@ -3,6 +3,7 @@ import {
   assignPromptRevisions,
   buildCatalogFromCells,
   findCell,
+  glanceFromReceipt,
   latestDateFor,
   maxPromptRevision,
 } from '../scripts/catalog.mjs';
@@ -166,5 +167,16 @@ describe('catalog', () => {
     expect(catalog.cells[0].thinking).toBe('high');
     expect(catalog.cells[0].modelKey).toBe('grok-4.6-high');
     expect(catalog.cells[0].model).toBe('grok-4.6');
+  });
+
+  it('surfaces showcaseFixed on glance', () => {
+    expect(
+      glanceFromReceipt({
+        durationMs: 10,
+        harness: 'cursor',
+        showcaseFixed: { at: '2026-08-24T00:00:00.000Z', note: 'x' },
+      })?.showcaseFixed,
+    ).toBe(true);
+    expect(glanceFromReceipt({ durationMs: 10 })?.showcaseFixed).toBe(false);
   });
 });
