@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Forge — Visual Node Editor</title>
+<style>
+  :root{
+    --bg:#0d1117;
+    --grid:#161b22;
+    --grid2:#11161d;
+    --panel:#161b22;
+    --panel-2:#1c2230;
+    --line:#2a3346;
+    --text:#c9d1e0;
+    --muted:#7d889c;
+    --accent:#58a6ff;
+    --accent-2:#7ee787;
+    --port:#8b949e;
+    --sel:#1f6feb;
+    --shadow:0 8px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;font-family:"Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+
+  header{
+    height:48px;flex:0 0 48px;display:flex;align-items:center;gap:14px;
+    padding:0 16px;background:linear-gradient(180deg,#161b22,#11161d);
+    border-bottom:1px solid var(--line);z-index:20;
+  }
+  header .brand{font-weight:700;letter-spacing:.4px;font-size:15px;display:flex;align-items:center;gap:8px}
+  header .brand .dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#bc8cff);box-shadow:0 0 12px var(--accent)}
+  header .hint{color:var(--muted);font-size:12px}
+  header .spacer{flex:1}
+  .btn{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    padding:6px 12px;border-radius:7px;font-size:12.5px;cursor:pointer;transition:.15s;
+  }
+  .btn:hover{border-color:var(--accent);color:#fff}
+  .btn.primary{background:linear-gradient(135deg,#1f6feb,#388bfd);border-color:#388bfd;color:#fff}
+  .btn.primary:hover{filter:brightness(1.1)}
+
+  #stage{position:relative;flex:1;overflow:hidden;cursor:grab;background:
+    radial-gradient(1200px 800px at 70% 20%, #131a26 0%, var(--bg) 60%);}
+  #stage.panning{cursor:grabbing}
+  #world{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
+  svg.links{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+  .link{fill:none;stroke-width:2.5;stroke-linecap:round}
+  .link.hot{stroke-dasharray:6 7;animation:flow 1s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-26}}
+
+  .node{
+    position:absolute;min-width:170px;background:linear-gradient(180deg,var(--panel),#12161e);
+    border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+    user-select:none;transition:border-color .15s,box-shadow .15s;
+  }
+  .node.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow)}
+  .node .head{
+    padding:9px 12px;border-bottom:1px solid var(--line);border-radius:12px 12px 0 0;
+    font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:move;
+    background:linear-gradient(180deg,rgba(255,255,255,.04),transparent);
+  }
+  .node .head .ic{width:9px;height:9px;border-radius:2px;flex:0 0 9px}
+  .node .head .tag{margin-left:auto;font-size:10px;color:var(--muted);font-weight:500;letter-spacing:.4px;text-transform:uppercase}
+  .node .body{padding:8px 0 10px}
+  .row{display:flex;align-items:center;position:relative;min-height:26px;padding:2px 12px;font-size:12.5px;color:var(--text)}
+  .row .k{color:var(--muted);font-size:11.5px}
+  .row .v{margin-left:auto;font-variant-numeric:tabular-nums;color:#fff;font-weight:600}
+  .field{display:flex;align-items:center;gap:8px;padding:4px 12px}
+  .field input{
+    width:100%;background:#0b0f16;border:1px solid var(--line);border-radius:6px;color:#fff;
+    padding:5px 8px;font-size:12px;outline:none;
+  }
+  .field input:focus{border-color:var(--accent)}
+
+  .port{
+    position:absolute;width:14px;height:14px;border-radius:50%;background:var(--bg);
+    border:2px solid var(--port);top:50%;transform:translateY(-50%);cursor:crosshair;transition:.12s;z-index:3;
+  }
+  .port:hover{border-color:var(--accent);transform:translateY(-50%) scale(1.25)}
+  .port.in{left:-8px}
+  .port.out{right:-8px}
+  .port.connected{background:var(--accent);border-color:var(--accent)}
+  .port-label{position:absolute;top:50%;transform:translateY(-50%);font-size:10.5px;color:var(--muted);white-space:nowrap;pointer-events:none}
+  .port-label.in{left:12px}
+  .port-label.out{right:12px;color:var(--muted)}
+
+  #temp{stroke:var(--accent);stroke-width:2.5;fill:none;stroke-dasharray:5 6;pointer-events:none}
+
+  #minimap{
+    position:absolute;right:14px;bottom:14px;width:180px;height:120px;background:rgba(13,17,23,.8);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;z-index:15;backdrop-filter:blur(4px);
+  }
+  #minimap canvas{display:block;width:100%;height:100%}
+
+  #inspector{
+    position:absolute;left:14px;top:14px;width:230px;background:rgba(22,27,34,.92);
+    border:1px solid var(--line);border-radius:12px;padding:14px;z-index:15;box-shadow:var(--shadow);
+    backdrop-filter:blur(6px);font-size:12.5px;
+  }
+  #inspector h3{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:8px}
+  #inspector .kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--line);color:var(--muted)}
+  #inspector .kv b{color:var(--text);font-weight:600}
+  #inspector .tip{margin-top:12px;color:var(--muted);font-size:11px;line-height:1.5}
+
+  #toolbar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;
+    background:rgba(22,27,34,.92);border:1px solid var(--line);border-radius:12px;padding:7px;z-index:16;backdrop-filter:blur(6px);box-shadow:var(--shadow)}
+  #toolbar .btn{padding:7px 11px}
+
+  .ghost-hint{position:absolute;left:50%;top:18px;transform:translateX(-50%);color:var(--muted);
+    font-size:12px;background:rgba(13,17,23,.6);padding:5px 12px;border-radius:20px;border:1px solid var(--line);z-index:14}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="dot"></span>Node Forge</div>
+    <span class="hint">drag nodes · drag from a port to link · scroll to zoom · space+drag or right-drag to pan</span>
+    <div class="spacer"></div>
+    <button class="btn" id="addMath">+ Math</button>
+    <button class="btn" id="addValue">+ Value</button>
+    <button class="btn" id="addText">+ Text</button>
+    <button class="btn" id="addDisplay">+ Display</button>
+    <button class="btn primary" id="runBtn">Evaluate ▶</button>
+  </header>
+
+  <div id="stage">
+    <div id="world">
+      <svg class="links" id="links"></svg>
+      <!-- nodes injected here -->
+    </div>
+
+    <div id="inspector">
+      <h3>🌐 Graph</h3>
+      <div class="kv"><span>Nodes</span><b id="statNodes">0</b></div>
+      <div class="kv"><span>Links</span><b id="statLinks">0</b></div>
+      <div class="kv"><span>Zoom</span><b id="statZoom">100%</b></div>
+      <div class="tip">Click a node to inspect it. Drag the body to move, drag a port dot to another port to connect. Outputs feed downstream inputs and recompute on Evaluate.</div>
+    </div>
+
+    <div class="ghost-hint" id="ghostHint">A live signal graph — wires propagate values left → right</div>
+
+    <div id="toolbar">
+      <button class="btn" id="fitBtn">Fit</button>
+      <button class="btn" id="resetBtn">Reset</button>
+      <button class="btn" id="clearBtn">Clear links</button>
+    </div>
+
+    <div id="minimap"><canvas id="mm" width="180" height="120"></canvas></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const stage = document.getElementById('stage');
+const world = document.getElementById('world');
+const linksSvg = document.getElementById('links');
+const tempSvg = document.createElementNS('http://www.w3.org/2000/svg','path');
+tempSvg.id='temp'; linksSvg.appendChild(tempSvg);
+
+let view = {x:60,y:60,scale:1};
+const nodes = new Map();
+const links = []; // {from:{n,p}, to:{n,p}, el}
+let nodeSeq = 0;
+
+/* ---------- view transform ---------- */
+function applyView(){
+  world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
+  document.getElementById('statZoom').textContent = Math.round(view.scale*100)+'%';
+  drawLinks();
+  drawMinimap();
+}
+function screenToWorld(cx,cy){
+  return {x:(cx-view.x)/view.scale, y:(cy-view.y)/view.scale};
+}
+
+/* ---------- node definitions ---------- */
+const TYPES = {
+  value:{title:'Value',color:'#7ee787',tag:'input',inputs:[],outputs:['out'],make:()=>({out:0}),fields:{out:{label:'value',val:0,kind:'number'}}},
+  math:{title:'Math',color:'#d2a8ff',tag:'op',inputs:['a','b'],outputs:['out'],make:()=>({a:0,b:0,out:0}),fields:{op:{label:'op',val:'+',kind:'select',opts:['+','-','*','/','%','pow']}}},
+  text:{title:'Text',color:'#ffa657',tag:'text',inputs:['a','b'],outputs:['out'],make:()=>({a:'',b:'',out:''}),fields:{sep:{label:'sep',val:' ',kind:'text'}}},
+  display:{title:'Display',color:'#58a6ff',tag:'output',inputs:['in'],outputs:[],make:()=>({in:0}),fields:{}}
+};
+
+/* ---------- create node ---------- */
+function createNode(type, x, y, preset){
+  const def = TYPES[type];
+  const id = 'n'+(++nodeSeq);
+  const data = preset || def.make();
+  const el = document.createElement('div');
+  el.className='node';
+  el.style.left = x+'px'; el.style.top = y+'px';
+  el.dataset.id = id;
+
+  const head = document.createElement('div');
+  head.className='head';
+  head.innerHTML = `<span class="ic" style="background:${def.color}"></span>${def.title}<span class="tag">${def.tag}</span>`;
+  el.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className='body';
+
+  def.inputs.forEach((p,i)=>{
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<span class="k">${p}</span>`;
+    const port=document.createElement('div'); port.className='port in'; port.dataset.port=p; port.dataset.kind='in';
+    const lab=document.createElement('span'); lab.className='port-label in'; lab.textContent=p;
+    row.appendChild(lab); row.appendChild(port); body.appendChild(row);
+  });
+  // field editors
+  Object.entries(def.fields).forEach(([k,f])=>{
+    const field=document.createElement('div'); field.className='field';
+    const input=document.createElement('input');
+    input.value = (data[k]!==undefined?data[k]:f.val);
+    if(f.kind==='number') input.type='number';
+    if(f.kind==='select'){
+      input.outerHTML = `<select style="flex:1;background:#0b0f16;border:1px solid var(--line);border-radius:6px;color:#fff;padding:5px 8px;font-size:12px;outline:none">${f.opts.map(o=>`<option ${o==input.value?'selected':''}>${o}</option>`).join('')}</select>`;
+    }
+    field.innerHTML=`<span class="k" style="min-width:30px">${f.label}</span>`;
+    field.appendChild(input);
+    input.addEventListener('input',()=>{ data[k]= (f.kind==='number')?parseFloat(input.value)||0:input.value; });
+    body.appendChild(field);
+  });
+
+  def.outputs.forEach((p)=>{
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<span class="k" style="margin-left:auto">${p}</span>`;
+    const port=document.createElement('div'); port.className='port out'; port.dataset.port=p; port.dataset.kind='out';
+    const lab=document.createElement('span'); lab.className='port-label out'; lab.textContent=p;
+    row.appendChild(lab); row.appendChild(port); body.appendChild(row);
+    // value readout
+    const v=document.createElement('span'); v.className='v'; v.dataset.out=p; v.style.marginLeft='8px';
+    row.insertBefore(v,lab);
+  });
+
+  el.appendChild(body);
+  world.appendChild(el);
+  const node={id,type,el,data,def,x,y,ports:{}};
+  nodes.set(id,node);
+  // cache port centers
+  requestAnimationFrame(()=>cachePorts(node));
+  // events
+  head.addEventListener('mousedown',e=>startDragNode(e,node));
+  el.addEventListener('mousedown',()=>select(node));
+  el.querySelectorAll('.port').forEach(p=>p.addEventListener('mousedown',e=>startLink(e,node,p)));
+  refreshStats();
+  return node;
+}
+
+function cachePorts(node){
+  node.el.querySelectorAll('.port').forEach(p=>{
+    const r=p.getBoundingClientRect();
+    const wr=world.getBoundingClientRect();
+    const cx=(r.left+r.width/2 - wr.left)/view.scale;
+    const cy=(r.top+r.height/2 - wr.top)/view.scale;
+    node.ports[p.dataset.kind+':'+p.dataset.port]={x:cx,y:cy};
+  });
+}
+
+/* ---------- dragging nodes ---------- */
+let drag=null;
+function startDragNode(e,node){
+  e.preventDefault(); e.stopPropagation();
+  select(node);
+  const w=screenToWorld(e.clientX,e.clientY);
+  drag={node,ox:w.x-node.x,oy:w.y-node.y};
+}
+window.addEventListener('mousemove',e=>{
+  if(drag){
+    const w=screenToWorld(e.clientX,e.clientY);
+    drag.node.x = w.x-drag.ox; drag.node.y=w.y-drag.oy;
+    drag.node.el.style.left=drag.node.x+'px'; drag.node.el.style.top=drag.node.y+'px';
+    cachePorts(drag.node); drawLinks();
+  }
+});
+window.addEventListener('mouseup',()=>{drag=null;});
+
+/* ---------- linking ---------- */
+let linking=null;
+function startLink(e,node,portEl){
+  e.preventDefault(); e.stopPropagation();
+  const kind=portEl.dataset.kind;
+  linking={fromNode:node, fromPort:portEl.dataset.port, fromKind:kind, portEl};
+}
+window.addEventListener('mousemove',e=>{
+  if(linking){
+    const src=linking.fromNode.ports[linking.fromKind+':'+linking.fromPort];
+    if(!src) return;
+    const w=screenToWorld(e.clientX,e.clientY);
+    let x1,y1,x2,y2;
+    if(linking.fromKind==='out'){x1=src.x;y1=src.y;x2=w.x;y2=w.y;}
+    else{x2=src.x;y2=src.y;x1=w.x;y1=w.y;}
+    tempSvg.setAttribute('d',bezier(x1,y1,x2,y2));
+  }
+});
+window.addEventListener('mouseup',e=>{
+  if(linking){
+    // find target port under cursor
+    const el = document.elementFromPoint(e.clientX,e.clientY);
+    if(el && el.classList.contains('port')){
+      const targetNode = el.closest('.node');
+      const targetId = targetNode.dataset.id;
+      const tn = nodes.get(targetId);
+      const tk = el.dataset.kind, tp = el.dataset.port;
+      // must connect out -> in
+      let outN,outP,inN,inP;
+      if(linking.fromKind==='out' && tk==='in'){outN=linking.fromNode;outP=linking.fromPort;inN=tn;inP=tp;}
+      else if(linking.fromKind==='in' && tk==='out'){outN=tn;outP=tp;inN=linking.fromNode;inP=linking.fromPort;}
+      if(outN && inN && outN!==inN){ addLink(outN,outP,inN,inP); }
+    }
+    tempSvg.setAttribute('d','');
+    linking=null;
+  }
+});
+
+function addLink(outN,outP,inN,inP){
+  // remove existing link into same input
+  for(let i=links.length-1;i>=0;i--){
+    if(links[i].to.n===inN && links[i].to.p===inP) removeLink(links[i]);
+  }
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.className='link hot';
+  linksSvg.appendChild(path);
+  const lk={from:{n:outN,p:outP},to:{n:inN,p:inP},el:path};
+  links.push(lk);
+  cachePorts(outN);cachePorts(inN);
+  markConnected(outN,outP,'out');markConnected(inN,inP,'in');
+  drawLinks(); refreshStats(); evaluate();
+}
+function removeLink(lk){
+  lk.el.remove();
+  const i=links.indexOf(lk); if(i>=0) links.splice(i,1);
+  refreshStats();
+}
+function markConnected(node,p,kind){
+  const sel=`.port.${kind}[data-port="${p}"]`;
+  const port=node.el.querySelector(sel); if(port) port.classList.add('connected');
+}
+
+/* ---------- drawing links ---------- */
+function bezier(x1,y1,x2,y2){
+  const dx=Math.max(40,Math.abs(x2-x1)*0.5);
+  return `M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
+}
+function drawLinks(){
+  links.forEach(lk=>{
+    const a=lk.from.n.ports['out:'+lk.from.p];
+    const b=lk.to.n.ports['in:'+lk.to.p];
+    if(a&&b) lk.el.setAttribute('d',bezier(a.x,a.y,b.x,b.y));
+  });
+  drawMinimap();
+}
+
+/* ---------- evaluation ---------- */
+function evaluate(){
+  // gather inputs per node
+  const inputs={};
+  links.forEach(lk=>{
+    const key=lk.to.n.id+'/'+lk.to.p;
+    inputs[key]={n:lk.from.n,p:lk.from.p};
+  });
+  const cache={};
+  function evalNode(node){
+    if(cache[node.id]!==undefined) return cache[node.id];
+    // resolve inputs first
+    const resolved={};
+    node.def.inputs.forEach(p=>{
+      const src=inputs[node.id+'/'+p];
+      if(src) resolved[p]=evalNode(src.n).outputs[src.p];
+      else resolved[p]=node.data[p]!==undefined?node.data[p]:0;
+    });
+    const out=compute(node,resolved);
+    cache[node.id]={outputs:out};
+    // paint readouts
+    node.def.outputs.forEach(p=>{
+      const v=node.el.querySelector(`[data-out="${p}"]`);
+      if(v) v.textContent=formatVal(out[p]);
+    });
+    // paint input readouts for value nodes
+    if(node.type==='value'){
+      const v=node.el.querySelector('[data-out="out"]'); if(v) v.textContent=formatVal(node.data.out);
+    }
+    return cache[node.id];
+  }
+  nodes.forEach(n=>evalNode(n));
+}
+function compute(node,res){
+  const d=node.data;
+  switch(node.type){
+    case 'value': return {out:num(d.out)};
+    case 'math':{
+      const a=num(res.a), b=num(res.b); let r=0;
+      switch(d.op){case '+':r=a+b;break;case '-':r=a-b;break;case '*':r=a*b;break;
+        case '/':r=b===0?0:a/b;break;case '%':r=b===0?0:a%b;break;case 'pow':r=Math.pow(a,b);break;}
+      d.out=r; return {out:r};
+    }
+    case 'text':{
+      const sep=(d.sep!==undefined?d.sep:' ');
+      const r=String(res.a)+sep+String(res.b); d.out=r; return {out:r};
+    }
+    case 'display': return {in:res.in};
+  }
+  return {};
+}
+function num(v){return typeof v==='number'?v:(parseFloat(v)||0);}
+function formatVal(v){ if(typeof v==='number') return (Math.round(v*1000)/1000).toString(); return String(v); }
+
+/* ---------- selection / inspector ---------- */
+let selected=null;
+function select(node){
+  if(selected) selected.el.classList.remove('selected');
+  selected=node; if(node) node.el.classList.add('selected');
+}
+
+/* ---------- pan & zoom ---------- */
+let panning=false,panStart=null;
+stage.addEventListener('mousedown',e=>{
+  if(e.target===stage||e.target===world||e.target===linksSvg){
+    if(e.button===0 && e.space){ beginPan(e); }
+    else if(e.button===2){ beginPan(e); }
+  }
+});
+let space=false;
+window.addEventListener('keydown',e=>{if(e.code==='Space'){space=true;}});
+window.addEventListener('keyup',e=>{if(e.code==='Space'){space=false;}});
+function beginPan(e){ panning=true; panStart={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; stage.classList.add('panning'); }
+window.addEventListener('mousemove',e=>{
+  if(panning){ view.x=panStart.vx+(e.clientX-panStart.x); view.y=panStart.vy+(e.clientY-panStart.y); applyView(); }
+});
+window.addEventListener('mouseup',()=>{panning=false;stage.classList.remove('panning');});
+stage.addEventListener('contextmenu',e=>e.preventDefault());
+stage.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const factor=e.deltaY<0?1.1:0.9;
+  const ns=Math.min(2.5,Math.max(0.3,view.scale*factor));
+  const wx=(e.clientX-view.x)/view.scale, wy=(e.clientY-view.y)/view.scale;
+  view.scale=ns; view.x=e.clientX-wx*ns; view.y=e.clientY-wy*ns;
+  applyView();
+},{passive:false});
+
+/* ---------- minimap ---------- */
+const mm=document.getElementById('mm'); const mctx=mm.getContext('2d');
+function drawMinimap(){
+  mctx.clearRect(0,0,mm.width,mm.height);
+  if(nodes.size===0) return;
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  nodes.forEach(n=>{const w=n.el.offsetWidth,h=n.el.offsetHeight;
+    minx=Math.min(minx,n.x);miny=Math.min(miny,n.y);maxx=Math.max(maxx,n.x+w);maxy=Math.max(maxy,n.y+h);});
+  const pad=60; minx-=pad;miny-=pad;maxx+=pad;maxy+=pad;
+  const sx=mm.width/(maxx-minx), sy=mm.height/(maxy-miny); const s=Math.min(sx,sy);
+  mctx.fillStyle='rgba(88,166,255,.15)';
+  nodes.forEach(n=>{const w=n.el.offsetWidth,h=n.el.offsetHeight;
+    mctx.fillRect((n.x-minx)*s,(n.y-miny)*s,w*s,h*s);});
+  mctx.strokeStyle='rgba(88,166,255,.5)';
+  links.forEach(lk=>{
+    const a=lk.from.n,b=lk.to.n;
+    mctx.beginPath();
+    mctx.moveTo((a.x+20-minx)*s,(a.y+20-miny)*s);
+    mctx.lineTo((b.x+20-minx)*s,(b.y+20-miny)*s);
+    mctx.stroke();
+  });
+}
+
+/* ---------- stats ---------- */
+function refreshStats(){
+  document.getElementById('statNodes').textContent=nodes.size;
+  document.getElementById('statLinks').textContent=links.length;
+}
+
+/* ---------- buttons ---------- */
+function spawn(type){
+  const r=stage.getBoundingClientRect();
+  const w=screenToWorld(r.left+r.width/2+ (Math.random()*120-60), r.top+r.height/2+(Math.random()*120-60));
+  const n=createNode(type,w.x,w.y); cachePorts(n); return n;
+}
+document.getElementById('addMath').onclick=()=>{const n=spawn('math'); select(n);};
+document.getElementById('addValue').onclick=()=>{const n=spawn('value'); select(n);};
+document.getElementById('addText').onclick=()=>{const n=spawn('text'); select(n);};
+document.getElementById('addDisplay').onclick=()=>{const n=spawn('display'); select(n);};
+document.getElementById('runBtn').onclick=evaluate;
+document.getElementById('clearBtn').onclick=()=>{
+  [...links].forEach(removeLink);
+  nodes.forEach(n=>n.el.querySelectorAll('.port').forEach(p=>p.classList.remove('connected')));
+  evaluate();
+};
+document.getElementById('resetBtn').onclick=()=>buildScene();
+document.getElementById('fitBtn').onclick=fitView;
+
+function fitView(){
+  if(nodes.size===0) return;
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  nodes.forEach(n=>{const w=n.el.offsetWidth,h=n.el.offsetHeight;
+    minx=Math.min(minx,n.x);miny=Math.min(miny,n.y);maxx=Math.max(maxx,n.x+w);maxy=Math.max(maxy,n.y+h);});
+  const r=stage.getBoundingClientRect();
+  const pad=80;
+  const sx=(r.width-pad*2)/(maxx-minx), sy=(r.height-pad*2)/(maxy-miny);
+  view.scale=Math.min(1.4,Math.min(sx,sy));
+  view.x=pad-minx*view.scale+ (r.width-pad*2-(maxx-minx)*view.scale)/2;
+  view.y=pad-miny*view.scale;
+  applyView();
+}
+
+/* ---------- initial scene: (3 + 4) * 2 => Display ---------- */
+function buildScene(){
+  // clear
+  [...nodes.keys()].forEach(k=>nodes.get(k).el.remove());
+  nodes.clear(); links.forEach(l=>l.el.remove()); links.length=0;
+  view={x:60,y:60,scale:1};
+
+  const v1=createNode('value',40,80,{out:3});
+  const v2=createNode('value',40,260,{out:4});
+  const m1=createNode('math',300,110,{a:0,b:0,out:0,op:'+'});
+  const m2=createNode('math',560,150,{a:0,b:0,out:0,op:'*'});
+  const v3=createNode('value',560,330,{out:2});
+  const d=createNode('display',840,180,{in:0});
+
+  requestAnimationFrame(()=>{
+    cachePorts(v1);cachePorts(v2);cachePorts(m1);cachePorts(m2);cachePorts(v3);cachePorts(d);
+    addLink(v1,'out',m1,'a');
+    addLink(v2,'out',m1,'b');
+    addLink(m1,'out',m2,'a');
+    addLink(v3,'out',m2,'b');
+    addLink(m2,'out',d,'in');
+    fitView();
+  });
+}
+
+buildScene();
+window.addEventListener('resize',()=>{drawLinks();});
+</script>
+</body>
+</html>

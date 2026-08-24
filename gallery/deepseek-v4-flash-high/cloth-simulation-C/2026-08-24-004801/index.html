@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Silk — a cloth simulation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,400;1,500&family=Space+Grotesk:wght@300;400;500&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink: #efe6d4;
+    --ink-dim: rgba(239,230,212,0.55);
+    --ink-faint: rgba(239,230,212,0.32);
+    --gold: #f2b24a;
+    --panel: rgba(12,14,28,0.38);
+    --panel-border: rgba(238,228,205,0.22);
+    --serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+    --sans: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+    --mono: "Space Mono", "Consolas", monospace;
+  }
+  *{ box-sizing: border-box; margin: 0; padding: 0; }
+  html,body{ height: 100%; }
+  body{
+    background: #070812;
+    color: var(--ink);
+    font-family: var(--sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #scene{
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: default;
+    touch-action: none;
+  }
+  body.grabbing #scene{ cursor: grabbing; }
+  body.can-grab #scene{ cursor: grab; }
+
+  /* atmosphere overlays */
+  .vignette{
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background:
+      radial-gradient(120% 90% at 50% 42%, transparent 55%, rgba(3,4,10,0.55) 100%),
+      linear-gradient(to bottom, rgba(4,5,12,0.30), transparent 18%, transparent 78%, rgba(3,4,10,0.42));
+    mix-blend-mode: normal;
+  }
+
+  /* UI chrome */
+  .ui{ position: fixed; z-index: 10; user-select: none; -webkit-user-select: none; }
+
+  .title{
+    top: 30px; left: 34px;
+    animation: rise 1.2s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .kicker{
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.42em; text-transform: uppercase;
+    color: var(--ink-dim); margin-bottom: 12px;
+  }
+  .kicker::after{
+    content:""; display:block; width: 34px; height:1px;
+    background: linear-gradient(90deg, var(--gold), transparent);
+    margin-top: 10px;
+  }
+  h1{
+    font-family: var(--serif); font-style: italic; font-weight: 500;
+    font-size: clamp(44px, 6vw, 64px); line-height: 0.95;
+    letter-spacing: 0.02em;
+    text-shadow: 0 2px 30px rgba(242,178,74,0.18);
+  }
+  .sub{
+    margin-top: 14px; max-width: 300px;
+    font-size: 12.5px; line-height: 1.65;
+    color: var(--ink-dim); font-weight: 300;
+  }
+
+  .controls{
+    top: 30px; right: 34px;
+    display: flex; gap: 10px;
+    animation: rise 1.2s 0.25s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .ctl{
+    width: 40px; height: 40px; border-radius: 50%;
+    display: grid; place-items: center;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    color: var(--ink);
+    font-family: var(--sans); font-size: 15px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+    transition: color .25s, border-color .25s, background .25s, transform .15s;
+  }
+  .ctl:hover{ color: var(--gold); border-color: rgba(242,178,74,0.65); transform: translateY(-1px); }
+  .ctl:active{ transform: translateY(0) scale(0.96); }
+  .ctl.on{ color: var(--gold); border-color: rgba(242,178,74,0.75); background: rgba(242,178,74,0.12); }
+  .ctl:focus-visible{ outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  .pills{
+    bottom: 34px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px;
+    padding: 5px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    animation: rise 1.2s 0.5s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .pill{
+    border: 0; background: transparent; color: var(--ink-faint);
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.24em; text-transform: uppercase;
+    padding: 9px 16px; border-radius: 999px;
+    cursor: pointer;
+    transition: color .25s, background .25s;
+  }
+  .pill:hover{ color: var(--ink); }
+  .pill.active{ color: var(--gold); background: rgba(242,178,74,0.13); }
+  .pill:focus-visible{ outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  .hint{
+    bottom: 44px; left: 34px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.16em; color: var(--ink-faint);
+    animation: rise 1.2s 0.7s cubic-bezier(.2,.7,.2,1) both;
+    pointer-events: none;
+  }
+  .hint b{ color: var(--ink-dim); font-weight: 400; }
+
+  @keyframes rise{
+    from{ opacity: 0; transform: translateY(16px); }
+    to{ opacity: 1; transform: translateY(0); }
+  }
+  #fallback{
+    position: fixed; inset: 0; z-index: 50;
+    display: grid; place-items: center; text-align: center;
+    background: #070812; color: var(--ink-dim);
+    font-size: 14px; padding: 24px;
+  }
+  #fallback b{ color: var(--ink); font-weight: 500; }
+
+  @media (max-width: 720px){
+    .title{ top: 22px; left: 22px; }
+    .controls{ top: 22px; right: 22px; }
+    .hint{ display: none; }
+    .pills{ bottom: 24px; gap: 0; }
+    .pill{ padding: 9px 11px; letter-spacing: 0.12em; }
+    .sub{ display: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .title,.controls,.pills,.hint{ animation: none; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="fallback" hidden>
+    <div>
+      <b>WebGL is not available.</b><br>
+      This experience needs a browser with WebGL enabled.
+    </div>
+  </div>
+  <div class="vignette"></div>
+
+  <header class="ui title">
+    <div class="kicker">Cloth Simulation · 01</div>
+    <h1>Silk</h1>
+    <p class="sub">A mass–spring fabric hanging in a live wind field. Pull it, stir the air, or let the weather do the work.</p>
+  </header>
+
+  <div class="ui controls" id="controls">
+    <button class="ctl" id="btn-wind" title="Pause / resume wind (Space)" aria-label="Pause or resume wind">❚❚</button>
+    <button class="ctl" id="btn-drop" title="Release the cloth from the rod (D)" aria-label="Release the cloth">↓</button>
+    <button class="ctl" id="btn-reset" title="Reset the cloth (R)" aria-label="Reset the cloth">↺</button>
+  </div>
+
+  <nav class="ui pills" id="presets" aria-label="Wind presets">
+    <button class="pill" data-preset="calm">Calm</button>
+    <button class="pill active" data-preset="breeze">Breeze</button>
+    <button class="pill" data-preset="storm">Storm</button>
+    <button class="pill" data-preset="tornado">Tornado</button>
+  </nav>
+
+  <div class="ui hint"><b>drag cloth</b> to pull &nbsp;·&nbsp; <b>drag sky</b> to orbit &nbsp;·&nbsp; <b>scroll</b> to zoom &nbsp;·&nbsp; <b>space</b> to still the wind</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+  import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+  import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+  /* ------------------------------------------------------------------ *
+   *  Silk — a cloth simulation
+   *  Verlet mass-spring cloth · procedural silk shader · live wind
+   * ------------------------------------------------------------------ */
+
+  // ---------- helpers ----------
+  const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+
+  // smooth 3D value noise
+  function hash3(x, y, z){
+    const n = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453123;
+    return n - Math.floor(n);
+  }
+  function vnoise3(x, y, z){
+    const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+    const fx = x - ix, fy = y - iy, fz = z - iz;
+    const ux = fx*fx*(3-2*fx), uy = fy*fy*(3-2*fy), uz = fz*fz*(3-2*fz);
+    const c000=hash3(ix,iy,iz),  c100=hash3(ix+1,iy,iz),  c010=hash3(ix,iy+1,iz),  c110=hash3(ix+1,iy+1,iz);
+    const c001=hash3(ix,iy,iz+1),c101=hash3(ix+1,iy,iz+1),c011=hash3(ix,iy+1,iz+1),c111=hash3(ix+1,iy+1,iz+1);
+    const x00 = c000+(c100-c000)*ux, x10 = c010+(c110-c010)*ux;
+    const x01 = c001+(c101-c001)*ux, x11 = c011+(c111-c011)*ux;
+    const y0 = x00+(x10-x00)*uy,      y1 = x01+(x11-x01)*uy;
+    return y0+(y1-y0)*uz;
+  }
+  function fbm(x, y, z){
+    return vnoise3(x,y,z)*0.55
+         + vnoise3(x*2.1+3.7, y*2.1+1.9, z*2.1+0.4)*0.28
+         + vnoise3(x*4.3+9.2, y*4.3+2.7, z*4.3+5.1)*0.17;
+  }
+
+  // ---------- renderer / scene ----------
+  const canvas = document.getElementById('scene');
+  let renderer;
+  try{
+    renderer = new THREE.WebGLRenderer({
+      canvas, antialias: true, powerPreference: 'high-performance'
+    });
+  }catch(e){
+    document.getElementById('fallback').hidden = false;
+    throw e;
+  }
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 90);
+
+  // background gradient dome (canvas texture)
+  {
+    const bg = document.createElement('canvas');
+    bg.width = 8; bg.height = 512;
+    const bctx = bg.getContext('2d');
+    const g = bctx.createLinearGradient(0, 0, 0, 512);
+    g.addColorStop(0.00, '#05060f');
+    g.addColorStop(0.42, '#11132c');
+    g.addColorStop(0.72, '#221c3d');
+    g.addColorStop(0.88, '#33284f');
+    g.addColorStop(1.00, '#3d2f57');
+    bctx.fillStyle = g; bctx.fillRect(0, 0, 8, 512);
+    const tex = new THREE.CanvasTexture(bg);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+  }
+
+  const fogColor = new THREE.Color('#10121f');
+  scene.fog = new THREE.FogExp2(fogColor, 0.018);
+
+  // ---------- lights ----------
+  const key = new THREE.DirectionalLight('#ffe6bd', 2.3);
+  key.position.set(6, 10, 5.5);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.camera.left = -13; key.shadow.camera.right = 13;
+  key.shadow.camera.top = 13;   key.shadow.camera.bottom = -10;
+  key.shadow.camera.near = 1;   key.shadow.camera.far = 36;
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = 0.02;
+  scene.add(key);
+
+  const rim = new THREE.DirectionalLight('#6f9fff', 1.05);
+  rim.position.set(-6, 3.5, -9);
+  scene.add(rim);
+
+  const hemi = new THREE.HemisphereLight('#3a3f7a', '#140f26', 0.5);
+  scene.add(hemi);
+
+  const keyDir = key.position.clone().normalize();
+  const fillDir = new THREE.Vector3(-2.4, 1.1, 2.2).normalize();
+
+  // ---------- cloth geometry (indexed grid) ----------
+  const COLS = 64, ROWS = 40, S = 0.15;
+  const N = COLS * ROWS;
+  const yTopRow = 2.8;
+  const floorY = -3.35;
+  const rodY = 2.96;
+
+  const pos = new Float32Array(N * 3);
+  const prev = new Float32Array(N * 3);
+  const windV = new Float32Array(N * 3);
+  const pins = new Uint8Array(N);
+  const stress = new Float32Array(N);
+  const uv = new Float32Array(N * 2);
+
+  function initGrid(){
+    for(let r = 0; r < ROWS; r++){
+      for(let c = 0; c < COLS; c++){
+        const i = r * COLS + c;
+        pos[i*3]   = (c - (COLS-1)/2) * S;
+        pos[i*3+1] = yTopRow - r * S;
+        pos[i*3+2] = 0;
+        prev[i*3] = pos[i*3]; prev[i*3+1] = pos[i*3+1]; prev[i*3+2] = pos[i*3+2];
+        uv[i*2] = c / (COLS-1);
+        uv[i*2+1] = r / (ROWS-1);
+      }
+    }
+  }
+  initGrid();
+
+  // constraints
+  const edges = [];           // [a, b, rest] structural + shear
+  const bendEdges = [];       // [a, b, rest*2]
+  const stressNbr = [];       // per vertex structural neighbor list
+  for(let i = 0; i < N; i++) stressNbr.push([]);
+  const ROOT2 = Math.SQRT2;
+  for(let r = 0; r < ROWS; r++){
+    for(let c = 0; c < COLS; c++){
+      const i = r * COLS + c;
+      if(c < COLS - 1){
+        const j = i + 1;
+        edges.push(i, j, S);
+        stressNbr[i].push(j); stressNbr[j].push(i);
+      }
+      if(r < ROWS - 1){
+        const j = i + COLS;
+        edges.push(i, j, S);
+        stressNbr[i].push(j); stressNbr[j].push(i);
+      }
+      if(c < COLS - 1 && r < ROWS - 1){
+        edges.push(i, i + COLS + 1, S * ROOT2);
+        edges.push(i + 1, i + COLS, S * ROOT2);
+      }
+      if(c < COLS - 2) bendEdges.push(i, i + 2, 2 * S);
+      if(r < ROWS - 2) bendEdges.push(i, i + 2 * COLS, 2 * S);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(N*3), 3));
+  geo.setAttribute('stress', new THREE.BufferAttribute(stress, 1));
+  {
+    const idx = [];
+    for(let r = 0; r < ROWS-1; r++){
+      for(let c = 0; c < COLS-1; c++){
+        const a = r*COLS + c, b = a+1, d = a+COLS, e = d+1;
+        idx.push(a, b, e, a, e, d);
+      }
+    }
+    geo.setIndex(idx);
+  }
+
+  // ---------- cloth material (procedural silk) ----------
+  const clothUniforms = {
+    uTime: { value: 0 },
+    uKeyDir: { value: keyDir.clone() },
+    uKeyColor: { value: new THREE.Color('#ffe6bd') },
+    uFillDir: { value: fillDir.clone() },
+    uFillColor: { value: new THREE.Color('#a99bff') },
+    uRimColor: { value: new THREE.Color('#ffd98a') },
+    uFogColor: { value: fogColor.clone() },
+    uFogDensity: { value: 0.018 },
+    uColDeep:   { value: new THREE.Color('#1b1440') },
+    uColViolet: { value: new THREE.Color('#55306f') },
+    uColTeal:   { value: new THREE.Color('#2bd6c0') },
+    uColGold:   { value: new THREE.Color('#f2b24a') },
+    uStressColor: { value: new THREE.Color('#ff7a5c') },
+  };
+
+  const clothMaterial = new THREE.ShaderMaterial({
+    uniforms: clothUniforms,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      uniform float uTime;
+      attribute float stress;
+      varying vec2 vUv;
+      varying vec3 vWorldPos;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+      varying float vStress;
+      void main(){
+        vUv = uv;
+        vStress = stress;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        vNormal = normalize(normalMatrix * normal);
+        vec4 mv = viewMatrix * wp;
+        vViewDir = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform vec3 uKeyDir;
+      uniform vec3 uKeyColor;
+      uniform vec3 uFillDir;
+      uniform vec3 uFillColor;
+      uniform vec3 uRimColor;
+      uniform vec3 uFogColor;
+      uniform float uFogDensity;
+      uniform vec3 uColDeep;
+      uniform vec3 uColViolet;
+      uniform vec3 uColTeal;
+      uniform vec3 uColGold;
+      uniform vec3 uStressColor;
+      varying vec2 vUv;
+      varying vec3 vWorldPos;
+      varying vec3 vNormal;
+      varying vec3 vViewDir;
+      varying float vStress;
+
+      void main(){
+        vec3 N = normalize(vNormal);
+        if(!gl_FrontFacing) N = -N;
+        vec3 V = normalize(vViewDir);
+        float t = uTime;
+
+        // --- flowing base pattern ---
+        float ripple = sin(vUv.x * 6.28318 * 2.0 + t * 0.9) * 0.5
+                     + sin(vUv.y * 6.28318 * 3.0 - t * 0.6) * 0.5;
+        float flow = clamp(vUv.y * 0.72 + 0.28 + ripple * 0.055, 0.0, 1.0);
+        vec3 base = mix(uColDeep, uColViolet, flow);
+
+        // teal shimmer bands drifting down
+        float band = 0.5 + 0.5 * sin(vUv.y * 22.0 - t * 0.55 + sin(vUv.x * 9.0 + t * 0.7) * 0.6);
+        base = mix(base, uColTeal * 0.5 + base * 0.6, band * 0.15);
+
+        // gold light sweep travelling across the fold
+        float sweep = 0.5 + 0.5 * sin(vUv.x * 6.28318 - t * 0.75 + vUv.y * 2.6);
+        base += uColGold * sweep * 0.10 * (0.35 + 0.65 * vUv.y);
+
+        // fine woven grain
+        float wy = sin(vUv.y * 90.0) * 0.5 + 0.5;
+        float wx = sin(vUv.x * 130.0) * 0.5 + 0.5;
+        base *= 0.96 + 0.085 * wy * wx;
+
+        // stress: stretched cloth warms and glows
+        float st = clamp(vStress * 1.9, 0.0, 1.0);
+        base = mix(base, base + uStressColor * 0.85, st);
+
+        // soft shadow cast by the rod on the top edge
+        base *= 1.0 - 0.12 * exp(-vUv.y * 16.0);
+
+        // --- lighting ---
+        float ndl = max(dot(N, uKeyDir), 0.0);
+        float nfl = max(dot(N, uFillDir), 0.0);
+        vec3 H = normalize(uKeyDir + V);
+        float ndh = max(dot(N, H), 0.0);
+        float spec  = pow(ndh, 80.0);
+        float spec2 = pow(ndh, 14.0) * 0.25;
+        float rimA  = pow(1.0 - max(dot(N, V), 0.0), 3.4);
+
+        vec3 lit = base * (0.20 + uFillColor * 0.5 * nfl + uKeyColor * ndl * 1.05);
+        lit += uKeyColor * spec  * (0.55 + 0.6 * st) * 2.4;
+        lit += uKeyColor * spec2 * 0.55;
+        lit += uRimColor * rimA * 0.65;
+        lit += uStressColor * st * st * 0.5;
+        lit += uColTeal * rimA * 0.35;
+
+        // exponential fog
+        float dist = length(vWorldPos - cameraPosition);
+        float f = 1.0 - exp(-pow(uFogDensity * dist, 2.0));
+        lit = mix(lit, uFogColor, clamp(f, 0.0, 1.0));
+
+        gl_FragColor = vec4(lit, 1.0);
+      }
+    `
+  });
+
+  const cloth = new THREE.Mesh(geo, clothMaterial);
+  cloth.castShadow = true;
+  scene.add(cloth);
+
+  // ---------- hanging rod ----------
+  const goldMat = new THREE.MeshStandardMaterial({
+    color: '#d8b36a', metalness: 0.85, roughness: 0.28
+  });
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 10.2, 24), goldMat);
+  rod.rotation.z = Math.PI / 2;
+  rod.position.y = rodY;
+  rod.castShadow = true;
+  scene.add(rod);
+
+  const finialGeo = new THREE.SphereGeometry(0.15, 24, 16);
+  for(const side of [-1, 1]){
+    const fin = new THREE.Mesh(finialGeo, goldMat);
+    fin.position.set(side * 5.1, rodY, 0);
+    fin.castShadow = true;
+    scene.add(fin);
+    // support cable going up-and-back
+    const a = new THREE.Vector3(side * 5.1, rodY, 0);
+    const b = new THREE.Vector3(side * 5.1, 7.2, -3.6);
+    const dir = b.clone().sub(a);
+    const len = dir.length();
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, len, 12), goldMat);
+    cable.position.copy(a).addScaledVector(dir, 0.5);
+    cable.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.normalize());
+    cable.castShadow = true;
+    scene.add(cable);
+  }
+
+  // ---------- ground ----------
+  {
+    const g = document.createElement('canvas');
+    g.width = g.height = 512;
+    const ctx = g.getContext('2d');
+    const rad = ctx.createRadialGradient(256, 256, 0, 256, 256, 256);
+    rad.addColorStop(0.00, 'rgba(64,68,120,0.95)');
+    rad.addColorStop(0.45, 'rgba(36,40,78,0.75)');
+    rad.addColorStop(0.80, 'rgba(19,21,46,0.35)');
+    rad.addColorStop(1.00, 'rgba(12,14,32,0.0)');
+    ctx.fillStyle = rad;
+    ctx.fillRect(0, 0, 512, 512);
+    // faint gold stage ring
+    ctx.strokeStyle = 'rgba(242,178,74,0.10)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(256, 256, 228, 0, Math.PI * 2);
+    ctx.stroke();
+    // sparse speckle
+    for(let k = 0; k < 900; k++){
+      const rr = Math.sqrt(Math.random()) * 256;
+      const aa = Math.random() * Math.PI * 2;
+      const x = 256 + Math.cos(aa) * rr, y = 256 + Math.sin(aa) * rr;
+      const a = (1 - rr / 256) * 0.05 * Math.random();
+      ctx.fillStyle = 'rgba(255,220,160,' + a.toFixed(3) + ')';
+      ctx.fillRect(x, y, 1.5, 1.5);
+    }
+    const tex = new THREE.CanvasTexture(g);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(26, 96),
+      new THREE.MeshStandardMaterial({ map: tex, transparent: true, roughness: 0.82, metalness: 0.12 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = floorY;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(3.6, 0.024, 16, 160),
+      new THREE.MeshStandardMaterial({ color: '#1a1430', emissive: '#ffb85c', emissiveIntensity: 1.5, roughness: 0.4, metalness: 0.3 })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = floorY + 0.03;
+    scene.add(ring);
+  }
+
+  // ---------- dust motes ----------
+  const DUST = 650;
+  const dustPos = new Float32Array(DUST * 3);
+  const dustPhase = new Float32Array(DUST);
+  const dBounds = { x: 8, yMin: -2.6, yMax: 4.4, z: 3.5 };
+  for(let i = 0; i < DUST; i++){
+    dustPos[i*3]   = (Math.random() * 2 - 1) * dBounds.x;
+    dustPos[i*3+1] = lerp(dBounds.yMin, dBounds.yMax, Math.random());
+    dustPos[i*3+2] = (Math.random() * 2 - 1) * dBounds.z;
+    dustPhase[i] = Math.random() * Math.PI * 2;
+  }
+  const dustGeo = new THREE.BufferGeometry();
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+  {
+    const sp = document.createElement('canvas');
+    sp.width = sp.height = 64;
+    const sctx = sp.getContext('2d');
+    const sg = sctx.createRadialGradient(32,32,0,32,32,32);
+    sg.addColorStop(0, 'rgba(255,255,255,0.9)');
+    sg.addColorStop(0.4, 'rgba(255,255,255,0.35)');
+    sg.addColorStop(1, 'rgba(255,255,255,0)');
+    sctx.fillStyle = sg; sctx.fillRect(0,0,64,64);
+    const sprite = new THREE.CanvasTexture(sp);
+    const dustMat = new THREE.PointsMaterial({
+      size: 0.09, map: sprite, transparent: true, opacity: 0.5,
+      color: '#ffcf7d', blending: THREE.AdditiveBlending,
+      depthWrite: false, sizeAttenuation: true, fog: false
+    });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    scene.add(dust);
+  }
+
+  // grab cursor indicator
+  const grabDot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.09, 20),
+    new THREE.MeshBasicMaterial({ color: '#ffd98a', transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  grabDot.visible = false;
+  scene.add(grabDot);
+
+  // ---------- post processing ----------
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.65, 0.85, 0.82);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+
+  const gradePass = new ShaderPass({
+    uniforms: {
+      tDiffuse: { value: null },
+      uTime: { value: 0 },
+      uResolution: { value: new THREE.Vector2(1, 1) }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float uTime;
+      uniform vec2 uResolution;
+      varying vec2 vUv;
+      float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+      void main(){
+        vec3 col = texture2D(tDiffuse, vUv).rgb;
+        // vignette
+        vec2 q = vUv - 0.5;
+        float d = length(q);
+        float vig = smoothstep(0.78, 0.30, d);
+        col *= mix(0.46, 1.0, vig);
+        // gentle vertical tint: warm top, cool base
+        col += vec3(0.010, 0.005, -0.006) * (0.5 - vUv.y);
+        // soft contrast
+        col = clamp(col * 1.045 - 0.015, 0.0, 1.0);
+        // subtle saturation
+        float lum = dot(col, vec3(0.299, 0.587, 0.114));
+        col = mix(vec3(lum), col, 1.07);
+        // film grain
+        float g = (hash(vUv * uResolution + fract(uTime) * 7.31) - 0.5) * 0.045;
+        col += g;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `
+  });
+  composer.addPass(gradePass);
+
+  // ---------- state ----------
+  const PRESETS = {
+    calm:    { baseX:0.25, baseY:0.00, baseZ:0.10, turb:0.35, gust:0.30, turbSpeed:0.55, tornado:false, tStrength:0 },
+    breeze:  { baseX:0.85, baseY:0.00, baseZ:0.35, turb:0.75, gust:0.65, turbSpeed:0.75, tornado:false, tStrength:0 },
+    storm:   { baseX:1.90, baseY:0.00, baseZ:0.90, turb:1.70, gust:1.30, turbSpeed:1.05, tornado:false, tStrength:0 },
+    tornado: { baseX:0.30, baseY:0.00, baseZ:0.10, turb:0.90, gust:0.40, turbSpeed:0.90, tornado:true,  tStrength:1.0 },
+  };
+  const params = JSON.parse(JSON.stringify(PRESETS.breeze));
+  const pTarget = JSON.parse(JSON.stringify(PRESETS.breeze));
+
+  let windEnabled = true;
+  let burst = 1.7;
+  let steerX = 0, steerZ = 0;
+  let simTime = 0;
+  let elapsed = 0;
+  let last = performance.now();
+  let dropped = false;
+  let dropTimer = 0;
+
+  // ---------- interaction ----------
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let grabbed = -1;
+  const grabOffset = new THREE.Vector3();
+  const grabPlane = new THREE.Plane();
+  const tmpV = new THREE.Vector3();
+
+  const orbit = { theta: 0.18, phi: 1.12, radius: 14, targetR: 14, target: new THREE.Vector3(0, 0.35, 0) };
+  const parallax = new THREE.Vector2();
+  let dragMode = null; // 'orbit' | 'grab'
+  let dragLastX = 0, dragLastY = 0;
+  let lastPointer = null;
+  let idleTime = 0;
+
+  function pointerNDC(e){
+    const r = canvas.getBoundingClientRect();
+    ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+    ndc.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+  }
+
+  function nearestVertex(point){
+    let best = -1, bestD = Infinity;
+    for(let i = 0; i < N; i++){
+      const dx = pos[i*3] - point.x, dy = pos[i*3+1] - point.y, dz = pos[i*3+2] - point.z;
+      const d = dx*dx + dy*dy + dz*dz;
+      if(d < bestD){ bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    canvas.setPointerCapture(e.pointerId);
+    dragLastX = e.clientX; dragLastY = e.clientY;
+    lastPointer = { x: e.clientX, y: e.clientY };
+    pointerNDC(e);
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObject(cloth, false);
+    if(hits.length){
+      const hit = hits[0];
+      const vi = nearestVertex(hit.point);
+      if(vi >= 0){
+        grabbed = vi;
+        grabOffset.copy(hit.point).sub(tmpV.set(pos[vi*3], pos[vi*3+1], pos[vi*3+2]));
+        const normal = camera.getWorldDirection(tmpV).clone();
+        grabPlane.setFromNormalAndCoplanarPoint(normal, hit.point);
+        document.body.classList.add('grabbing');
+        dragMode = 'grab';
+        return;
+      }
+    }
+    dragMode = 'orbit';
+  });
+
+  window.addEventListener('pointermove', e => {
+    if(e.pointerType === 'mouse'){
+      parallax.x = (e.clientX / window.innerWidth) * 2 - 1;
+      parallax.y = (e.clientY / window.innerHeight) * 2 - 1;
+    }
+    if(dragMode === 'grab' && grabbed >= 0){
+      pointerNDC(e);
+      raycaster.setFromCamera(ndc, camera);
+      if(raycaster.ray.intersectPlane(grabPlane, tmpV)){
+        pins[grabbed] = 1;
+        pos[grabbed*3]   = tmpV.x - grabOffset.x;
+        pos[grabbed*3+1] = tmpV.y - grabOffset.y;
+        pos[grabbed*3+2] = tmpV.z - grabOffset.z;
+        prev[grabbed*3]   = pos[grabbed*3];
+        prev[grabbed*3+1] = pos[grabbed*3+1];
+        prev[grabbed*3+2] = pos[grabbed*3+2];
+      }
+    } else if(dragMode === 'orbit'){
+      const dx = e.clientX - dragLastX, dy = e.clientY - dragLastY;
+      orbit.theta -= dx * 0.0055;
+      orbit.phi = clamp(orbit.phi - dy * 0.005, 0.35, 1.5);
+      dragLastX = e.clientX; dragLastY = e.clientY;
+    }
+    if(dragMode === null){
+      // steer the air with the pointer
+      if(lastPointer){
+        steerX += (e.clientX - lastPointer.x) * 0.0035;
+        steerZ += (e.clientY - lastPointer.y) * 0.0018;
+        steerX = clamp(steerX, -1.2, 1.2);
+        steerZ = clamp(steerZ, -0.8, 0.8);
+      }
+      lastPointer = { x: e.clientX, y: e.clientY };
+      // hover cursor
+      pointerNDC(e);
+      raycaster.setFromCamera(ndc, camera);
+      const over = raycaster.intersectObject(cloth, false).length > 0;
+      document.body.classList.toggle('can-grab', over);
+    }
+    if(dragMode !== null && e.pointerType === 'mouse') idleTime = 0;
+  });
+
+  function endDrag(e){
+    if(dragMode === 'grab' && grabbed >= 0){
+      // release with a little throw
+      if(lastPointer){
+        prev[grabbed*3]   = pos[grabbed*3]   - (e.clientX - lastPointer.x) * 0.002;
+        prev[grabbed*3+1] = pos[grabbed*3+1] + (e.clientY - lastPointer.y) * 0.002;
+      }
+      pins[grabbed] = 0;
+      grabbed = -1;
+      grabDot.visible = false;
+      document.body.classList.remove('grabbing');
+    }
+    dragMode = null;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    orbit.targetR = clamp(orbit.targetR + e.deltaY * 0.008, 7.5, 22);
+  }, { passive: false });
+
+  // ---------- wind model ----------
+  function gustEnv(t){
+    return 0.5 + 0.35 * Math.sin(t * 0.7) * Math.sin(t * 0.21 + 2.4) + 0.15 * Math.sin(t * 1.9 + 0.8);
+  }
+  function computeWind(x, y, z, out){
+    const t = simTime;
+    let wx = params.baseX + steerX;
+    let wy = params.baseY;
+    let wz = params.baseZ + steerZ;
+    wx += (fbm(x*0.42 + t*params.turbSpeed, y*0.6 + 2.1, z*0.5 + 7.3) - 0.5) * 2.4 * params.turb;
+    wy += (fbm(x*0.5 + 5.2, y*0.6 + t*params.turbSpeed*0.85, z*0.45 + 1.7) - 0.5) * 1.1 * params.turb;
+    wz += (fbm(x*0.46 + 9.1, y*0.6 + 3.3, z*0.5 + t*params.turbSpeed) - 0.5) * 2.0 * params.turb;
+    const g = gustEnv(t) * params.gust;
+    wx += g * 0.9; wz += g * 0.5;
+    if(params.tornado){
+      const dx = x, dz = z;
+      const r = Math.hypot(dx, dz);
+      const h = clamp((y + 3.0) / 5.8, 0, 1);
+      const radial = Math.exp(-(r*r) / 9.0);
+      const sw = params.tStrength * h * radial * 3.0;
+      if(r > 0.001){
+        const nx = -dz / r, nz = dx / r;
+        wx += nx * sw + (-dx / r) * sw * 0.3;
+        wz += nz * sw + (-dz / r) * sw * 0.3;
+      }
+      wy += sw * 0.8;
+    }
+    if(burst > 0.001){ wx += burst * 0.9; wz += burst * 0.35; }
+    out[0] = wx; out[1] = wy; out[2] = wz;
+  }
+
+  // ---------- physics ----------
+  const WIND_ACCEL = 3.2;
+  const GRAV = -9.8;
+  const DAMP = 0.988;
+  const SUB = 3;
+  const CORR = 0.98;
+
+  function solveEdges(list){
+    for(let k = 0; k < list.length; k += 3){
+      const i = list[k], j = list[k+1], rest = list[k+2];
+      const i3 = i*3, j3 = j*3;
+      let dx = pos[j3] - pos[i3], dy = pos[j3+1] - pos[i3+1], dz = pos[j3+2] - pos[i3+2];
+      let d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if(d < 1e-9) d = 1e-9;
+      const diff = (d - rest) / d * CORR;
+      const pi = pins[i], pj = pins[j];
+      if(pi && pj) continue;
+      const mx = dx * diff, my = dy * diff, mz = dz * diff;
+      if(pi){ pos[j3]-=mx; pos[j3+1]-=my; pos[j3+2]-=mz; }
+      else if(pj){ pos[i3]+=mx; pos[i3+1]+=my; pos[i3+2]+=mz; }
+      else {
+        const hx = mx*0.5, hy = my*0.5, hz = mz*0.5;
+        pos[i3]+=hx; pos[i3+1]+=hy; pos[i3+2]+=hz;
+        pos[j3]-=hx; pos[j3+1]-=hy; pos[j3+2]-=hz;
+      }
+    }
+  }
+
+  function physicsStep(dt){
+    const h = Math.min(dt, 1 / 30) / SUB;
+    const h2 = h * h;
+    for(let s = 0; s < SUB; s++){
+      for(let i = 0; i < N; i++){
+        const i3 = i * 3;
+        if(pins[i]){ prev[i3]=pos[i3]; prev[i3+1]=pos[i3+1]; prev[i3+2]=pos[i3+2]; continue; }
+        let vx = (pos[i3]   - prev[i3])   * DAMP;
+        let vy = (pos[i3+1] - prev[i3+1]) * DAMP;
+        let vz = (pos[i3+2] - prev[i3+2]) * DAMP;
+        prev[i3] = pos[i3]; prev[i3+1] = pos[i3+1]; prev[i3+2] = pos[i3+2];
+        const w = windEnabled ? WIND_ACCEL : 0;
+        pos[i3]   += vx + windV[i3]   * w * h2;
+        pos[i3+1] += vy + (GRAV + windV[i3+1] * w) * h2;
+        pos[i3+2] += vz + windV[i3+2] * w * h2;
+      }
+      solveEdges(edges);
+      solveEdges(bendEdges);
+      // floor
+      for(let i = 0; i < N; i++){
+        if(pos[i*3+1] < floorY){
+          pos[i*3+1] = floorY;
+          prev[i*3+1] = floorY - (prev[i*3+1] - floorY) * 0.25;
+          // ground friction
+          prev[i*3]   = pos[i*3]   + (prev[i*3]   - pos[i*3])   * 0.4;
+          prev[i*3+2] = pos[i*3+2] + (prev[i*3+2] - pos[i*3+2]) * 0.4;
+        }
+      }
+    }
+  }
+
+  function computeStress(){
+    const nbrs = stressNbr;
+    for(let i = 0; i < N; i++){
+      const list = nbrs[i];
+      if(!list.length){ stress[i] = 0; continue; }
+      let acc = 0;
+      const i3 = i*3;
+      for(let k = 0; k < list.length; k++){
+        const j3 = list[k]*3;
+        const dx = pos[j3]-pos[i3], dy = pos[j3+1]-pos[i3+1], dz = pos[j3+2]-pos[i3+2];
+        const d = Math.sqrt(dx*dx+dy*dy+dz*dz);
+        acc += Math.abs(d - S) / S;
+      }
+      stress[i] = Math.min(1, acc / list.length * 2.2);
+    }
+  }
+
+  function pinTopRow(on){
+    for(let c = 0; c < COLS; c++) pins[c] = on ? 1 : 0;
+  }
+
+  function resetCloth(){
+    initGrid();
+    pinTopRow(true);
+    burst = 0.9;
+    steerX = 0; steerZ = 0;
+    grabbed = -1;
+    grabDot.visible = false;
+    document.body.classList.remove('grabbing');
+    dragMode = null;
+    dropped = false;
+  }
+
+  function dropCloth(){
+    if(dropped) return;
+    dropped = true;
+    dropTimer = 3.6;
+    pinTopRow(false);
+  }
+  function rehang(){
+    pinTopRow(true);
+    for(let c = 0; c < COLS; c++){
+      const i = c*3;
+      prev[i] = pos[i]; prev[i+1] = pos[i+1]; prev[i+2] = pos[i+2];
+    }
+  }
+
+  // ---------- dust ----------
+  function updateDust(dt){
+    const out = [0,0,0];
+    for(let i = 0; i < DUST; i++){
+      const i3 = i * 3;
+      const x = dustPos[i3], y = dustPos[i3+1], z = dustPos[i3+2];
+      computeWind(x, y, z, out);
+      const k = dt * 0.6;
+      dustPos[i3]   += out[0] * 0.55 * k;
+      dustPos[i3+1] += (0.06 + out[1] * 0.6 + Math.sin(elapsed * 0.7 + dustPhase[i]) * 0.03) * k;
+      dustPos[i3+2] += out[2] * 0.5 * k;
+      if(dustPos[i3] > dBounds.x) dustPos[i3] = -dBounds.x;
+      if(dustPos[i3] < -dBounds.x) dustPos[i3] = dBounds.x;
+      if(dustPos[i3+1] > dBounds.yMax) dustPos[i3+1] = dBounds.yMin;
+      if(dustPos[i3+1] < dBounds.yMin) dustPos[i3+1] = dBounds.yMax;
+      if(dustPos[i3+2] > dBounds.z) dustPos[i3+2] = -dBounds.z;
+      if(dustPos[i3+2] < -dBounds.z) dustPos[i3+2] = dBounds.z;
+    }
+    dustGeo.attributes.position.needsUpdate = true;
+  }
+
+  // ---------- camera ----------
+  const camOffset = new THREE.Vector3();
+  function updateCamera(dt){
+    idleTime += dt;
+    if(dragMode === null) orbit.theta += 0.0009 * dt * (idleTime > 1.2 ? 60 : 4);
+    orbit.radius = lerp(orbit.radius, orbit.targetR, 1 - Math.exp(-dt * 6));
+    const r = orbit.radius;
+    const px = parallax.x * 0.5, py = parallax.y * 0.3;
+    camOffset.set(
+      r * Math.sin(orbit.phi) * Math.sin(orbit.theta),
+      r * Math.cos(orbit.phi),
+      r * Math.sin(orbit.phi) * Math.cos(orbit.theta)
+    );
+    camera.position.copy(orbit.target).add(camOffset);
+    camera.position.x += px; camera.position.y += py;
+    camera.lookAt(orbit.target.x + px * 0.6, orbit.target.y + py * 0.4, orbit.target.z);
+  }
+
+  // ---------- UI wiring ----------
+  const presetsNav = document.getElementById('presets');
+  presetsNav.addEventListener('click', e => {
+    const btn = e.target.closest('.pill');
+    if(!btn) return;
+    presetsNav.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p === btn));
+    Object.assign(pTarget, PRESETS[btn.dataset.preset]);
+  });
+  document.getElementById('btn-wind').addEventListener('click', () => {
+    windEnabled = !windEnabled;
+    document.getElementById('btn-wind').classList.toggle('on', !windEnabled);
+    document.getElementById('btn-wind').textContent = windEnabled ? '❚❚' : '▶';
+  });
+  document.getElementById('btn-drop').addEventListener('click', dropCloth);
+  document.getElementById('btn-reset').addEventListener('click', resetCloth);
+  window.addEventListener('keydown', e => {
+    if(e.target.tagName === 'BUTTON') return;
+    if(e.code === 'Space'){ e.preventDefault(); document.getElementById('btn-wind').click(); }
+    else if(e.key === 'r' || e.key === 'R') resetCloth();
+    else if(e.key === 'd' || e.key === 'D') dropCloth();
+    else if(e.key >= '1' && e.key <= '4'){
+      const keys = ['calm','breeze','storm','tornado'];
+      presetsNav.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.preset === keys[+e.key - 1]));
+      Object.assign(pTarget, PRESETS[keys[+e.key - 1]]);
+    }
+  });
+
+  // ---------- sizing ----------
+  function resize(){
+    const w = window.innerWidth, h = window.innerHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    composer.setSize(w, h);
+    composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    gradePass.uniforms.uResolution.value.set(w, h);
+    bloom.setSize(w, h);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- main loop ----------
+  const start = performance.now();
+  function animate(){
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    elapsed = (now - start) / 1000;
+
+    if(windEnabled) simTime += dt;
+
+    // burst decay
+    burst = Math.max(0, burst - dt * 0.5);
+
+    // preset transition
+    const k = 1 - Math.exp(-dt * 2.0);
+    for(const key of Object.keys(pTarget)) params[key] = lerp(params[key], pTarget[key], k);
+
+    // steer decay
+    const sd = Math.exp(-dt * 1.6);
+    steerX *= sd; steerZ *= sd;
+
+    // drop / rehang
+    if(dropped){
+      dropTimer -= dt;
+      if(dropTimer <= 0){ dropped = false; rehang(); }
+    }
+
+    // wind field
+    for(let i = 0; i < N; i++){
+      const i3 = i * 3;
+      computeWind(pos[i3], pos[i3+1], pos[i3+2], windV.subarray(i3, i3 + 3));
+    }
+
+    // physics
+    physicsStep(dt);
+    if(grabbed >= 0){
+      // keep the grabbed vertex on the drag plane
+      pointerNDC(lastPointer || { clientX: window.innerWidth/2, clientY: window.innerHeight/2 });
+      raycaster.setFromCamera(ndc, camera);
+      if(raycaster.ray.intersectPlane(grabPlane, tmpV)){
+        pins[grabbed] = 1;
+        pos[grabbed*3]   = tmpV.x - grabOffset.x;
+        pos[grabbed*3+1] = tmpV.y - grabOffset.y;
+        pos[grabbed*3+2] = tmpV.z - grabOffset.z;
+        prev[grabbed*3]   = pos[grabbed*3];
+        prev[grabbed*3+1] = pos[grabbed*3+1];
+        prev[grabbed*3+2] = pos[grabbed*3+2];
+      }
+    }
+
+    // geometry upload
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.attributes.normal.needsUpdate = true;
+    computeStress();
+    geo.attributes.stress.needsUpdate = true;
+
+    // grab dot
+    if(grabbed >= 0){
+      grabDot.position.set(pos[grabbed*3], pos[grabbed*3+1], pos[grabbed*3+2]);
+      grabDot.visible = true;
+    }
+
+    // dust
+    updateDust(dt);
+
+    // camera intro dolly
+    if(elapsed < 3.2){
+      const t = easeOutCubic(clamp(elapsed / 3.2, 0, 1));
+      orbit.targetR = lerp(21, 14, t);
+    }
+    updateCamera(dt);
+
+    // cloth uniforms
+    clothUniforms.uTime.value = elapsed;
+    clothUniforms.uKeyDir.value.copy(keyDir);
+    gradePass.uniforms.uTime.value = elapsed;
+
+    composer.render();
+  }
+  animate();
+  </script>
+</body>
+</html>

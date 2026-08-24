@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloth · Verlet Simulation</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230c1220'/><path d='M8 6h14l4 4v16H12l-4-4V6z' fill='%237dd3fc' opacity='.9'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --panel: rgba(9,13,20,.55);
+    --line: rgba(255,255,255,.09);
+    --text: #e8edf4;
+    --dim: #8b95a5;
+    --accent: #7dd3fc;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden}
+  body{
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    color:var(--text);
+    background:
+      radial-gradient(1200px 800px at 72% -10%, #1c2e4a 0%, transparent 60%),
+      radial-gradient(900px 700px at 8% 110%, #132334 0%, transparent 60%),
+      linear-gradient(180deg,#0a0f16 0%, #0c1220 55%, #0a0d13 100%);
+    overscroll-behavior:none;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  #app{position:fixed;inset:0}
+  #app canvas{display:block;width:100%;height:100%;touch-action:none}
+  .vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:2;
+    background:radial-gradient(120% 90% at 50% 45%, transparent 58%, rgba(0,0,0,.45) 100%);
+  }
+  header{
+    position:fixed;top:26px;left:30px;z-index:5;pointer-events:none;
+    animation:rise .9s cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  header .kicker{font-size:11px;letter-spacing:.34em;text-transform:uppercase;color:var(--dim);font-weight:500}
+  header h1{font-size:30px;font-weight:500;letter-spacing:.02em;margin-top:7px;line-height:1}
+  header h1 span{color:var(--accent)}
+  header p{font-size:12.5px;color:var(--dim);margin-top:10px;max-width:265px;line-height:1.55}
+  .controls{
+    position:fixed;right:26px;top:26px;z-index:5;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:16px 16px 13px;width:220px;backdrop-filter:blur(14px);
+    box-shadow:0 18px 40px rgba(0,0,0,.35);
+    animation:rise .9s cubic-bezier(.2,.7,.2,1) .12s both;
+  }
+  .controls label{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:7px}
+  .controls label b{color:var(--text);font-weight:500;letter-spacing:.02em}
+  input[type=range]{
+    width:100%;accent-color:var(--accent);margin-bottom:15px;cursor:pointer;
+    background:transparent;
+  }
+  .row{display:flex;gap:8px;margin-top:4px}
+  .btn{
+    flex:1;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--text);
+    font-family:inherit;font-size:12px;padding:8px 6px;border-radius:9px;cursor:pointer;
+    letter-spacing:.05em;transition:background .15s, border-color .15s, color .15s;
+  }
+  .btn:hover{background:rgba(255,255,255,.11)}
+  .btn.active{background:rgba(125,211,252,.16);border-color:rgba(125,211,252,.55);color:var(--accent)}
+  .hint{
+    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:5;
+    font-size:12px;color:var(--dim);letter-spacing:.05em;text-align:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:8px 18px;backdrop-filter:blur(12px);white-space:nowrap;pointer-events:none;
+    animation:rise .9s cubic-bezier(.2,.7,.2,1) .24s both;
+  }
+  kbd{font-family:inherit;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:0 5px;font-size:11px;background:rgba(255,255,255,.06)}
+  #fade{position:fixed;inset:0;background:#07090d;z-index:10;pointer-events:none;transition:opacity 1.6s ease}
+  #nowebgl{
+    position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:30px;background:#07090d;color:var(--text);font-size:15px;line-height:1.6;
+  }
+  @media (max-width:700px){
+    .controls{right:14px;top:14px;width:192px;padding:13px 13px 11px}
+    header{left:16px;top:16px}
+    header h1{font-size:23px}
+    .hint{font-size:10.5px;padding:7px 12px;white-space:normal;width:min(92vw,470px)}
+  }
+</style>
+</head>
+<body>
+<div id="fade"></div>
+<div id="app"></div>
+<div class="vignette"></div>
+<header>
+  <div class="kicker">Interactive physics</div>
+  <h1>Cloth <span>·</span> Verlet</h1>
+  <p>Particles bound by distance constraints. Pull it, pin it, and let the wind take it.</p>
+</header>
+<div class="controls">
+  <label>Wind <b id="windVal">3.0</b></label>
+  <input id="wind" type="range" min="0" max="8" step="0.05" value="3">
+  <label>Resolution <b id="resVal">46 × 32</b></label>
+  <input id="res" type="range" min="18" max="72" step="2" value="46">
+  <div class="row">
+    <button id="pause" class="btn" title="Space">Pause</button>
+    <button id="reset" class="btn" title="R">Reset</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="pinmode" class="btn" title="P">Pin mode</button>
+  </div>
+</div>
+<div class="hint"><kbd>drag</kbd> pull cloth &nbsp;·&nbsp; <kbd>click</kbd> pin / unpin &nbsp;·&nbsp; <kbd>right-drag</kbd> orbit &nbsp;·&nbsp; <kbd>scroll</kbd> zoom</div>
+<div id="nowebgl">This experience needs WebGL. Please open it in a browser with WebGL enabled.</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------------------------------------------------------------------------
+// Renderer + scene
+// ---------------------------------------------------------------------------
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+} catch (err) {
+  document.getElementById('nowebgl').style.display = 'flex';
+  throw err;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0b1119, 20, 46);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0.6, 2.7, 11);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, -0.55, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.minDistance = 4;
+controls.maxDistance = 26;
+controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+
+// Lights
+scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x141a24, 0.95));
+const sun = new THREE.DirectionalLight(0xffffff, 1.7);
+sun.position.set(4, 9, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8;
+sun.shadow.camera.top = 9;  sun.shadow.camera.bottom = -8;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 32;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+const rim = new THREE.DirectionalLight(0x7dd3fc, 0.55);
+rim.position.set(-6, 3, -7);
+scene.add(rim);
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(80, 80),
+  new THREE.MeshStandardMaterial({ color: 0x0c1118, roughness: 0.92, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -3.05;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Floating dust motes
+const DUST_N = 320;
+const dustPos = new Float32Array(DUST_N * 3);
+const dustVel = new Float32Array(DUST_N * 3);
+for (let i = 0; i < DUST_N; i++) {
+  dustPos[i*3]   = (Math.random() - 0.5) * 28;
+  dustPos[i*3+1] = Math.random() * 10 - 2.5;
+  dustPos[i*3+2] = (Math.random() - 0.5) * 16 - 2;
+  dustVel[i*3]   = (Math.random() - 0.5) * 0.12;
+  dustVel[i*3+1] = -0.02 - Math.random() * 0.06;
+  dustVel[i*3+2] = (Math.random() - 0.5) * 0.12;
+}
+const dustGeo = new THREE.BufferGeometry();
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+const dustMat = new THREE.PointsMaterial({
+  color: 0x8fb6d8, size: 0.035, transparent: true, opacity: 0.5,
+  depthWrite: false, blending: THREE.AdditiveBlending
+});
+const dust = new THREE.Points(dustGeo, dustMat);
+scene.add(dust);
+
+function updateDust(dt) {
+  for (let i = 0; i < DUST_N; i++) {
+    dustPos[i*3]   += dustVel[i*3] * dt;
+    dustPos[i*3+1] += dustVel[i*3+1] * dt;
+    dustPos[i*3+2] += dustVel[i*3+2] * dt;
+    if (dustPos[i*3+1] < -3.2) { dustPos[i*3+1] = 7; dustPos[i*3] = (Math.random()-0.5)*28; }
+  }
+  dustGeo.attributes.position.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
+// Cloth simulation (Verlet particles + distance constraints)
+// ---------------------------------------------------------------------------
+const CLOTH_W = 6.4, CLOTH_H = 4.4, TOP_Y = 2.6, FLOOR_Y = -3.0;
+const GRAVITY = 9.8;
+const DAMPING = 0.988;
+const ITERS = 6;
+const FIXED = 1 / 60;
+const WIND_DRAG = 1.5;     // direct wind drag
+const WIND_PRESSURE = 3.0; // normal-projected "sail" pressure
+
+class ClothSim {
+  constructor(cols, rows, width, height, topY) {
+    this.cols = cols; this.rows = rows;
+    this.width = width; this.height = height; this.topY = topY;
+    this.spx = width / (cols - 1);
+    this.spy = height / (rows - 1);
+    this.ps = [];
+    this.cons = [];
+    this.build();
+  }
+
+  build() {
+    const { cols, rows, spx, spy, topY } = this;
+    const ps = this.ps = [];
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = -this.width / 2 + c * spx;
+        const y = topY - r * spy;
+        ps.push({ x, y, z: 0, px: x, py: y, pz: 0, ix: x, iy: y, iz: 0, pinned: false });
+      }
+    }
+
+    // Scalloped pinning along the top edge.
+    for (let c = 0; c < cols; c++) {
+      if (c % 5 === 0 || c === cols - 1) ps[c].pinned = true;
+    }
+
+    const idx = (r, c) => r * cols + c;
+    const add = (a, b, stiff) => {
+      const A = ps[a], B = ps[b];
+      const rest = Math.hypot(B.x - A.x, B.y - A.y, B.z - A.z);
+      this.cons.push({ a, b, rest, stiff });
+    };
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (c < cols - 1) add(idx(r, c), idx(r, c + 1), 0.90);        // structural
+        if (r < rows - 1) add(idx(r, c), idx(r + 1, c), 0.90);        // structural
+        if (c < cols - 1 && r < rows - 1) {
+          add(idx(r, c), idx(r + 1, c + 1), 0.55);                    // shear
+          add(idx(r, c + 1), idx(r + 1, c), 0.55);                    // shear
+        }
+        if (c < cols - 2) add(idx(r, c), idx(r, c + 2), 0.45);        // bend
+        if (r < rows - 2) add(idx(r, c), idx(r + 2, c), 0.45);        // bend
+      }
+    }
+  }
+
+  // Unit normal facing +Z for a flat cloth (out of the page toward the camera).
+  normal(i) {
+    const { cols, rows, ps } = this;
+    const c = i % cols, r = (i / cols) | 0;
+    const L = ps[Math.max(0, c - 1) + r * cols];
+    const R = ps[Math.min(cols - 1, c + 1) + r * cols];
+    const U = ps[c + Math.max(0, r - 1) * cols];
+    const D = ps[c + Math.min(rows - 1, r + 1) * cols];
+    const ex = R.x - L.x, ey = R.y - L.y, ez = R.z - L.z; // +x
+    const fx = D.x - U.x, fy = D.y - U.y, fz = D.z - U.z; // -y
+    // n = f x e  =>  (0,0,+1) for the flat cloth
+    const nx = fy * ez - fz * ey;
+    const ny = fz * ex - fx * ez;
+    const nz = fx * ey - fy * ex;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    return { nx: nx / len, ny: ny / len, nz: nz / len };
+  }
+
+  step(dt, wind, time) {
+    const { ps, cons } = this;
+    const dt2 = dt * dt;
+
+    // Pacing: wind fades in, then breathes with slow swells + irregular gusts.
+    const intro = Math.min(1, time / 9);
+    const swell = 0.55 + 0.45 * Math.sin(time * 0.09);
+    const gust  = 0.75 + 0.5 * Math.sin(time * 0.5) * Math.sin(time * 0.13 + 2.0);
+    const W = wind * intro * swell * gust;
+    const wx = Math.sin(time * 0.42 + 0.5) * W;
+    const wy = Math.sin(time * 0.33 + 1.9) * W * 0.16;
+    const wz = Math.cos(time * 0.28 + 0.9) * W * 0.92;
+
+    const speedCap = 30 * dt;
+
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      if (p.pinned) continue;
+
+      let vx = (p.x - p.px) * DAMPING;
+      let vy = (p.y - p.py) * DAMPING;
+      let vz = (p.z - p.pz) * DAMPING;
+      const sp = Math.hypot(vx, vy, vz);
+      if (sp > speedCap) { const k = speedCap / sp; vx *= k; vy *= k; vz *= k; }
+
+      p.px = p.x; p.py = p.y; p.pz = p.z;
+      p.x += vx; p.y += vy; p.z += vz;
+
+      p.y -= GRAVITY * dt2;
+
+      const n = this.normal(i);
+      const wdot = wx * n.nx + wy * n.ny + wz * n.nz;
+      const sail = wdot * WIND_PRESSURE;
+      p.x += (wx * WIND_DRAG + n.nx * sail) * dt2;
+      p.y += (wy * WIND_DRAG + n.ny * sail) * dt2;
+      p.z += (wz * WIND_DRAG + n.nz * sail) * dt2;
+
+      // subtle per-particle flutter
+      const fl = Math.sin(time * 9 + i * 0.61) * 0.05 * W * dt2;
+      p.x += fl; p.z += fl * 0.6;
+    }
+
+    // Constraint relaxation
+    for (let it = 0; it < ITERS; it++) {
+      for (let k = 0; k < cons.length; k++) {
+        const cn = cons[k];
+        const a = ps[cn.a], b = ps[cn.b];
+        const wa = a.pinned ? 0 : 1, wb = b.pinned ? 0 : 1;
+        const wsum = wa + wb;
+        if (wsum === 0) continue;
+        let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        const d = Math.hypot(dx, dy, dz) || 1e-6;
+        const corr = ((d - cn.rest) / d) * 0.5 * cn.stiff;
+        const ta = wa / wsum, tb = wb / wsum;
+        const ox = dx * corr, oy = dy * corr, oz = dz * corr;
+        a.x += ox * ta; a.y += oy * ta; a.z += oz * ta;
+        b.x -= ox * tb; b.y -= oy * tb; b.z -= oz * tb;
+      }
+    }
+
+    // Floor collision
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      if (!p.pinned && p.y < FLOOR_Y) { p.y = FLOOR_Y; p.py = p.y; }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cloth mesh
+// ---------------------------------------------------------------------------
+let sim, clothGeo, clothMat, clothMesh;
+let pinGeo, pins;
+
+function fabricTexture() {
+  const s = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const ctx = cv.getContext('2d');
+
+  const grad = ctx.createLinearGradient(0, 0, s, s);
+  grad.addColorStop(0, '#2b4f6b');
+  grad.addColorStop(0.5, '#26465f');
+  grad.addColorStop(1, '#1f3c53');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, s, s);
+
+  // soft sheen bands
+  ctx.fillStyle = 'rgba(190,220,240,0.05)';
+  ctx.fillRect(0, s * 0.34, s, s * 0.05);
+  ctx.fillStyle = 'rgba(10,20,30,0.10)';
+  ctx.fillRect(0, s * 0.72, s, s * 0.07);
+
+  // grain
+  for (let i = 0; i < 2600; i++) {
+    const a = Math.random() * 0.045;
+    ctx.fillStyle = Math.random() < 0.5 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`;
+    ctx.fillRect(Math.random() * s, Math.random() * s, 1.4, 1.4);
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function buildCloth(cols, rows) {
+  if (clothMesh) {
+    scene.remove(clothMesh);
+    clothGeo.dispose();
+    if (clothMat.map) clothMat.map.dispose();
+    clothMat.dispose();
+    scene.remove(pins);
+    pinGeo.dispose();
+    pinMat.dispose();
+  }
+
+  sim = new ClothSim(cols, rows, CLOTH_W, CLOTH_H, TOP_Y);
+  const N = sim.cols * sim.rows;
+
+  clothGeo = new THREE.BufferGeometry();
+  clothGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+  const uvs = new Float32Array(N * 2);
+  for (let r = 0; r < sim.rows; r++) {
+    for (let c = 0; c < sim.cols; c++) {
+      uvs[(r * sim.cols + c) * 2]     = c / (sim.cols - 1);
+      uvs[(r * sim.cols + c) * 2 + 1] = 1 - r / (sim.rows - 1);
+    }
+  }
+  clothGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+  const ind = [];
+  for (let r = 0; r < sim.rows - 1; r++) {
+    for (let c = 0; c < sim.cols - 1; c++) {
+      const a = r * sim.cols + c, b = a + 1, d = a + sim.cols, e = d + 1;
+      ind.push(a, b, d, b, e, d);
+    }
+  }
+  clothGeo.setIndex(ind);
+
+  clothMat = new THREE.MeshStandardMaterial({
+    map: fabricTexture(),
+    side: THREE.DoubleSide,
+    roughness: 0.85,
+    metalness: 0.05,
+    emissive: 0x0a1520,
+    emissiveIntensity: 0.5
+  });
+  clothMesh = new THREE.Mesh(clothGeo, clothMat);
+  clothMesh.castShadow = true;
+  scene.add(clothMesh);
+
+  // Pin markers
+  pinGeo = new THREE.BufferGeometry();
+  pinGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+  pins = new THREE.Points(pinGeo, pinMat);
+  scene.add(pins);
+
+  drag = null;
+}
+
+function updateGeometry() {
+  const pos = clothGeo.attributes.position.array;
+  const ps = sim.ps;
+  for (let i = 0; i < ps.length; i++) {
+    pos[i*3] = ps[i].x; pos[i*3+1] = ps[i].y; pos[i*3+2] = ps[i].z;
+  }
+  clothGeo.attributes.position.needsUpdate = true;
+  clothGeo.computeVertexNormals();
+}
+
+function updatePins() {
+  const arr = pinGeo.attributes.position.array;
+  let n = 0;
+  const ps = sim.ps;
+  for (let i = 0; i < ps.length; i++) {
+    if (!ps[i].pinned) continue;
+    const p = ps[i];
+    const nr = sim.normal(i);
+    arr[n*3]   = p.x + nr.nx * 0.03;
+    arr[n*3+1] = p.y + nr.ny * 0.03;
+    arr[n*3+2] = p.z + nr.nz * 0.03;
+    n++;
+  }
+  pinGeo.setDrawRange(0, n);
+  pinGeo.attributes.position.needsUpdate = true;
+}
+
+const pinMat = new THREE.PointsMaterial({
+  color: 0xffc36b, size: 0.16, sizeAttenuation: true,
+  transparent: true, opacity: 0.95, depthWrite: false
+});
+
+let drag = null;          // { idx, hadPin, moved }
+
+buildCloth(46, Math.round(46 * (CLOTH_H / CLOTH_W)));
+
+// ---------------------------------------------------------------------------
+// Interaction
+// ---------------------------------------------------------------------------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let pinMode = false;
+let pointerDownPos = null;
+
+function pickCloth(e) {
+  ndc.x = (e.clientX / innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(clothMesh);
+  return hits.length ? hits[0] : null;
+}
+
+function nearestParticle(point) {
+  let best = -1, bd = Infinity;
+  const ps = sim.ps;
+  for (let i = 0; i < ps.length; i++) {
+    const dx = ps[i].x - point.x, dy = ps[i].y - point.y, dz = ps[i].z - point.z;
+    const d = dx*dx + dy*dy + dz*dz;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+const canvas = renderer.domElement;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  controls.autoRotate = false;
+  const hit = pickCloth(e);
+  if (!hit) return;
+  pointerDownPos = { x: e.clientX, y: e.clientY };
+  const idx = nearestParticle(hit.point);
+  if (idx < 0) return;
+
+  if (pinMode) {
+    const p = sim.ps[idx];
+    p.pinned = !p.pinned;
+    if (p.pinned) { p.px = p.x; p.py = p.y; p.pz = p.z; }
+    return;
+  }
+
+  drag = { idx, hadPin: sim.ps[idx].pinned, moved: false };
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (pointerDownPos && Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 4) {
+    drag.moved = true;
+  }
+  ndc.x = (e.clientX / innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const p = sim.ps[drag.idx];
+  const camDir = camera.getWorldDirection(new THREE.Vector3());
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camDir, new THREE.Vector3(p.x, p.y, p.z));
+  const pt = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, pt)) {
+    p.x = pt.x; p.y = pt.y; p.z = pt.z;
+    p.px = p.x; p.py = p.y; p.pz = p.z; // hold it in place while dragging
+    p.pinned = true;
+  }
+});
+
+function endDrag(e) {
+  if (!drag) return;
+  const p = sim.ps[drag.idx];
+  if (!drag.hadPin) {
+    // a clean tap pins; a dragged release lets go
+    p.pinned = !drag.moved;
+  } else {
+    p.pinned = true; // pin kept (possibly moved to a new spot)
+    p.px = p.x; p.py = p.y; p.pz = p.z;
+  }
+  drag = null;
+  pointerDownPos = null;
+}
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+let windAmount = 3;
+let paused = false;
+
+const windSlider = document.getElementById('wind');
+const resSlider = document.getElementById('res');
+const windVal = document.getElementById('windVal');
+const resVal = document.getElementById('resVal');
+const pauseBtn = document.getElementById('pause');
+const resetBtn = document.getElementById('reset');
+const pinBtn = document.getElementById('pinmode');
+
+windSlider.addEventListener('input', () => {
+  windAmount = parseFloat(windSlider.value);
+  windVal.textContent = windAmount.toFixed(1);
+});
+
+resSlider.addEventListener('input', () => {
+  const cols = parseInt(resSlider.value, 10);
+  const rows = Math.max(4, Math.round(cols * (CLOTH_H / CLOTH_W)));
+  resVal.textContent = cols + ' × ' + rows;
+  buildCloth(cols, rows);
+});
+
+pauseBtn.addEventListener('click', () => {
+  paused = !paused;
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  pauseBtn.classList.toggle('active', paused);
+});
+
+resetBtn.addEventListener('click', () => {
+  time = 0;
+  acc = 0;
+  const cols = parseInt(resSlider.value, 10);
+  const rows = Math.max(4, Math.round(cols * (CLOTH_H / CLOTH_W)));
+  buildCloth(cols, rows);
+});
+
+pinBtn.addEventListener('click', () => {
+  pinMode = !pinMode;
+  pinBtn.classList.toggle('active', pinMode);
+});
+
+addEventListener('keydown', e => {
+  if (e.key === 'p' || e.key === 'P') pinBtn.click();
+  if (e.key === ' ') { e.preventDefault(); pauseBtn.click(); }
+  if (e.key === 'r' || e.key === 'R') resetBtn.click();
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+let time = 0, acc = 0, last = performance.now();
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.1) dt = 0.1;
+
+  if (!paused) {
+    time += dt;
+    acc += dt;
+    let steps = 0;
+    while (acc >= FIXED && steps < 5) {
+      sim.step(FIXED, windAmount, time);
+      acc -= FIXED;
+      steps++;
+    }
+    if (steps === 5) acc = 0;
+  }
+
+  updateGeometry();
+  updatePins();
+  updateDust(dt);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+requestAnimationFrame(loop);
+
+// fade in from black
+setTimeout(() => {
+  const f = document.getElementById('fade');
+  f.style.opacity = '0';
+  setTimeout(() => f.remove(), 1700);
+}, 60);
+</script>
+</body>
+</html>

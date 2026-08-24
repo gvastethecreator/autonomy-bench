@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1 — 2026-08-24
+
+- Add a Table view: every benchmark against every published model, with present and missing cells for the current A/B/C level.
+- Show the public vote crown on unique leaders in Table as well as on the model list.
+- Add **Open pick** for the staff-chosen take on each benchmark. Rollercoaster A stays on `grok-4.6`. Other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`. B and C prefer `grok-4.6-high`.
+
 ## 0.7.0 — 2026-08-23
 
 - Browser Autonomy Suite v2.0.0: 32 benchmarks with a frozen A/B/C prompt ladder. Rollercoaster A remains byte-for-byte unchanged.

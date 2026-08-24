@@ -108,7 +108,6 @@
   </div>
 
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 (function () {
   "use strict";
@@ -146,6 +145,85 @@
 
   const neon = [0x4af0ff, 0xff9d5c, 0xff5ca8, 0xa86cff, 0x5cff9d, 0xffe14a];
 
+  // ---------- Custom Orbit Controls (no external dependency) ----------
+  function makeOrbitControls(cam, dom) {
+    const controls = {
+      target: new THREE.Vector3(0, 0, 0),
+      autoRotate: false,
+      autoRotateSpeed: 0.3,
+      minDistance: 10,
+      maxDistance: 400,
+      maxPolarAngle: Math.PI * 0.5,
+      enableDamping: true,
+      dampingFactor: 0.08,
+      _radius: 0, _theta: 0, _phi: 0,
+      _tTheta: 0, _tPhi: 0, _tRadius: 0,
+      _dragging: false, _px: 0, _py: 0
+    };
+
+    function sphericalFromCamera() {
+      const off = new THREE.Vector3().subVectors(cam.position, controls.target);
+      const r = off.length();
+      const phi = Math.acos(Math.max(-1, Math.min(1, off.y / r)));
+      const theta = Math.atan2(off.z, off.x);
+      controls._radius = r; controls._phi = phi; controls._theta = theta;
+      controls._tRadius = r; controls._tPhi = phi; controls._tTheta = theta;
+    }
+    sphericalFromCamera();
+
+    dom.addEventListener("pointerdown", (e) => {
+      controls._dragging = true; controls._px = e.clientX; controls._py = e.clientY;
+      controls.autoRotate = false;
+      dom.setPointerCapture(e.pointerId);
+    });
+    dom.addEventListener("pointermove", (e) => {
+      if (!controls._dragging) return;
+      const dx = e.clientX - controls._px;
+      const dy = e.clientY - controls._py;
+      controls._px = e.clientX; controls._py = e.clientY;
+      controls._tTheta -= dx * 0.005;
+      controls._tPhi -= dy * 0.005;
+      controls._tPhi = Math.max(0.12, Math.min(controls.maxPolarAngle, controls._tPhi));
+    });
+    function endDrag(e) {
+      if (!controls._dragging) return;
+      controls._dragging = false;
+      try { dom.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+    dom.addEventListener("pointerup", endDrag);
+    dom.addEventListener("pointercancel", endDrag);
+    dom.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      controls._tRadius *= (1 + Math.sign(e.deltaY) * 0.08);
+      controls._tRadius = Math.max(controls.minDistance, Math.min(controls.maxDistance, controls._tRadius));
+    }, { passive: false });
+
+    controls.update = function () {
+      if (controls.autoRotate && !controls._dragging) {
+        controls._tTheta -= controls.autoRotateSpeed * 0.01;
+      }
+      if (controls.enableDamping) {
+        controls._theta += (controls._tTheta - controls._theta) * controls.dampingFactor;
+        controls._phi += (controls._tPhi - controls._phi) * controls.dampingFactor;
+        controls._radius += (controls._tRadius - controls._radius) * controls.dampingFactor;
+      } else {
+        controls._theta = controls._tTheta;
+        controls._phi = controls._tPhi;
+        controls._radius = controls._tRadius;
+      }
+      const sinPhi = Math.sin(controls._phi);
+      cam.position.set(
+        controls.target.x + controls._radius * sinPhi * Math.cos(controls._theta),
+        controls.target.y + controls._radius * Math.cos(controls._phi),
+        controls.target.z + controls._radius * sinPhi * Math.sin(controls._theta)
+      );
+      cam.lookAt(controls.target);
+    };
+
+    controls.reset = function () { sphericalFromCamera(); };
+    return controls;
+  }
+
   // ---------- Init ----------
   function init() {
     const app = document.getElementById("app");
@@ -167,9 +245,7 @@
     camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1200);
     camera.position.set(HALF * 0.7, 46, HALF * 1.1);
 
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
+    controls = makeOrbitControls(camera, renderer.domElement);
     controls.target.set(0, 8, 0);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.minDistance = 20;

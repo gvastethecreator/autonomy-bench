@@ -6,11 +6,15 @@ The public stage is `gallery/index.html`. Preview it with `vp run dev`. Deploy w
 
 The title is `{benchmark} Bench` for the selected experiment.
 
-The left sidebar holds the experiment select, A/B/C prompt-level buttons, and models. Compact (or `[`) collapses it to an icon rail. The experiment menu shows a desaturated emoji beside the name. The model list shows only models that have a generated HTML take for the selected benchmark and the current month or run. Anime.js layout animates models that enter or leave that list.
+The left sidebar holds the experiment select, **Open pick**, A/B/C prompt-level buttons, and models. Compact (or `[`) collapses it to an icon rail. The experiment menu shows a desaturated emoji beside the name. The model list shows only models that have a generated HTML take for the selected benchmark and the current month or run. Anime.js layout animates models that enter or leave that list.
+
+**Open pick** opens the staff-chosen take for the current benchmark and prompt level (rollercoaster A prefers `grok-4.6`; other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`; B and C prefer `grok-4.6-high`). The pick only lands on a published HTML take.
+
+**Table** is a coverage matrix: every benchmark against every model that has at least one playable take. A filled square is present for the current A/B/C level. An empty square is missing. A gold crown is the unique public vote leader for that prompt-V. A gold star is the staff pick. Click a filled cell to open that take. Click the bench name to open the staff pick.
 
 Each take has a top toolbar: the model name with a crown, the prompt in small type, then Copy prompt, HTML, and Receipt. In a multi-take view those actions belong to that take. If the toolbar is tight, the actions show as icons. A custom tooltip names each icon. Open HTML or receipt panels stack on the right, one panel per take. If more than one panel is open, the stack scrolls and each panel keeps the same height.
 
-The crown is a public winner vote for that prompt-V (`rollercoaster-A`). It selects a model, not a take date. Gold on the toolbar means your vote. Gold on the model list means that model is the unique leader. A tie shows no public crown. You can move your vote or click the same crown to clear it. Votes use an anonymous `ab_voter` cookie. The API does not store IP. If `/api/votes` is down, the crowns stay hidden.
+The crown is a public winner vote for that prompt-V (`rollercoaster-A`). It selects a model, not a take date. Gold on the toolbar means your vote. Gold on the model list and in the Table view marks the unique leader. A tie shows no public crown. You can move your vote or click the same crown to clear it. Votes use an anonymous `ab_voter` cookie. The API does not store IP. If `/api/votes` is down, the crowns stay hidden.
 
 Prompt versions, months, and runs are selects in the top toolbar. If a month has more than one run, a second select pins one of them. Omit `date` to keep the month combined.
 
@@ -31,6 +35,6 @@ Title, toast, Copy/Copied, Compact/Expand, vote labels, stack headings, and the 
 
 ## Query
 
-Shareable keys: `experiment`, `level`, `model`, `mode`, `arrange`, `scale`, `prompt`, `month`, `date`, `film` (`compact` or `open`).
+Shareable keys: `experiment`, `level`, `model`, `mode` (`single`, `models`, `ladder`, `table`), `arrange`, `scale`, `prompt`, `month`, `date`, `film` (`compact` or `open`).
 
 `date` pins a single run. Multi-take views can be columns, grid, or rows, with Fill or Fit (virtual 1280×800) scale.

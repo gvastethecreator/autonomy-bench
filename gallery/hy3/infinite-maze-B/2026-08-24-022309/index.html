@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Infinite Maze — a self-navigating labyrinth</title>
+<style>
+  :root { --ink: #d7e2f0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #070912; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* Vignette + film grain feel */
+  #vignette {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center,
+        rgba(0,0,0,0) 38%,
+        rgba(0,0,0,0.35) 72%,
+        rgba(0,0,0,0.78) 100%);
+    mix-blend-mode: multiply;
+    z-index: 5;
+  }
+  #hud {
+    position: fixed; left: 22px; top: 20px; z-index: 10;
+    color: var(--ink); font-family: "SFMono-Regular", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.9);
+    pointer-events: none; user-select: none;
+  }
+  #hud .title {
+    font-size: 17px; letter-spacing: 0.32em; font-weight: 600;
+    text-transform: uppercase; color: #eaf2ff;
+  }
+  #hud .sub {
+    margin-top: 4px; font-size: 11px; letter-spacing: 0.18em;
+    color: #7e90a8; text-transform: uppercase;
+  }
+  #stats {
+    margin-top: 14px; font-size: 11.5px; line-height: 1.7; color: #93a6c0;
+    letter-spacing: 0.05em;
+  }
+  #stats b { color: #cfe0f5; font-weight: 600; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 20px; z-index: 10;
+    text-align: center; color: #6f819b; font-size: 11px; letter-spacing: 0.22em;
+    text-transform: uppercase; font-family: ui-monospace, Menlo, Consolas, monospace;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.9); pointer-events: none; user-select: none;
+    transition: opacity 1.2s ease; opacity: 1;
+  }
+  #intro {
+    position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #0b1020 0%, #05060c 100%);
+    transition: opacity 1.0s ease; opacity: 1;
+    color: #cdd9ec; font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  #intro.gone { opacity: 0; pointer-events: none; }
+  #intro .wrap { text-align: center; }
+  #intro .big { font-size: 22px; letter-spacing: 0.42em; text-transform: uppercase; color: #eaf2ff; }
+  #intro .small { margin-top: 14px; font-size: 12px; letter-spacing: 0.16em; color: #7e90a8; }
+  #err {
+    position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+    color: #ffb4b4; font-family: ui-monospace, monospace; font-size: 14px; text-align: center; padding: 30px;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="hud">
+  <div class="title">Infinite Maze</div>
+  <div class="sub">a self-navigating labyrinth</div>
+  <div id="stats">
+    depth <b id="s-depth">0</b> m<br/>
+    cells walked <b id="s-cells">0</b><br/>
+    chunks alive <b id="s-chunks">0</b>
+  </div>
+</div>
+<div id="hint">drag to look around · the maze walks itself</div>
+<div id="intro"><div class="wrap">
+  <div class="big">Infinite Maze</div>
+  <div class="small">entering the labyrinth…</div>
+</div></div>
+<div id="err">WebGL could not start in this browser.</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  if (!window.THREE) { document.getElementById('err').style.display = 'flex'; return; }
+
+  // ---------- Tunables ----------
+  const S = 5;            // cells per chunk side
+  const CS = 4;           // world units per cell
+  const WALL_H = 3.4;     // wall height
+  const WALL_T = 0.4;     // wall thickness
+  const EYE = 1.62;       // camera eye height
+  const RADIUS = 3;       // chunks kept alive around player
+  const SPEED = CS * 0.92;
+  const TURN = 2.9;       // rad/s turn rate
+  const TURN_PROB = 0.45; // chance to take a side branch at a junction
+
+  // ---------- Hashing & RNG ----------
+  function hash2(a, b) {
+    let h = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263)) ^ 0x9e3779b9;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h ^= h >>> 16;
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  // Border opening positions are pure hashes -> no recursion when generating a chunk.
+  const eastRow  = (cx, cy) => hash2(cx, cy) % S;
+  const westRow  = (cx, cy) => hash2(cx - 1, cy) % S;
+  const southCol = (cx, cy) => hash2(cx * 7 + 3, cy * 13 + 5) % S;
+  const northCol = (cx, cy) => hash2(cx * 11 + 9, cy * 17 + 1) % S;
+
+  // ---------- Maze chunk generation ----------
+  const chunkCache = new Map();
+  function getChunk(cx, cy) {
+    const key = cx + ',' + cy;
+    let c = chunkCache.get(key);
+    if (c) return c;
+
+    const rng = mulberry32(hash2(cx * 31 + 5, cy * 17 + 3));
+    const cells = [];
+    for (let y = 0; y < S; y++) {
+      cells[y] = [];
+      for (let x = 0; x < S; x++) {
+        cells[y][x] = { N: true, E: true, S: true, W: true, v: false };
+      }
+    }
+    // Recursive backtracker (iterative) -> perfect maze inside the chunk.
+    const stack = [];
+    cells[0][0].v = true;
+    stack.push([0, 0]);
+    const DIRS = [
+      ['N', 0, -1, 'S'], ['S', 0, 1, 'N'],
+      ['E', 1, 0, 'W'], ['W', -1, 0, 'E']
+    ];
+    while (stack.length) {
+      const [x, y] = stack[stack.length - 1];
+      const opts = [];
+      for (const d of DIRS) {
+        const nx = x + d[1], ny = y + d[2];
+        if (nx >= 0 && nx < S && ny >= 0 && ny < S && !cells[ny][nx].v) opts.push(d);
+      }
+      if (!opts.length) { stack.pop(); continue; }
+      const d = opts[(rng() * opts.length) | 0];
+      const nx = x + d[1], ny = y + d[2];
+      cells[y][x][d[0]] = false;
+      cells[ny][nx][d[3]] = false;
+      cells[ny][nx].v = true;
+      stack.push([nx, ny]);
+    }
+
+    // Open exactly one border segment per side so chunks stitch into one
+    // connected infinite labyrinth. Openings align because a chunk's west
+    // opening equals its neighbour's east opening (same hash).
+    const er = eastRow(cx, cy), wr = westRow(cx, cy);
+    const sc = southCol(cx, cy), nc = northCol(cx, cy);
+    for (let y = 0; y < S; y++) {
+      cells[y][S - 1].E = (y === er);
+      cells[y][0].W = (y === wr);
+    }
+    for (let x = 0; x < S; x++) {
+      cells[S - 1][x].S = (x === sc);
+      cells[0][x].N = (x === nc);
+    }
+
+    c = { cells, er, wr, sc, nc };
+    chunkCache.set(key, c);
+    return c;
+  }
+
+  function globalCell(px, pz) {
+    return { x: Math.round(px / CS), z: Math.round(pz / CS) };
+  }
+  // Is the wall between global cell (gx,gz) and the neighbour in (dx,dz) open?
+  function openFrom(gx, gz, dx, dz) {
+    const cx = Math.floor(gx / S), cz = Math.floor(gz / S);
+    const lx = ((gx % S) + S) % S, lz = ((gz % S) + S) % S;
+    const cell = getChunk(cx, cz).cells[lz][lx];
+    if (dx === 1) return !cell.E;
+    if (dx === -1) return !cell.W;
+    if (dz === 1) return !cell.S;
+    if (dz === -1) return !cell.N;
+    return false;
+  }
+  function openDirs(gx, gz) {
+    const out = [];
+    if (openFrom(gx, gz, 1, 0)) out.push([1, 0]);
+    if (openFrom(gx, gz, -1, 0)) out.push([-1, 0]);
+    if (openFrom(gx, gz, 0, 1)) out.push([0, 1]);
+    if (openFrom(gx, gz, 0, -1)) out.push([0, -1]);
+    return out;
+  }
+
+  // ---------- Three.js setup ----------
+  const app = document.getElementById('app');
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  app.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const FOG = 0x070912;
+  scene.background = new THREE.Color(FOG);
+  scene.fog = new THREE.FogExp2(FOG, 0.072);
+
+  const camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.1, 400);
+  scene.add(camera);
+
+  // Lights: faint ambient + a roaming flashlight.
+  scene.add(new THREE.HemisphereLight(0x33405a, 0x05060c, 0.42));
+  const fill = new THREE.PointLight(0x6f86b0, 0.5, 30, 1.4);
+  camera.add(fill);
+  fill.position.set(0, 0.4, 0);
+
+  const torch = new THREE.SpotLight(0xfff0dc, 2.6, CS * 7, 0.62, 0.55, 1.1);
+  camera.add(torch);
+  torch.position.set(0, 0.2, 0);
+  const torchTarget = new THREE.Object3D();
+  scene.add(torchTarget);
+  torch.target = torchTarget;
+
+  // ---------- Procedural textures ----------
+  function brickTexture() {
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const g = c.getContext('2d');
+    g.fillStyle = '#23282f'; g.fillRect(0, 0, 256, 256);
+    const bw = 64, bh = 32;
+    for (let row = 0; row < 256 / bh; row++) {
+      const off = (row % 2) * (bw / 2);
+      for (let x = -bw; x < 256; x += bw) {
+        const bx = x + off, by = row * bh;
+        const shade = 28 + ((hash2(bx, by) % 26));
+        g.fillStyle = 'rgb(' + (shade + 8) + ',' + (shade + 12) + ',' + (shade + 18) + ')';
+        g.fillRect(bx + 2, by + 2, bw - 3, bh - 3);
+      }
+    }
+    // grain
+    for (let i = 0; i < 1400; i++) {
+      g.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.12).toFixed(3) + ')';
+      g.fillRect((Math.random() * 256) | 0, (Math.random() * 256) | 0, 1, 1);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1, 2);
+    return t;
+  }
+  function stoneTexture(base) {
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const g = c.getContext('2d');
+    g.fillStyle = base; g.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 2600; i++) {
+      const v = Math.random() * 0.18;
+      g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,' + v.toFixed(3) + ')' : 'rgba(255,255,255,' + (v * 0.5).toFixed(3) + ')';
+      g.fillRect((Math.random() * 256) | 0, (Math.random() * 256) | 0, 1, 1);
+    }
+    // cracked seams
+    g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 1;
+    for (let i = 0; i < 6; i++) {
+      g.beginPath();
+      let x = Math.random() * 256, y = 0;
+      g.moveTo(x, y);
+      while (y < 256) { x += (Math.random() - 0.5) * 40; y += 20 + Math.random() * 30; g.lineTo(x, y); }
+      g.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+
+  const wallTex = brickTexture();
+  const floorTex = stoneTexture('#15181d'); floorTex.repeat.set(2, 2);
+  const ceilTex = stoneTexture('#0d0f14'); ceilTex.repeat.set(2, 2);
+
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, color: 0x9aa6b6, roughness: 0.95, metalness: 0.0 });
+  const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, color: 0x6c7686, roughness: 1.0 });
+  const ceilMat = new THREE.MeshStandardMaterial({ map: ceilTex, color: 0x3a4350, roughness: 1.0 });
+
+  const unitBox = new THREE.BoxGeometry(1, 1, 1);
+  const unitPlane = new THREE.PlaneGeometry(1, 1);
+  const floorQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  const ceilQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+
+  // ---------- Build chunk meshes (instanced) ----------
+  const chunks = new Map(); // key -> THREE.Group
+
+  function buildChunkGroup(cx, cy) {
+    const chunk = getChunk(cx, cy);
+    const group = new THREE.Group();
+    const walls = [];
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const cell = chunk.cells[y][x];
+        const wx = (cx * S + x) * CS;
+        const wz = (cy * S + y) * CS;
+        if (cell.E) walls.push([wx + CS / 2, WALL_H / 2, wz, WALL_T, WALL_H, CS]);
+        if (cell.S) walls.push([wx, WALL_H / 2, wz + CS / 2, CS, WALL_H, WALL_T]);
+        if (x === 0 && cell.W) walls.push([wx - CS / 2, WALL_H / 2, wz, WALL_T, WALL_H, CS]);
+        if (y === 0 && cell.N) walls.push([wx, WALL_H / 2, wz - CS / 2, CS, WALL_H, WALL_T]);
+      }
+    }
+    if (walls.length) {
+      const m = new THREE.InstancedMesh(unitBox, wallMat, walls.length);
+      const mat = new THREE.Matrix4();
+      for (let i = 0; i < walls.length; i++) {
+        const w = walls[i];
+        mat.compose(new THREE.Vector3(w[0], w[1], w[2]), new THREE.Quaternion(), new THREE.Vector3(w[3], w[4], w[5]));
+        m.setMatrixAt(i, mat);
+      }
+      m.instanceMatrix.needsUpdate = true;
+      m.frustumCulled = false;
+      group.add(m);
+    }
+
+    // floor + ceiling (one per cell)
+    const n = S * S;
+    const fm = new THREE.InstancedMesh(unitPlane, floorMat, n);
+    const cm = new THREE.InstancedMesh(unitPlane, ceilMat, n);
+    const mat = new THREE.Matrix4();
+    let i = 0;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const wx = (cx * S + x) * CS;
+        const wz = (cy * S + y) * CS;
+        mat.compose(new THREE.Vector3(wx, 0, wz), floorQuat, new THREE.Vector3(CS, CS, 1));
+        fm.setMatrixAt(i, mat);
+        mat.compose(new THREE.Vector3(wx, WALL_H, wz), ceilQuat, new THREE.Vector3(CS, CS, 1));
+        cm.setMatrixAt(i, mat);
+        i++;
+      }
+    }
+    fm.instanceMatrix.needsUpdate = cm.instanceMatrix.needsUpdate = true;
+    fm.frustumCulled = cm.frustumCulled = false;
+    group.add(fm); group.add(cm);
+    return group;
+  }
+
+  function updateChunks(px, pz) {
+    const pcx = Math.floor(px / (S * CS));
+    const pcz = Math.floor(pz / (S * CS));
+    const want = new Set();
+    for (let dx = -RADIUS; dx <= RADIUS; dx++)
+      for (let dz = -RADIUS; dz <= RADIUS; dz++) {
+        const k = (pcx + dx) + ',' + (pcz + dz);
+        want.add(k);
+        if (!chunks.has(k)) {
+          const g = buildChunkGroup(pcx + dx, pcz + dz);
+          chunks.set(k, g);
+          scene.add(g);
+        }
+      }
+    for (const k of chunks.keys()) {
+      if (!want.has(k)) {
+        const g = chunks.get(k);
+        scene.remove(g);
+        g.traverse(o => { if (o.isInstancedMesh) o.dispose(); });
+        chunks.delete(k);
+      }
+    }
+  }
+
+  // ---------- Dust (atmosphere) ----------
+  const DUST = 320;
+  const dustGeo = new THREE.BufferGeometry();
+  const dpos = new Float32Array(DUST * 3);
+  for (let i = 0; i < DUST; i++) {
+    dpos[i * 3] = (Math.random() - 0.5) * 26;
+    dpos[i * 3 + 1] = (Math.random() - 0.5) * 10;
+    dpos[i * 3 + 2] = (Math.random() - 0.5) * 26;
+  }
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dpos, 3));
+  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+    color: 0x9fb4d4, size: 0.04, transparent: true, opacity: 0.5, depthWrite: false, fog: true
+  }));
+  camera.add(dust);
+
+  // ---------- Walker state ----------
+  const pos = new THREE.Vector3(0, EYE, 0);
+  let yaw = 0;                  // heading the maze follows
+  let targetYaw = 0;
+  let turning = false;
+  let lastCellKey = '';
+  let userYaw = 0, userPitch = 0; // look offset (drag to peek)
+  let dragging = false, lastMX = 0, lastMY = 0;
+  let depthM = 0, cellsWalked = 0;
+
+  function pickStart() {
+    const cell = globalCell(pos.x, pos.z);
+    const dirs = openDirs(cell.x, cell.z);
+    if (!dirs.length) { yaw = targetYaw = 0; return; }
+    const d = dirs[(Math.random() * dirs.length) | 0];
+    yaw = targetYaw = Math.atan2(d[0], d[1]);
+    lastCellKey = cell.x + ',' + cell.z;
+    cellsWalked = 1;
+  }
+
+  function blocked(px, pz, y) {
+    const d = { x: Math.sin(y), z: Math.cos(y) };
+    const aheadX = px + d.x * (CS * 0.46 + 0.2);
+    const aheadZ = pz + d.z * (CS * 0.46 + 0.2);
+    const cur = globalCell(px, pz);
+    const tgt = globalCell(aheadX, aheadZ);
+    if (cur.x === tgt.x && cur.z === tgt.z) return false;
+    const dx = Math.sign(tgt.x - cur.x), dz = Math.sign(tgt.z - cur.z);
+    return !openFrom(cur.x, cur.z, dx, dz);
+  }
+
+  function angleDiff(a, b) {
+    let d = a - b;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+
+  function step(dt) {
+    if (turning) {
+      const diff = angleDiff(targetYaw, yaw);
+      if (Math.abs(diff) < 0.12) { turning = false; yaw = targetYaw; }
+      else yaw += Math.sign(diff) * Math.min(Math.abs(diff), TURN * dt);
+      return;
+    }
+
+    if (blocked(pos.x, pos.z, yaw)) {
+      const cell = globalCell(pos.x, pos.z);
+      const dirs = openDirs(cell.x, cell.z);
+      if (!dirs.length) { targetYaw = yaw + Math.PI; turning = true; return; }
+      const d = dirs[(Math.random() * dirs.length) | 0];
+      targetYaw = Math.atan2(d[0], d[1]);
+      turning = true;
+      return;
+    }
+
+    // advance forward along heading
+    const dx = Math.sin(yaw), dz = Math.cos(yaw);
+    const nx = pos.x + dx * SPEED * dt;
+    const nz = pos.z + dz * SPEED * dt;
+
+    // gentle centering onto the corridor axis
+    const cell = globalCell(pos.x, pos.z);
+    const ccx = cell.x * CS, ccz = cell.z * CS;
+    if (Math.abs(dx) > Math.abs(dz)) pos.z += (ccz - pos.z) * Math.min(1, 6 * dt);
+    else pos.x += (ccx - pos.x) * Math.min(1, 6 * dt);
+
+    pos.x = nx; pos.z = nz;
+    depthM += SPEED * dt;
+
+    const newCell = globalCell(pos.x, pos.z);
+    const k = newCell.x + ',' + newCell.z;
+    if (k !== lastCellKey) {
+      lastCellKey = k;
+      cellsWalked++;
+      // at a junction, sometimes take a branch
+      const dirs = openDirs(newCell.x, newCell.z);
+      const straight = [Math.sign(dx), Math.sign(dz)];
+      const sides = dirs.filter(d => !(d[0] === straight[0] && d[1] === straight[1]) && !(d[0] === -straight[0] && d[1] === -straight[1]));
+      if (sides.length && Math.random() < TURN_PROB) {
+        const d = sides[(Math.random() * sides.length) | 0];
+        targetYaw = Math.atan2(d[0], d[1]);
+        turning = true;
+      }
+    }
+  }
+
+  // ---------- Input: drag to peek ----------
+  const hint = document.getElementById('hint');
+  function down(e) { dragging = true; lastMX = e.clientX; lastMY = e.clientY; hint.style.opacity = 0; }
+  function move(e) {
+    if (!dragging) return;
+    userYaw -= (e.clientX - lastMX) * 0.005;
+    userPitch -= (e.clientY - lastMY) * 0.005;
+    userPitch = Math.max(-1.1, Math.min(1.1, userPitch));
+    lastMX = e.clientX; lastMY = e.clientY;
+  }
+  function up() { dragging = false; }
+  renderer.domElement.addEventListener('mousedown', down);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  renderer.domElement.addEventListener('touchstart', e => down(e.touches[0]), { passive: true });
+  window.addEventListener('touchmove', e => { if (dragging) move(e.touches[0]); }, { passive: true });
+  window.addEventListener('touchend', up);
+
+  // ---------- Main loop ----------
+  pickStart();
+  updateChunks(pos.x, pos.z);
+
+  const clock = new THREE.Clock();
+  const sDepth = document.getElementById('s-depth');
+  const sCells = document.getElementById('s-cells');
+  const sChunks = document.getElementById('s-chunks');
+  let hudT = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(0.05, clock.getDelta());
+
+    step(dt);
+
+    // decay the peek offset back to forward view
+    if (!dragging) {
+      userYaw *= (1 - Math.min(1, 1.6 * dt));
+      userPitch *= (1 - Math.min(1, 1.6 * dt));
+    }
+
+    const ty = yaw + userYaw;
+    pos.y = EYE;
+    camera.position.copy(pos);
+    const look = new THREE.Vector3(
+      pos.x + Math.sin(ty) * Math.cos(userPitch),
+      pos.y + Math.sin(userPitch),
+      pos.z + Math.cos(ty) * Math.cos(userPitch)
+    );
+    camera.lookAt(look);
+    torchTarget.position.copy(look);
+
+    // drift dust
+    const arr = dustGeo.attributes.position.array;
+    for (let i = 0; i < DUST; i++) {
+      arr[i * 3 + 1] -= dt * 0.35;
+      if (arr[i * 3 + 1] < -5) arr[i * 3 + 1] = 5;
+    }
+    dustGeo.attributes.position.needsUpdate = true;
+
+    updateChunks(pos.x, pos.z);
+
+    hudT += dt;
+    if (hudT > 0.2) {
+      hudT = 0;
+      sDepth.textContent = depthM.toFixed(0);
+      sCells.textContent = cellsWalked;
+      sChunks.textContent = chunks.size;
+    }
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // hide intro once first frame is up
+  setTimeout(() => {
+    const intro = document.getElementById('intro');
+    intro.classList.add('gone');
+    setTimeout(() => intro.remove(), 1100);
+  }, 650);
+  setTimeout(() => { hint.style.opacity = 0; }, 9000);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+})();
+</script>
+</body>
+</html>

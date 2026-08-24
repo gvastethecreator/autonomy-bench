@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>City Traffic Simulation</title>
+<style>
+  :root{
+    --bg:#0e1116;
+    --panel:#171c24;
+    --road:#2b3038;
+    --road-line:#5b6470;
+    --grass:#1b2a22;
+    --building:#222a35;
+    --accent:#4cc2ff;
+    --text:#cdd6e0;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  #wrap{display:flex;flex-direction:column;height:100%;}
+  header{padding:10px 16px;display:flex;align-items:center;gap:16px;
+    background:linear-gradient(180deg,#1b212b,#141920);border-bottom:1px solid #000;}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px;}
+  .controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:auto;}
+  .controls label{font-size:12px;display:flex;align-items:center;gap:6px;color:#9aa6b4;}
+  input[type=range]{width:120px;accent-color:var(--accent);}
+  button{background:#222c38;color:var(--text);border:1px solid #34404f;
+    border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;}
+  button:hover{background:#2c3a49;}
+  #stage{flex:1;position:relative;overflow:hidden;}
+  canvas{display:block;width:100%;height:100%;}
+  #hud{position:absolute;left:12px;bottom:12px;background:rgba(15,18,24,.72);
+    border:1px solid #2a3340;border-radius:8px;padding:8px 12px;font-size:12px;
+    line-height:1.5;backdrop-filter:blur(4px);}
+  #hud b{color:var(--accent);}
+  .legend{position:absolute;right:12px;top:12px;background:rgba(15,18,24,.72);
+    border:1px solid #2a3340;border-radius:8px;padding:8px 12px;font-size:11px;
+    line-height:1.6;backdrop-filter:blur(4px);}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;
+    vertical-align:middle;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>City Traffic Simulation</h1>
+    <div class="controls">
+      <label>Traffic <input id="spawn" type="range" min="0" max="100" value="55"></label>
+      <label>Speed <input id="speed" type="range" min="20" max="220" value="100"></label>
+      <label><input id="lights" type="checkbox" checked> Signals</label>
+      <button id="pause">Pause</button>
+    </div>
+  </header>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="legend">
+      <div><span class="dot" style="background:#ff5d5d"></span>Stopped / blocked</div>
+      <div><span class="dot" style="background:#ffd24c"></span>Slowing</div>
+      <div><span class="dot" style="background:#4cffa1"></span>Moving</div>
+    </div>
+    <div id="hud">Cars: <b id="nCars">0</b> &nbsp; Avg speed: <b id="avg">0</b> &nbsp; Throughput: <b id="thru">0</b>/min</div>
+  </div>
+</div>
+<script>
+(function(){
+  "use strict";
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const stage = document.getElementById("stage");
+
+  const COLS = 5;          // vertical roads (going down)
+  const ROWS = 4;          // horizontal roads (going right)
+  let W = 0, H = 0;
+  let roads = { vx:[], hy:[] };   // x positions of vertical roads, y of horizontal roads
+  let cars = [];
+  let passedCount = 0, passedWindow = [];
+  let running = true;
+  let lastT = performance.now();
+
+  const spawnEl = document.getElementById("spawn");
+  const speedEl = document.getElementById("speed");
+  const lightsEl = document.getElementById("lights");
+
+  function resize(){
+    const r = stage.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    W = r.width; H = r.height;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    layout();
+  }
+
+  function layout(){
+    roads.vx = [];
+    roads.hy = [];
+    const mx = W/(COLS+1);
+    for(let i=1;i<=COLS;i++) roads.vx.push(Math.round(mx*i));
+    const my = H/(ROWS+1);
+    for(let i=1;i<=ROWS;i++) roads.hy.push(Math.round(my*i));
+  }
+
+  const ROAD_W = 22;        // half-width handled below
+  const HALF = 13;          // road half width
+  const LANE = 6;           // lane offset
+
+  // Traffic light state per intersection
+  function lightPhase(inter, t){
+    if(!lightsEl.checked) return 2; // all-green
+    // cycle: vertical green, then horizontal green
+    const period = 9000;
+    const p = (t % period) / period;
+    return p < 0.5 ? 1 : 0; // 1 = vertical go, 0 = horizontal go
+  }
+
+  const COLORS = ["#4cffa1","#ffd24c","#ff5d5d","#7aa2ff","#ff9f4c","#c98bff"];
+
+  function rand(a,b){return a+Math.random()*(b-a);}
+
+  function spawnCar(){
+    const vertical = Math.random() < 0.5;
+    if(vertical){
+      const x = roads.vx[(Math.random()*roads.vx.length)|0];
+      const dir = Math.random()<0.5 ? 1 : -1; // 1 down, -1 up
+      const lane = x + (dir>0 ? -LANE : LANE);
+      cars.push({vertical:true, x:lane, pos: dir>0 ? -20 : H+20,
+        dir, v: rand(0.8,1.4), max: rand(0.9,1.5), color: COLORS[(Math.random()*COLORS.length)|0],
+        w:8, h:13, id:cars.length});
+    } else {
+      const y = roads.hy[(Math.random()*roads.hy.length)|0];
+      const dir = Math.random()<0.5 ? 1 : -1; // 1 right, -1 left
+      const lane = y + (dir>0 ? -LANE : LANE);
+      cars.push({vertical:false, y:lane, pos: dir>0 ? -20 : W+20,
+        dir, v: rand(0.8,1.4), max: rand(0.9,1.5), color: COLORS[(Math.random()*COLORS.length)|0],
+        w:13, h:8, id:cars.length});
+    }
+  }
+
+  function blocked(car, t){
+    // check traffic light at nearest intersection ahead
+    if(car.vertical){
+      const laneY = car.x;
+      for(const iy of roads.hy){
+        const ahead = car.dir>0 ? iy > car.pos : iy < car.pos;
+        if(ahead){
+          const dist = car.dir>0 ? iy - car.pos : car.pos - iy;
+          if(dist < 26){
+            const phase = lightPhase(iy + "_" + laneY, t);
+            if(phase === 0) return {d:dist}; // horizontal has green -> vertical must stop
+          }
+        }
+      }
+    } else {
+      const laneX = car.y;
+      for(const ix of roads.vx){
+        const ahead = car.dir>0 ? ix > car.pos : ix < car.pos;
+        if(ahead){
+          const dist = car.dir>0 ? ix - car.pos : car.pos - ix;
+          if(dist < 26){
+            const phase = lightPhase(ix + "_" + laneX, t);
+            if(phase === 1) return {d:dist}; // vertical has green -> horizontal must stop
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function carAhead(car){
+    // find nearest car ahead on same lane
+    let best = null, bestD = Infinity;
+    for(const o of cars){
+      if(o === car) continue;
+      if(car.vertical !== o.vertical) continue;
+      if(car.vertical){
+        if(Math.abs(o.x - car.x) > 4) continue;
+        const ahead = car.dir>0 ? o.pos > car.pos : o.pos < car.pos;
+        if(!ahead) continue;
+        const d = car.dir>0 ? o.pos - car.pos : car.pos - o.pos;
+        if(d < bestD){bestD = d; best = o;}
+      } else {
+        if(Math.abs(o.y - car.y) > 4) continue;
+        const ahead = car.dir>0 ? o.pos > car.pos : o.pos < car.pos;
+        if(!ahead) continue;
+        const d = car.dir>0 ? o.pos - car.pos : car.pos - o.pos;
+        if(d < bestD){bestD = d; best = o;}
+      }
+    }
+    return best ? {d:bestD} : null;
+  }
+
+  function update(dt, t){
+    const target = Math.round(spawnEl.value/100 * 70);
+    if(cars.length < target && Math.random() < 0.6) spawnCar();
+
+    const sp = speedEl.value/100;
+    for(const c of cars){
+      const stop = blocked(c, t);
+      const front = carAhead(c);
+      let minDist = Infinity;
+      if(stop) minDist = Math.min(minDist, stop.d);
+      if(front) minDist = Math.min(minDist, front.d);
+
+      const desired = (minDist < 22) ? 0 : c.max;
+      // smooth accel/decel
+      if(c.v < desired) c.v = Math.min(desired, c.v + dt*3);
+      else c.v = Math.max(desired, c.v - dt*5);
+
+      c.pos += c.v * sp * c.dir * dt * 60;
+
+      // throughput: count cars leaving the map
+      if(c.vertical){
+        if((c.dir>0 && c.pos > H+30) || (c.dir<0 && c.pos < -30)){
+          passedCount++; passedWindow.push(t);
+          c.dead = true;
+        }
+      } else {
+        if((c.dir>0 && c.pos > W+30) || (c.dir<0 && c.pos < -30)){
+          passedCount++; passedWindow.push(t);
+          c.dead = true;
+        }
+      }
+    }
+    cars = cars.filter(c=>!c.dead);
+    // prune old window entries (last 60s)
+    while(passedWindow.length && t - passedWindow[0] > 60000) passedWindow.shift();
+  }
+
+  function draw(t){
+    ctx.fillStyle = "#11161d";
+    ctx.fillRect(0,0,W,H);
+
+    // grass blocks / building blocks
+    drawBlocks();
+
+    // roads
+    ctx.fillStyle = getCSS("--road");
+    for(const x of roads.vx){
+      ctx.fillRect(x-HALF,0, HALF*2, H);
+    }
+    for(const y of roads.hy){
+      ctx.fillRect(0, y-HALF, W, HALF*2);
+    }
+
+    // lane dashes
+    ctx.strokeStyle = getCSS("--road-line");
+    ctx.setLineDash([10,12]);
+    ctx.lineWidth = 1.5;
+    for(const x of roads.vx){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    }
+    for(const y of roads.hy){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // intersections + signals
+    for(const x of roads.vx){
+      for(const y of roads.hy){
+        ctx.fillStyle = "#23282f";
+        ctx.fillRect(x-HALF,y-HALF,HALF*2,HALF*2);
+        if(lightsEl.checked) drawSignal(x,y,t);
+      }
+    }
+
+    // cars
+    let moving = 0;
+    for(const c of cars){
+      ctx.save();
+      ctx.translate(c.vertical ? c.x : c.pos, c.vertical ? c.pos : c.y);
+      if(!c.vertical && c.dir<0) ctx.rotate(Math.PI);
+      if(c.vertical && c.dir<0) ctx.rotate(Math.PI);
+      ctx.fillStyle = c.color;
+      ctx.fillRect(-c.w/2,-c.h/2,c.w,c.h);
+      // windshield hint
+      ctx.fillStyle = "rgba(255,255,255,.35)";
+      ctx.fillRect(-c.w/2+1,-c.h/2+2,c.w-2,3);
+      ctx.restore();
+      if(c.v > 0.15) moving++;
+    }
+
+    // HUD
+    document.getElementById("nCars").textContent = cars.length;
+    const avg = cars.length ? (cars.reduce((s,c)=>s+c.v,0)/cars.length) : 0;
+    document.getElementById("avg").textContent = avg.toFixed(2);
+    document.getElementById("thru").textContent = passedWindow.length;
+  }
+
+  function drawSignal(x,y,t){
+    const phase = lightPhase(x+"_"+y,t);
+    // vertical road signal (controls up/down) drawn left-top of intersection
+    const vCol = phase===1 ? "#4cffa1" : "#ff5d5d";
+    const hCol = phase===0 ? "#4cffa1" : "#ff5d5d";
+    ctx.fillStyle = vCol;
+    ctx.fillRect(x-HALF+2, y-HALF+2, 4,4);
+    ctx.fillStyle = hCol;
+    ctx.fillRect(x-HALF+2, y-HALF+8, 4,4);
+  }
+
+  function getCSS(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+  function drawBlocks(){
+    // fill non-road area with subtle building rectangles
+    ctx.fillStyle = getCSS("--building");
+    for(let i=0;i<roads.vx.length+1;i++){
+      for(let j=0;j<roads.hy.length+1;j++){
+        const x0 = i===0 ? 0 : roads.vx[i-1]+HALF;
+        const x1 = i===roads.vx.length ? W : roads.vx[i]-HALF;
+        const y0 = j===0 ? 0 : roads.hy[j-1]+HALF;
+        const y1 = j===roads.hy.length ? H : roads.hy[j]-HALF;
+        if(x1<=x0 || y1<=y0) continue;
+        ctx.fillRect(x0,y0, x1-x0, y1-y0);
+        // window grid
+        ctx.fillStyle = "rgba(255,255,255,.04)";
+        const pad = 6;
+        for(let wx=x0+pad; wx<x1-pad; wx+=14){
+          for(let wy=y0+pad; wy<y1-pad; wy+=14){
+            ctx.fillRect(wx,wy,6,6);
+          }
+        }
+        ctx.fillStyle = getCSS("--building");
+      }
+    }
+  }
+
+  function loop(now){
+    const dt = Math.min(0.05, (now-lastT)/1000);
+    lastT = now;
+    if(running) update(dt, now);
+    draw(now);
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById("pause").addEventListener("click", function(){
+    running = !running;
+    this.textContent = running ? "Pause" : "Play";
+  });
+  window.addEventListener("resize", resize);
+  // seed some cars
+  for(let i=0;i<25;i++) spawnCar();
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

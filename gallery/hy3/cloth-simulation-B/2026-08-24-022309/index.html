@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloth — Verlet Simulation</title>
+<style>
+  :root {
+    --bg-0: #0a0e1a;
+    --bg-1: #131a2e;
+    --ink: #e8ecf5;
+    --muted: #8a93a8;
+    --accent: #6ee7ff;
+    --accent-2: #b794f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(120% 120% at 50% -10%, var(--bg-1), var(--bg-0) 70%);
+    color: var(--ink);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { position: fixed; inset: 0; display: block; touch-action: none; }
+  .hud {
+    position: fixed;
+    left: 24px; top: 22px;
+    z-index: 5;
+    pointer-events: none;
+    user-select: none;
+  }
+  .hud h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .hud h1 span { color: var(--accent); }
+  .hud p {
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--muted);
+    max-width: 320px;
+    line-height: 1.5;
+  }
+  .panel {
+    position: fixed;
+    right: 22px; top: 22px;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: rgba(18, 24, 42, 0.55);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+  }
+  .panel .row { display: flex; align-items: center; gap: 10px; }
+  .panel label {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    min-width: 64px;
+  }
+  .panel input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 130px; height: 4px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    outline: none;
+  }
+  .panel input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .panel input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border: none; border-radius: 50%;
+    background: #fff; cursor: pointer;
+  }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 11.5px; letter-spacing: .04em;
+    color: var(--ink);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 9px;
+    padding: 7px 11px;
+    cursor: pointer;
+    transition: background .18s, transform .12s, border-color .18s;
+  }
+  button:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.25); }
+  button:active { transform: translateY(1px); }
+  button.on { background: linear-gradient(90deg, rgba(110,231,255,0.25), rgba(183,148,246,0.25)); border-color: var(--accent); }
+  .hint {
+    position: fixed; left: 24px; bottom: 20px; z-index: 5;
+    font-size: 11.5px; color: var(--muted);
+    pointer-events: none; user-select: none;
+    line-height: 1.6;
+  }
+  .hint b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 640px) {
+    .hud p { max-width: 200px; }
+    .panel input[type=range] { width: 96px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div class="hud">
+    <h1>Cloth · <span>Verlet</span></h1>
+    <p>A grid of mass points and distance constraints, relaxed every frame. Pull it, push it, tear it.</p>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label>Wind</label>
+      <input id="wind" type="range" min="0" max="100" value="0">
+    </div>
+    <div class="row">
+      <label>Gravity</label>
+      <input id="grav" type="range" min="0" max="100" value="40">
+    </div>
+    <div class="row">
+      <label>Tear</label>
+      <input id="tear" type="range" min="20" max="200" value="80">
+    </div>
+    <div class="btns">
+      <button id="pinBtn" class="on">Pinned top</button>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="hint">
+    <b>Drag</b> to push the cloth &nbsp;·&nbsp; <b>Right-drag</b> or <b>Shift-drag</b> to tear &nbsp;·&nbsp; <b>Double-click</b> to grab a point
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener("resize", () => { resize(); rebuild(); });
+
+  // ---- Simulation parameters ----
+  const params = {
+    wind: 0,
+    gravity: 0.4,
+    tear: 80,
+    pinnedTop: true,
+  };
+
+  const ui = {
+    wind: document.getElementById("wind"),
+    grav: document.getElementById("grav"),
+    tear: document.getElementById("tear"),
+    pinBtn: document.getElementById("pinBtn"),
+    reset: document.getElementById("reset"),
+  };
+  ui.wind.addEventListener("input", () => params.wind = ui.wind.value / 100 * 1.4);
+  ui.grav.addEventListener("input", () => params.gravity = ui.grav.value / 100 * 1.0);
+  ui.tear.addEventListener("input", () => params.tear = +ui.tear.value);
+  ui.pinBtn.addEventListener("click", () => {
+    params.pinnedTop = !params.pinnedTop;
+    ui.pinBtn.classList.toggle("on", params.pinnedTop);
+    rebuild();
+  });
+  ui.reset.addEventListener("click", rebuild);
+
+  // ---- Cloth model ----
+  let points = [];
+  let sticks = [];
+  let cols = 0, rows = 0;
+  const SPACING = 16;
+  const ITER = 6;
+
+  function rebuild() {
+    cols = Math.max(12, Math.floor(Math.min(W * 0.62, 760) / SPACING));
+    rows = Math.max(10, Math.floor(cols * 0.66));
+    const startX = (W - (cols - 1) * SPACING) / 2;
+    const startY = Math.max(60, H * 0.16);
+
+    points = [];
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const px = startX + x * SPACING;
+        const py = startY + y * SPACING;
+        const pinned = params.pinnedTop && y === 0 && (x % 4 === 0 || x === cols - 1);
+        points.push({
+          x: px, y: py, ox: px, oy: py,
+          px: px, py: py, // previous (for verlet)
+          pinned,
+          gx: x, gy: y,
+        });
+      }
+    }
+    sticks = [];
+    const idx = (x, y) => y * cols + x;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        if (x < cols - 1) addStick(idx(x, y), idx(x + 1, y));
+        if (y < rows - 1) addStick(idx(x, y), idx(x, y + 1));
+      }
+    }
+  }
+
+  function addStick(a, b) {
+    const pa = points[a], pb = points[b];
+    const dx = pa.x - pb.x, dy = pa.y - pb.y;
+    sticks.push({ a, b, len: Math.hypot(dx, dy), alive: true });
+  }
+
+  // ---- Interaction ----
+  const mouse = {
+    x: 0, y: 0, px: 0, py: 0,
+    down: false, button: 0, shift: false,
+    grabbed: null,
+  };
+
+  function setMouse(e) {
+    const r = canvas.getBoundingClientRect();
+    mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+  }
+  canvas.addEventListener("pointermove", setMouse);
+  canvas.addEventListener("pointerdown", (e) => {
+    setMouse(e);
+    mouse.px = mouse.x; mouse.py = mouse.y;
+    mouse.down = true;
+    mouse.button = e.button;
+    mouse.shift = e.shiftKey;
+    canvas.setPointerCapture(e.pointerId);
+    if (e.detail === 2) {
+      // grab nearest point
+      mouse.grabbed = nearestPoint(mouse.x, mouse.y, 40);
+    }
+  });
+  canvas.addEventListener("pointerup", () => { mouse.down = false; mouse.grabbed = null; });
+  canvas.addEventListener("pointerleave", () => { mouse.down = false; });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  function nearestPoint(x, y, max) {
+    let best = null, bd = max * max;
+    for (const p of points) {
+      const dx = p.x - x, dy = p.y - y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  // ---- Physics ----
+  let t = 0;
+  function simulate() {
+    t += 0.016;
+    const windForce = params.wind * (0.6 + 0.4 * Math.sin(t * 1.7) + 0.3 * Math.sin(t * 3.1));
+    const g = params.gravity;
+
+    // integrate
+    for (const p of points) {
+      if (p.pinned) continue;
+      const vx = (p.x - p.ox) * 0.99;
+      const vy = (p.y - p.oy) * 0.99;
+      p.ox = p.x; p.oy = p.y;
+      p.x += vx + windForce;
+      p.y += vy + g;
+    }
+
+    // interaction forces
+    if (mouse.grabbed) {
+      mouse.grabbed.x = mouse.x;
+      mouse.grabbed.y = mouse.y;
+      mouse.grabbed.ox = mouse.x;
+      mouse.grabbed.oy = mouse.y;
+    } else if (mouse.down) {
+      const tearing = mouse.button === 2 || mouse.shift;
+      const r = tearing ? 14 : 26;
+      const r2 = r * r;
+      const mvx = mouse.x - mouse.px;
+      const mvy = mouse.y - mouse.py;
+      for (const p of points) {
+        if (p.pinned) continue;
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < r2) {
+          if (tearing) {
+            // mark adjacent sticks for removal
+            tearNearPoint(p);
+          } else {
+            p.x += mvx * 0.9;
+            p.y += mvy * 0.9;
+          }
+        }
+      }
+      if (tearing) resolveTears();
+    }
+
+    // constrain
+    for (let k = 0; k < ITER; k++) {
+      for (const s of sticks) {
+        if (!s.alive) continue;
+        const pa = points[s.a], pb = points[s.b];
+        const dx = pb.x - pa.x, dy = pb.y - pa.y;
+        const d = Math.hypot(dx, dy) || 0.0001;
+        const diff = (s.len - d) / d * 0.5;
+        const ox = dx * diff, oy = dy * diff;
+        if (!pa.pinned) { pa.x -= ox; pa.y -= oy; }
+        if (!pb.pinned) { pb.x += ox; pb.y += oy; }
+      }
+      // floor
+      for (const p of points) {
+        if (p.y > H - 4) { p.y = H - 4; p.oy = p.y + (p.y - p.oy) * 0.3; }
+      }
+    }
+
+    // tear-by-overstretch
+    for (const s of sticks) {
+      if (!s.alive) continue;
+      const pa = points[s.a], pb = points[s.b];
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const d = Math.hypot(dx, dy);
+      if (d > s.len + params.tear) s.alive = false;
+    }
+  }
+
+  function tearNearPoint(p) {
+    for (const s of sticks) {
+      if (!s.alive) continue;
+      if (s.a === points.indexOf(p) || s.b === points.indexOf(p)) s.alive = false;
+    }
+  }
+  function resolveTears() { /* handled inline */ }
+
+  // ---- Render ----
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    // subtle floor glow
+    const grd = ctx.createLinearGradient(0, H - 160, 0, H);
+    grd.addColorStop(0, "rgba(110,231,255,0)");
+    grd.addColorStop(1, "rgba(110,231,255,0.06)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, H - 160, W, 160);
+
+    // draw sticks as gradient lines
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = "round";
+    for (const s of sticks) {
+      if (!s.alive) continue;
+      const pa = points[s.a], pb = points[s.b];
+      const hue = 190 + (pa.gx / cols) * 80;
+      const sat = 70;
+      const lit = 52 + (pa.gy / rows) * 14;
+      ctx.strokeStyle = `hsl(${hue}, ${sat}%, ${lit}%)`;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+
+    // pins
+    for (const p of points) {
+      if (p.pinned) {
+        ctx.fillStyle = "rgba(232,236,245,0.95)";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // grabbed indicator
+    if (mouse.grabbed) {
+      ctx.strokeStyle = "rgba(110,231,255,0.8)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(mouse.grabbed.x, mouse.grabbed.y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // ---- Loop ----
+  function frame() {
+    simulate();
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  rebuild();
+  frame();
+})();
+</script>
+</body>
+</html>

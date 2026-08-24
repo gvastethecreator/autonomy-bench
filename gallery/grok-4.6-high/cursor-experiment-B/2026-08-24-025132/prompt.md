@@ -1,0 +1,1 @@
+Create an interactive cursor experiment in a single HTML file. Make design, pacing, composition, and implementation decisions yourself wherever details are unspecified, turning the idea into a coherent finished experience.

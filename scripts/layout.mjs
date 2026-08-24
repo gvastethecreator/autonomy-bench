@@ -1,4 +1,5 @@
 import { pickCellForMonth } from './run-month.mjs';
+import { staffPicksFromCells } from './staff-picks.mjs';
 
 export function slug(value) {
   return (
@@ -253,5 +254,6 @@ export function buildCatalogFromCells(cells, extras = {}) {
     dates,
     runs: [...runMap.values()],
     cells: revised,
+    staffPicks: staffPicksFromCells(revised),
   };
 }

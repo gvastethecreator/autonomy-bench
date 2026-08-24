@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Shader Playground — WebGL</title>
+<style>
+  :root{
+    --bg:#07070c;
+    --panel:rgba(20,21,33,0.62);
+    --panel-solid:#11121c;
+    --stroke:rgba(255,255,255,0.08);
+    --stroke-strong:rgba(255,255,255,0.16);
+    --txt:#e7e8f2;
+    --txt-dim:#9aa0b8;
+    --txt-faint:#646a85;
+    --accent:#7c5cff;
+    --accent2:#22d3ee;
+    --good:#5ef0b0;
+    --bad:#ff6b8b;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    background:
+      radial-gradient(1200px 700px at 78% -10%, rgba(124,92,255,0.18), transparent 60%),
+      radial-gradient(1000px 600px at 0% 110%, rgba(34,211,238,0.12), transparent 55%),
+      var(--bg);
+    color:var(--txt);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  /* ---------- top bar ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:18px;
+    padding:14px 22px;
+    border-bottom:1px solid var(--stroke);
+    background:rgba(8,8,14,0.55);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    z-index:5;position:relative;
+  }
+  .brand{display:flex;flex-direction:column;line-height:1.05;}
+  .brand .logo{
+    font-weight:800;letter-spacing:0.5px;font-size:18px;
+    background:linear-gradient(120deg,#fff,#b9a8ff 40%,#7be8ff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .brand .sub{font-size:11px;color:var(--txt-faint);letter-spacing:1.6px;text-transform:uppercase;margin-top:3px;}
+  .spacer{flex:1;}
+  .controls{display:flex;gap:8px;align-items:center;}
+  .btn{
+    font-family:var(--sans);font-size:12.5px;font-weight:600;
+    color:var(--txt);background:rgba(255,255,255,0.05);
+    border:1px solid var(--stroke-strong);border-radius:10px;
+    padding:8px 13px;cursor:pointer;display:flex;align-items:center;gap:7px;
+    transition:.18s ease;
+  }
+  .btn:hover{background:rgba(255,255,255,0.10);border-color:rgba(255,255,255,0.28);transform:translateY(-1px);}
+  .btn:active{transform:translateY(0);}
+  .btn .ico{width:13px;height:13px;display:inline-block;opacity:.85;}
+  .btn.primary{
+    background:linear-gradient(120deg,rgba(124,92,255,0.9),rgba(34,211,238,0.75));
+    border-color:transparent;color:#0a0a12;font-weight:700;
+  }
+  .btn.primary:hover{filter:brightness(1.08);}
+  .hint{font-size:11px;color:var(--txt-faint);max-width:240px;text-align:right;line-height:1.4;}
+
+  /* ---------- layout ---------- */
+  .stage{
+    display:grid;
+    grid-template-columns:248px 1fr 380px;
+    height:calc(100vh - 61px);
+    min-height:0;
+  }
+  @media (max-width:1080px){
+    .stage{grid-template-columns:200px 1fr;}
+    .editor-pane{display:none;}
+  }
+
+  /* ---------- gallery ---------- */
+  .gallery{
+    border-right:1px solid var(--stroke);
+    padding:14px 12px;overflow-y:auto;
+    background:rgba(10,10,16,0.35);
+  }
+  .gallery h3,.editor-pane h3{
+    font-size:10.5px;letter-spacing:2px;color:var(--txt-faint);
+    text-transform:uppercase;margin:4px 6px 12px;font-weight:700;
+  }
+  .card{
+    position:relative;border-radius:14px;overflow:hidden;
+    border:1px solid var(--stroke);margin-bottom:11px;cursor:pointer;
+    transition:.2s cubic-bezier(.2,.7,.3,1);
+    background:var(--panel-solid);
+  }
+  .card:hover{transform:translateY(-2px);border-color:var(--stroke-strong);}
+  .card.active{border-color:rgba(124,92,255,0.8);box-shadow:0 0 0 1px rgba(124,92,255,0.5),0 8px 30px rgba(124,92,255,0.25);}
+  .card .swatch{height:78px;position:relative;}
+  .card .swatch::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 40%,rgba(0,0,0,0.55));}
+  .card .swatch .glyph{
+    position:absolute;right:9px;bottom:8px;font-size:15px;opacity:.9;
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,.6));z-index:2;
+  }
+  .card .meta{padding:9px 11px 11px;position:relative;z-index:2;margin-top:-26px;}
+  .card .name{font-size:13px;font-weight:700;color:#fff;}
+  .card .tag{
+    display:inline-block;margin-top:5px;font-size:9.5px;letter-spacing:1px;
+    text-transform:uppercase;color:var(--txt-dim);
+    background:rgba(255,255,255,0.07);border:1px solid var(--stroke);
+    padding:2px 7px;border-radius:20px;
+  }
+  .card.active .tag{color:#cdbcff;border-color:rgba(124,92,255,0.5);}
+
+  /* ---------- canvas ---------- */
+  .canvas-pane{position:relative;overflow:hidden;background:#000;}
+  #gl{display:block;width:100%;height:100%;}
+  .vignette{
+    position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 50%,transparent 55%,rgba(0,0,0,0.55));
+    mix-blend-mode:multiply;
+  }
+  .grain{
+    position:absolute;inset:0;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  .wipe{
+    position:absolute;inset:0;pointer-events:none;opacity:0;
+    background:linear-gradient(105deg,transparent 42%,rgba(124,92,255,0.55) 50%,transparent 58%);
+    mix-blend-mode:screen;
+  }
+  .wipe.go{animation:wipe .55s cubic-bezier(.3,.7,.3,1);}
+  @keyframes wipe{0%{opacity:0;transform:translateX(-65%);}28%{opacity:1;}100%{opacity:0;transform:translateX(65%);}}
+  .hud{
+    position:absolute;left:16px;bottom:14px;z-index:3;
+    font-family:var(--mono);font-size:11px;color:rgba(255,255,255,0.7);
+    background:rgba(8,8,14,0.5);border:1px solid var(--stroke);
+    padding:7px 11px;border-radius:9px;backdrop-filter:blur(8px);
+    display:flex;gap:14px;align-items:center;pointer-events:none;
+  }
+  .hud b{color:#fff;font-weight:600;}
+  .hud .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good);display:inline-block;}
+  .hud .dot.paused{background:#ffcf5e;box-shadow:0 0 8px #ffcf5e;}
+  .title-float{
+    position:absolute;left:18px;top:16px;z-index:3;pointer-events:none;
+  }
+  .title-float .t{font-size:15px;font-weight:800;color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.7);}
+  .title-float .d{font-size:11.5px;color:rgba(255,255,255,0.72);margin-top:3px;text-shadow:0 1px 8px rgba(0,0,0,.8);max-width:340px;}
+
+  /* ---------- editor ---------- */
+  .editor-pane{
+    border-left:1px solid var(--stroke);
+    display:flex;flex-direction:column;min-height:0;
+    background:rgba(10,10,16,0.4);
+  }
+  .editor-wrap{flex:1;display:flex;flex-direction:column;min-height:0;padding:0 12px;}
+  .ed-head{display:flex;align-items:center;justify-content:space-between;margin:4px 6px 8px;}
+  textarea#code{
+    flex:1;width:100%;resize:none;border-radius:12px;
+    border:1px solid var(--stroke);background:rgba(4,4,9,0.7);
+    color:#d6dcf5;font-family:var(--mono);font-size:12px;line-height:1.55;
+    padding:14px;tab-size:2;outline:none;min-height:0;
+    box-shadow:inset 0 0 30px rgba(0,0,0,0.4);
+  }
+  textarea#code:focus{border-color:rgba(124,92,255,0.55);}
+  .console{
+    margin:10px 6px 6px;border-radius:10px;padding:10px 12px;
+    font-family:var(--mono);font-size:11px;line-height:1.45;
+    border:1px solid var(--stroke);min-height:54px;max-height:120px;overflow-y:auto;
+    background:rgba(4,4,9,0.6);white-space:pre-wrap;
+  }
+  .console.ok{color:var(--good);}
+  .console.err{color:var(--bad);border-color:rgba(255,107,139,0.4);}
+  .console .muted{color:var(--txt-faint);}
+  .ed-foot{display:flex;gap:8px;padding:8px 12px 14px;}
+  .ed-foot .btn{flex:1;justify-content:center;}
+
+  /* scrollbars */
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:8px;}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.2);}
+  ::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo">SHADER PLAYGROUND</span>
+      <span class="sub">WebGL · live fragment lab</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="hint">Drag the canvas to steer the light. Edit the shader on the right — it recompiles live.</div>
+    <div class="controls">
+      <button class="btn" id="playBtn" title="Play / Pause (space)">
+        <svg class="ico" id="playIco" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        <span id="playLbl">Pause</span>
+      </button>
+      <button class="btn" id="randomBtn" title="Randomize palette">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+        <span>Shuffle</span>
+      </button>
+      <button class="btn primary" id="runBtn" title="Recompile (Ctrl+Enter)">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <span>Run</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <!-- gallery -->
+    <aside class="gallery">
+      <h3>Presets</h3>
+      <div id="cards"></div>
+    </aside>
+
+    <!-- canvas -->
+    <main class="canvas-pane">
+      <canvas id="gl"></canvas>
+      <div class="vignette"></div>
+      <div class="grain"></div>
+      <div class="wipe" id="wipe"></div>
+      <div class="title-float">
+        <div class="t" id="floatTitle">Aurora Plasma</div>
+        <div class="d" id="floatDesc">Layered sine fields folded into an iridescent ribbon.</div>
+      </div>
+      <div class="hud">
+        <span><span class="dot" id="hudDot"></span> <b id="hudState">live</b></span>
+        <span id="hudRes">—</span>
+        <span id="hudFps">— fps</span>
+        <span id="hudTime">t 0.0s</span>
+      </div>
+    </main>
+
+    <!-- editor -->
+    <aside class="editor-pane">
+      <h3>Fragment Shader</h3>
+      <div class="editor-wrap">
+        <div class="ed-head">
+          <span style="font-size:11px;color:var(--txt-faint);font-family:var(--mono);">precision highp float · GLSL ES 1.00</span>
+          <span style="font-size:11px;color:var(--txt-faint);" id="edInfo"></span>
+        </div>
+        <textarea id="code" spellcheck="false" autocomplete="off"></textarea>
+        <div class="console ok" id="console"><span class="muted">ready — editing recompiles automatically.</span></div>
+      </div>
+      <div class="ed-foot">
+        <button class="btn" id="resetBtn">Reset preset</button>
+        <button class="btn" id="copyBtn">Copy</button>
+      </div>
+    </aside>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- preset shaders ---------------- */
+  const VERT = `attribute vec2 a_pos; void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
+
+  const presets = [
+    {
+      name:"Aurora Plasma",
+      tag:"fields",
+      glyph:"❂",
+      desc:"Layered sine fields folded into an iridescent ribbon.",
+      gradient:"linear-gradient(135deg,#1b2a6b,#7c5cff 55%,#22d3ee)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  float t = u_time*0.5;
+  vec2 m = u_mouse/u_resolution - 0.5;
+  uv += m*0.25;
+
+  float v = 0.0;
+  v += sin(uv.x*3.0 + t);
+  v += sin((uv.y*3.0 + t)*0.7);
+  v += sin((uv.x + uv.y)*3.0 + t*1.3);
+  float cx = uv.x + 0.5*sin(t*0.3);
+  float cy = uv.y + 0.5*cos(t*0.4);
+  v += sin(sqrt(cx*cx + cy*cy)*8.0 - t*2.0);
+  v *= 0.5;
+
+  vec3 col = 0.5 + 0.5*cos(vec3(0.0,3.14,6.28) + v*3.0);
+  col = mix(col, vec3(0.04,0.02,0.13), 0.32);
+  col += 0.08*vec3(0.6,0.4,1.0)*sin(v*6.0 - t*3.0);
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Twisted Torus",
+      tag:"raymarch",
+      glyph:"◍",
+      desc:"A rotating torus lit by fresnel rim and a sweeping key light.",
+      gradient:"linear-gradient(135deg,#0b1d2e,#1f6f8b 50%,#7be8ff)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+float sdTorus(vec3 p, vec2 t){
+  vec2 q = vec2(length(p.xz) - t.x, p.y);
+  return length(q) - t.y;
+}
+float map(vec3 p){
+  float a = u_time*0.4;
+  mat2 rot = mat2(cos(a),-sin(a),sin(a),cos(a));
+  p.xz = rot*p.xz;
+  p.xy = rot*p.xy;
+  return sdTorus(p, vec2(1.0,0.36));
+}
+vec3 calcNormal(vec3 p){
+  vec2 e = vec2(0.001,0.0);
+  return normalize(vec3(
+    map(p+e.xyy)-map(p-e.xyy),
+    map(p+e.yxy)-map(p-e.yxy),
+    map(p+e.yyx)-map(p-e.yyx)));
+}
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  vec3 ro = vec3(0.0,0.0,3.0);
+  vec3 rd = normalize(vec3(uv,-1.6));
+  float t = 0.0;
+  for(int i=0;i<90;i++){
+    vec3 p = ro + rd*t;
+    float d = map(p);
+    if(d < 0.001) break;
+    t += d;
+    if(t > 20.0) break;
+  }
+  vec3 col = vec3(0.02,0.03,0.06);
+  if(t < 20.0){
+    vec3 p = ro + rd*t;
+    vec3 n = calcNormal(p);
+    vec3 l = normalize(vec3(sin(u_time*0.6),0.7,cos(u_time*0.6)));
+    float diff = max(dot(n,l),0.0);
+    float fres = pow(1.0 - max(dot(n,-rd),0.0),3.0);
+    vec3 base = 0.5 + 0.5*cos(vec3(0.0,2.0,4.0) + p.y + p.z*1.5 + u_time*0.3);
+    col = base*(0.18 + 0.82*diff) + fres*vec3(0.35,0.65,1.0);
+    col += 0.12*vec3(1.0,0.7,0.4)*pow(max(dot(reflect(rd,n),l),0.0),24.0);
+  }
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Julia Bloom",
+      tag:"fractal",
+      glyph:"❋",
+      desc:"An animated Julia set stained by a slow colour wheel.",
+      gradient:"linear-gradient(135deg,#2a0b3a,#ff5ca8 55%,#ffd36b)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  vec2 m = (u_mouse/u_resolution - 0.5);
+  vec2 c = vec2(0.7885*cos(u_time*0.2 + m.x*3.0), 0.7885*sin(u_time*0.2 + m.y*3.0));
+  vec2 z = uv*1.4;
+  float it = 0.0;
+  for(int i=0;i<140;i++){
+    z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+    if(dot(z,z) > 16.0) break;
+    it += 1.0;
+  }
+  float f = it/140.0;
+  float glow = exp(-f*4.0);
+  vec3 col = 0.5 + 0.5*cos(vec3(0.0,0.9,1.8) + f*9.0 + u_time*0.3);
+  col *= 0.25 + 0.75*f;
+  col += glow*vec3(1.0,0.85,0.6)*0.6;
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Cell Voronoi",
+      tag:"pattern",
+      glyph:"▦",
+      desc:"Drifting Voronoi cells with a hot molten border.",
+      gradient:"linear-gradient(135deg,#1a0d05,#ff8a3c 55%,#ffe27a)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+vec2 hash2(vec2 p){
+  p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+  return fract(sin(p)*43758.5453);
+}
+float voro(vec2 x){
+  vec2 n = floor(x);
+  vec2 f = fract(x);
+  float md = 8.0;
+  for(int j=-1;j<=1;j++)
+  for(int i=-1;i<=1;i++){
+    vec2 g = vec2(float(i),float(j));
+    vec2 o = hash2(n+g);
+    o = 0.5 + 0.5*sin(6.2831*o + u_time);
+    vec2 r = g + o - f;
+    float d = dot(r,r);
+    md = min(md,d);
+  }
+  return sqrt(md);
+}
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  float d = voro(uv*5.0);
+  vec3 col = mix(vec3(0.05,0.02,0.08), vec3(0.95,0.42,0.18), d);
+  col += 0.12*sin(d*40.0 - u_time*3.0);
+  col = pow(col, vec3(0.85));
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Nebula Drift",
+      tag:"noise",
+      glyph:"✶",
+      desc:"Domain-warped fBm clouds with scattered star points.",
+      gradient:"linear-gradient(135deg,#05010f,#5b2a9e 55%,#ff7a59)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i+vec2(0,0)),hash(i+vec2(1,0)),u.x),
+             mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);
+}
+float fbm(vec2 p){
+  float v=0.0, a=0.5;
+  for(int i=0;i<6;i++){ v+=a*noise(p); p*=2.0; a*=0.5; }
+  return v;
+}
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  vec2 m = u_mouse/u_resolution - 0.5;
+  float t = u_time*0.1;
+  vec2 q = vec2(fbm(uv*2.0 + t + m), fbm(uv*2.0 + vec2(5.2,1.3) - t));
+  float n = fbm(uv*3.0 + q*2.0);
+  vec3 col = mix(vec3(0.02,0.0,0.09), vec3(0.32,0.10,0.55), n);
+  col = mix(col, vec3(0.95,0.42,0.22), pow(n,3.0));
+  col += vec3(0.3,0.5,0.9)*pow(n,6.0)*0.5;
+  float s = hash(floor((uv+m*0.2)*220.0));
+  col += vec3(1.0)*(s-0.992)*180.0;
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Light Tunnel",
+      tag:"warp",
+      glyph:"◉",
+      desc:"A plunging tunnel wrapped in travelling colour bands.",
+      gradient:"linear-gradient(135deg,#021318,#0f8f8a 50%,#7be8ff)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  vec2 m = (u_mouse/u_resolution - 0.5)*0.4;
+  uv -= m;
+  float a = atan(uv.y, uv.x);
+  float r = length(uv);
+  float u = 0.32/r + u_time*0.6;
+  float v = a*1.5;
+  vec3 col = 0.5 + 0.5*cos(vec3(0.0,2.0,4.0) + u*4.0 + v + u_time*0.2);
+  col *= smoothstep(0.0,0.45,r);
+  col += (1.0 - smoothstep(0.0,0.12,r))*vec3(0.1,0.3,0.4);
+  gl_FragColor = vec4(col,1.0);
+}`
+    },
+    {
+      name:"Liquid Ripple",
+      tag:"fluid",
+      glyph:"≋",
+      desc:"Concentric waves refracting a caustic surface.",
+      gradient:"linear-gradient(135deg,#021a24,#1f9fd0 55%,#a8f0ff)",
+      source:`precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+
+void main(){
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_resolution)/u_resolution.y;
+  vec2 m = (u_mouse/u_resolution - 0.5)*1.5;
+  float d = length(uv - m);
+  float w = sin(d*28.0 - u_time*4.0)*exp(-d*2.2);
+  vec2 dir = (uv - m)/(d + 0.001);
+  vec2 uv2 = uv + dir*w*0.03;
+  float c = 0.5 + 0.5*sin(11.0*uv2.x + sin(11.0*uv2.y + u_time*1.5));
+  vec3 col = mix(vec3(0.0,0.08,0.18), vec3(0.16,0.62,0.82), c);
+  col += vec3(1.0)*max(w,0.0)*0.35;
+  col += vec3(0.4,0.8,1.0)*smoothstep(0.0,0.04,abs(d-0.45))*0.04;
+  gl_FragColor = vec4(col,1.0);
+}`
+    }
+  ];
+
+  /* ---------------- webgl ---------------- */
+  const canvas = document.getElementById("gl");
+  const gl = canvas.getContext("webgl", {antialias:true, preserveDrawingBuffer:false, powerPreference:"high-performance"});
+  const fail = (msg)=>{ document.body.innerHTML = '<div style="padding:40px;font-family:monospace;color:#ff9bb0">WebGL unavailable: '+msg+'</div>'; };
+  if(!gl){ fail("context could not be created."); return; }
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+      const log = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      throw new Error(log || "compile error");
+    }
+    return sh;
+  }
+
+  function buildProgram(fsSrc){
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.bindAttribLocation(prog, 0, "a_pos");
+    gl.linkProgram(prog);
+    gl.deleteShader(vs); gl.deleteShader(fs);
+    if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
+      const log = gl.getProgramInfoLog(prog);
+      gl.deleteProgram(prog);
+      throw new Error(log || "link error");
+    }
+    return {
+      program: prog,
+      a_pos: 0,
+      u_resolution: gl.getUniformLocation(prog, "u_resolution"),
+      u_time: gl.getUniformLocation(prog, "u_time"),
+      u_mouse: gl.getUniformLocation(prog, "u_mouse")
+    };
+  }
+
+  let cur = null;            // current program wrapper
+  let curSource = "";        // source currently running
+  let lastGood = presets[0].source;
+
+  function setProgram(fsSrc){
+    const p = buildProgram(fsSrc);
+    if(cur) gl.deleteProgram(cur.program);
+    cur = p;
+    curSource = fsSrc;
+  }
+
+  /* ---------------- state ---------------- */
+  const state = {
+    time:0, playing:true, last:performance.now(),
+    mouse:{x:0,y:0}, frames:0, fpsAcc:0, fps:0
+  };
+
+  /* ---------------- resize ---------------- */
+  function resize(){
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    const w = Math.max(1, Math.floor(canvas.clientWidth*dpr));
+    const h = Math.max(1, Math.floor(canvas.clientHeight*dpr));
+    if(canvas.width!==w || canvas.height!==h){
+      canvas.width=w; canvas.height=h;
+    }
+    document.getElementById("hudRes").textContent = w+"×"+h;
+  }
+  new ResizeObserver(resize).observe(canvas);
+
+  /* ---------------- render loop ---------------- */
+  function frame(now){
+    const dt = Math.min((now - state.last)/1000, 0.05);
+    state.last = now;
+    if(state.playing) state.time += dt;
+
+    resize();
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.useProgram(cur.program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.enableVertexAttribArray(cur.a_pos);
+    gl.vertexAttribPointer(cur.a_pos, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform2f(cur.u_resolution, canvas.width, canvas.height);
+    gl.uniform1f(cur.u_time, state.time);
+    gl.uniform2f(cur.u_mouse, state.mouse.x, state.mouse.y);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // fps
+    state.frames++; state.fpsAcc += dt;
+    if(state.fpsAcc >= 0.5){
+      state.fps = Math.round(state.frames/state.fpsAcc);
+      state.frames=0; state.fpsAcc=0;
+      document.getElementById("hudFps").textContent = state.fps+" fps";
+    }
+    document.getElementById("hudTime").textContent = "t "+state.time.toFixed(1)+"s";
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------------- console / editor ---------------- */
+  const consoleEl = document.getElementById("console");
+  const codeEl = document.getElementById("code");
+  const edInfo = document.getElementById("edInfo");
+  function logMsg(kind, text){
+    consoleEl.className = "console "+(kind==="err"?"err":"ok");
+    consoleEl.textContent = text;
+  }
+  function lineCount(s){ return s.split("\n").length; }
+
+  let debounce=null;
+  function recompile(src, fromUser){
+    try{
+      setProgram(src);
+      lastGood = src;
+      logMsg("ok", "✓ compiled — "+lineCount(src)+" lines, "+ (fromUser?"live edit":"preset"));
+    }catch(e){
+      logMsg("err", "✗ "+(e.message||e).trim());
+    }
+  }
+  function scheduleCompile(){
+    clearTimeout(debounce);
+    debounce = setTimeout(()=>recompile(codeEl.value, true), 380);
+  }
+  codeEl.addEventListener("input", scheduleCompile);
+  codeEl.addEventListener("keydown", (e)=>{
+    if((e.ctrlKey||e.metaKey) && e.key==="Enter"){ e.preventDefault(); clearTimeout(debounce); recompile(codeEl.value,true); }
+    if(e.key==="Tab"){ e.preventDefault(); const s=codeEl.selectionStart,en=codeEl.selectionEnd;
+      codeEl.value=codeEl.value.slice(0,s)+"  "+codeEl.value.slice(en);
+      codeEl.selectionStart=codeEl.selectionEnd=s+2; }
+  });
+
+  /* ---------------- gallery ---------------- */
+  const cardsEl = document.getElementById("cards");
+  const floatTitle = document.getElementById("floatTitle");
+  const floatDesc = document.getElementById("floatDesc");
+  const edInfoEl = document.getElementById("edInfo");
+  let activeIndex = 0;
+
+  presets.forEach((p,i)=>{
+    const c = document.createElement("div");
+    c.className = "card" + (i===0?" active":"");
+    c.innerHTML =
+      '<div class="swatch" style="background:'+p.gradient+'"><span class="glyph">'+p.glyph+'</span></div>'+
+      '<div class="meta"><div class="name">'+p.name+'</div><span class="tag">'+p.tag+'</span></div>';
+    c.addEventListener("click", ()=>selectPreset(i, true));
+    cardsEl.appendChild(c);
+  });
+
+  const wipe = document.getElementById("wipe");
+  function selectPreset(i, animate){
+    activeIndex = i;
+    [...cardsEl.children].forEach((el,idx)=>el.classList.toggle("active", idx===i));
+    const p = presets[i];
+    codeEl.value = p.source;
+    edInfo.textContent = p.name;
+    floatTitle.textContent = p.name;
+    floatDesc.textContent = p.desc;
+    recompile(p.source, false);
+    if(animate){
+      wipe.classList.remove("go"); void wipe.offsetWidth; wipe.classList.add("go");
+    }
+  }
+
+  /* ---------------- mouse / touch ---------------- */
+  function setMouse(clientX, clientY){
+    const r = canvas.getBoundingClientRect();
+    state.mouse.x = (clientX - r.left) * (canvas.width / Math.max(r.width,1));
+    state.mouse.y = (r.height - (clientY - r.top)) * (canvas.height / Math.max(r.height,1));
+  }
+  canvas.addEventListener("mousemove", e=>setMouse(e.clientX,e.clientY));
+  canvas.addEventListener("touchmove", e=>{ if(e.touches[0]) setMouse(e.touches[0].clientX,e.touches[0].clientY); }, {passive:true});
+
+  /* ---------------- buttons ---------------- */
+  const playBtn = document.getElementById("playBtn");
+  const playLbl = document.getElementById("playLbl");
+  const playIco = document.getElementById("playIco");
+  const hudDot = document.getElementById("hudDot");
+  const hudState = document.getElementById("hudState");
+  function setPlaying(on){
+    state.playing = on;
+    playLbl.textContent = on?"Pause":"Play";
+    playIco.innerHTML = on
+      ? '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>'
+      : '<path d="M8 5v14l11-7z"/>';
+    hudDot.classList.toggle("paused", !on);
+    hudState.textContent = on?"live":"paused";
+  }
+  playBtn.addEventListener("click", ()=>setPlaying(!state.playing));
+
+  document.getElementById("runBtn").addEventListener("click", ()=>{ clearTimeout(debounce); recompile(codeEl.value,true); });
+  document.getElementById("resetBtn").addEventListener("click", ()=>selectPreset(activeIndex,false));
+  document.getElementById("copyBtn").addEventListener("click", ()=>{
+    navigator.clipboard?.writeText(codeEl.value);
+    logMsg("ok","✓ copied shader source to clipboard");
+  });
+
+  const ICON_PLAY='<path d="M8 5v14l11-7z"/>';
+  const ICON_PAUSE='<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>';
+
+  /* shuffle: nudge the time + retrigger wipe for a fresh feel */
+  document.getElementById("randomBtn").addEventListener("click", ()=>{
+    state.time += 1.37;
+    wipe.classList.remove("go"); void wipe.offsetWidth; wipe.classList.add("go");
+    logMsg("ok","✓ shuffled · t = "+state.time.toFixed(1)+"s");
+  });
+
+  window.addEventListener("keydown", (e)=>{
+    if(e.code==="Space" && e.target.tagName!=="TEXTAREA"){ e.preventDefault(); setPlaying(!state.playing); }
+  });
+
+  /* ---------------- boot ---------------- */
+  setProgram(presets[0].source);
+  codeEl.value = presets[0].source;
+  edInfo.textContent = presets[0].name;
+  resize();
+  state.mouse.x = canvas.width*0.5; state.mouse.y = canvas.height*0.5;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Infinite Self-Navigating Maze</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070b; overflow: hidden; }
+  #c { display: block; width: 100vw; height: 100vh; }
+  #hud {
+    position: fixed; left: 14px; top: 12px; z-index: 10;
+    font: 12px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color: #9fb4c9; text-shadow: 0 1px 2px #000; pointer-events: none;
+    letter-spacing: .4px;
+  }
+  #hud b { color: #e7f0fa; font-weight: 600; }
+  #hud .dim { color: #5e7287; }
+  #title {
+    position: fixed; right: 16px; bottom: 14px; z-index: 10; text-align: right;
+    font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    color: #4f6478; text-shadow: 0 1px 2px #000; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <b>Infinite Maze</b> <span class="dim">— auto-traveling</span><br/>
+  <span class="dim">depth</span> <b id="depth">0</b> &nbsp; <span class="dim">turns</span> <b id="turns">0</b><br/>
+  <span class="dim">cells in view</span> <b id="cells">0</b>
+</div>
+<div id="title">three.js · procedural infinite maze</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const CELL = 4;          // world units per maze cell
+const WALL_H = 3.2;      // wall height
+const WALL_T = 0.28;     // wall thickness
+const EYE = 1.55;        // camera eye height
+const VIEW_R = 14;       // chunk view radius (cells)
+const MOVE_SPEED = 3.4;  // cells / second
+const TURN_SPEED = 6.0;  // radians / second
+
+// ---------------------------------------------------------------------------
+// Deterministic hashing -> consistent infinite maze
+// ---------------------------------------------------------------------------
+function hash(x, y, s) {
+  let h = (x | 0) * 374761393 + (y | 0) * 668265263 + (s | 0) * 1274126177;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = h ^ (h >>> 16);
+  return h >>> 0;
+}
+// Each cell removes (opens) its North and/or East wall based on two hash bits.
+// This makes every undirected edge "owned" by exactly one cell, yielding a
+// globally consistent, fully-connected infinite maze (no isolated cells).
+function openN(x, y) { return (hash(x, y, 1) & 1) === 1; }
+function openE(x, y) { return (hash(x, y, 2) & 1) === 1; }
+
+// Resolve a cell's four openings.
+function openings(x, y) {
+  let n = openN(x, y);
+  let e = openE(x, y);
+  // Guarantee at least one of N/E is open so the cell is never sealed.
+  if (!n && !e) {
+    if ((hash(x, y, 9) & 1) === 1) n = true; else e = true;
+  }
+  const s = openN(x, y - 1);     // south open if cell below opened its north
+  const w = openE(x - 1, y);     // west open if left cell opened its east
+  return { n, e, s, w };
+}
+
+// ---------------------------------------------------------------------------
+// Renderer / scene
+// ---------------------------------------------------------------------------
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const FOG = new THREE.Color(0x0a0e16);
+scene.background = FOG;
+scene.fog = new THREE.Fog(FOG, 3, VIEW_R * CELL * 0.92);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 400);
+
+// Lights ---------------------------------------------------------------------
+scene.add(new THREE.AmbientLight(0x223047, 0.55));
+const hemi = new THREE.HemisphereLight(0x5577aa, 0x10131c, 0.5);
+scene.add(hemi);
+const torch = new THREE.PointLight(0xffd9a0, 2.4, 26, 1.6);
+scene.add(torch);
+
+// ---------------------------------------------------------------------------
+// Procedural textures
+// ---------------------------------------------------------------------------
+function brickTexture() {
+  const s = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#2a2f3a'; g.fillRect(0, 0, s, s);
+  const rows = 6, bh = s / rows;
+  for (let r = 0; r < rows; r++) {
+    const off = (r % 2) * (s / 8);
+    for (let x = -1; x < 9; x++) {
+      const bx = x * (s / 4) + off;
+      const shade = 38 + ((hash(r, x, 3) % 22));
+      g.fillStyle = `rgb(${shade},${shade + 6},${shade + 14})`;
+      g.fillRect(bx + 1.5, r * bh + 1.5, s / 4 - 3, bh - 3);
+    }
+  }
+  // specks
+  for (let i = 0; i < 220; i++) {
+    const v = 20 + (hash(i, 7, 5) % 30);
+    g.fillStyle = `rgba(${v},${v},${v},0.5)`;
+    g.fillRect((hash(i, 1, 2) % s), (hash(i, 2, 4) % s), 1, 1);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 1);
+  t.anisotropy = 4;
+  return t;
+}
+function floorTexture() {
+  const s = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#15181f'; g.fillRect(0, 0, s, s);
+  for (let i = 0; i < 900; i++) {
+    const v = 18 + (hash(i, 3, 6) % 26);
+    g.fillStyle = `rgba(${v},${v},${v + 4},0.6)`;
+    g.fillRect(hash(i, 4, 1) % s, hash(i, 5, 8) % s, 1.4, 1.4);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(1, 1);
+  return t;
+}
+
+const wallMat = new THREE.MeshStandardMaterial({ map: brickTexture(), roughness: 0.95, metalness: 0.0 });
+const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 1.0 });
+const ceilMat = new THREE.MeshStandardMaterial({ color: 0x0c0f16, roughness: 1.0 });
+
+// Shared geometries
+const geoFloor = new THREE.BoxGeometry(CELL, 0.2, CELL);
+const geoCeil  = new THREE.BoxGeometry(CELL, 0.2, CELL);
+const geoNS    = new THREE.BoxGeometry(CELL + WALL_T, WALL_H, WALL_T);
+const geoEW    = new THREE.BoxGeometry(WALL_T, WALL_H, CELL + WALL_T);
+
+// ---------------------------------------------------------------------------
+// Chunk streaming
+// ---------------------------------------------------------------------------
+const cellMeshes = new Map();
+const key = (x, y) => x + ',' + y;
+
+function buildCell(x, y) {
+  const grp = new THREE.Group();
+  grp.position.set(x * CELL, 0, y * CELL);
+  const o = openings(x, y);
+
+  const floor = new THREE.Mesh(geoFloor, floorMat);
+  floor.position.set(0, -0.1, 0);
+  grp.add(floor);
+  const ceil = new THREE.Mesh(geoCeil, ceilMat);
+  ceil.position.set(0, WALL_H + 0.1, 0);
+  grp.add(ceil);
+
+  if (!o.n) { const m = new THREE.Mesh(geoNS, wallMat); m.position.set(0, WALL_H / 2, CELL / 2); grp.add(m); }
+  if (!o.s) { const m = new THREE.Mesh(geoNS, wallMat); m.position.set(0, WALL_H / 2, -CELL / 2); grp.add(m); }
+  if (!o.e) { const m = new THREE.Mesh(geoEW, wallMat); m.position.set(CELL / 2, WALL_H / 2, 0); grp.add(m); }
+  if (!o.w) { const m = new THREE.Mesh(geoEW, wallMat); m.position.set(-CELL / 2, WALL_H / 2, 0); grp.add(m); }
+
+  scene.add(grp);
+  cellMeshes.set(key(x, y), grp);
+}
+
+function updateWindow(cx, cy) {
+  // add newly-in-range cells
+  for (let dx = -VIEW_R; dx <= VIEW_R; dx++) {
+    for (let dy = -VIEW_R; dy <= VIEW_R; dy++) {
+      if (dx * dx + dy * dy > VIEW_R * VIEW_R) continue;
+      const x = cx + dx, y = cy + dy, k = key(x, y);
+      if (!cellMeshes.has(k)) buildCell(x, y);
+    }
+  }
+  // remove out-of-range cells
+  for (const [k, grp] of cellMeshes) {
+    const [gx, gy] = k.split(',').map(Number);
+    const dx = gx - cx, dy = gy - cy;
+    if (dx * dx + dy * dy > (VIEW_R + 1) * (VIEW_R + 1)) {
+      scene.remove(grp);
+      cellMeshes.delete(k);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Self-navigating walker
+// ---------------------------------------------------------------------------
+const DIRS = [
+  { x: 0, y: 1 },   // N
+  { x: 1, y: 0 },   // E
+  { x: 0, y: -1 },  // S
+  { x: -1, y: 0 },  // W
+];
+
+let cx = 0, cy = 0;
+let pos = new THREE.Vector3(cx * CELL, EYE, cy * CELL);
+let dir = DIRS[0];              // current travel direction
+let fromDir = { x: 0, y: -1 }; // where we came from (reverse)
+let target = new THREE.Vector3(cx * CELL, EYE, cy * CELL);
+let mode = 'arrive';           // 'arrive' | 'moving' | 'turning'
+let curAngle = Math.atan2(dir.x, dir.y);
+let tgtAngle = curAngle;
+let step = 0;
+let turnCount = 0;
+
+const elDepth = document.getElementById('depth');
+const elTurns = document.getElementById('turns');
+const elCells = document.getElementById('cells');
+
+function chooseNext(x, y, back) {
+  const o = openings(x, y);
+  const open = [];
+  if (o.n) open.push(DIRS[0]);
+  if (o.e) open.push(DIRS[1]);
+  if (o.s) open.push(DIRS[2]);
+  if (o.w) open.push(DIRS[3]);
+  const fwd = open.filter(d => !(d.x === -back.x && d.y === -back.y));
+  const pool = fwd.length ? fwd : open;
+  // deterministic-but-varied pick
+  return pool[hash(x, y, step + 13) % pool.length];
+}
+
+function onArrive() {
+  fromDir = { x: -dir.x, y: -dir.y };
+  const next = chooseNext(cx, cy, fromDir);
+  dir = next;
+  tgtAngle = Math.atan2(dir.x, dir.y);
+  step++;
+  // detect a turn for the HUD
+  const movingBack = (dir.x === fromDir.x && dir.y === fromDir.y);
+  if (!movingBack) turnCount++;
+  mode = 'moving';
+  target.set((cx + dir.x) * CELL, EYE, (cy + dir.y) * CELL);
+}
+
+// ---------------------------------------------------------------------------
+// Animation loop
+// ---------------------------------------------------------------------------
+const clock = new THREE.Clock();
+let bob = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  if (mode === 'arrive') {
+    onArrive();
+  } else if (mode === 'moving') {
+    const toT = target.clone().sub(pos);
+    toT.y = 0;
+    const dist = toT.length();
+    const adv = MOVE_SPEED * CELL * dt;
+    if (dist <= adv) {
+      pos.x = target.x; pos.z = target.z;
+      cx += dir.x; cy += dir.y;
+      mode = 'arrive';
+    } else {
+      toT.normalize();
+      pos.x += toT.x * adv;
+      pos.z += toT.z * adv;
+    }
+    // smooth heading
+    let da = tgtAngle - curAngle;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    curAngle += da * Math.min(1, dt * 8);
+  } else if (mode === 'turning') {
+    let da = tgtAngle - curAngle;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    const stepA = TURN_SPEED * dt;
+    if (Math.abs(da) <= stepA) { curAngle = tgtAngle; mode = 'moving'; }
+    else curAngle += Math.sign(da) * stepA;
+  }
+
+  // place camera
+  bob += dt * MOVE_SPEED * 2.2;
+  const eyeBob = Math.sin(bob) * 0.045;
+  camera.position.set(pos.x, EYE + (mode === 'moving' ? eyeBob : 0), pos.z);
+  const look = new THREE.Vector3(
+    pos.x + Math.sin(curAngle) * 2,
+    EYE + (mode === 'moving' ? eyeBob * 0.7 : 0),
+    pos.z + Math.cos(curAngle) * 2
+  );
+  camera.lookAt(look);
+
+  // torch follows camera with subtle flicker
+  torch.position.set(pos.x, EYE + 0.4, pos.z);
+  torch.intensity = 2.3 + Math.sin(t * 11.0) * 0.12 + Math.sin(t * 27.3) * 0.07;
+
+  // stream chunks around the walker
+  updateWindow(cx, cy);
+
+  renderer.render(scene, camera);
+
+  elDepth.textContent = String(Math.max(0, (cy) + Math.abs(cx)));
+  elTurns.textContent = String(turnCount);
+  elCells.textContent = String(cellMeshes.size);
+}
+
+// Force the very first frame to build the starting area.
+updateWindow(0, 0);
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procedural Dungeon Crawler</title>
+<style>
+  :root {
+    --bg: #0c0a14;
+    --panel: #161325;
+    --ink: #e8e3f5;
+    --muted: #9a93b8;
+    --accent: #ffcf5c;
+    --hp: #e8536b;
+    --mp: #5ca8ff;
+    --wall: #2a2540;
+    --wall-lit: #4a3f6e;
+    --floor: #1c1830;
+    --floor-lit: #322b52;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: radial-gradient(circle at 50% 0%, #1a1530 0%, var(--bg) 70%);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    gap: 18px;
+    height: 100%;
+    padding: 18px;
+    align-items: stretch;
+    justify-content: center;
+  }
+  #stage {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    box-shadow: 0 0 0 1px #2a2540, 0 18px 50px rgba(0,0,0,.55);
+    flex: 0 0 auto;
+  }
+  canvas { display: block; border-radius: 10px; image-rendering: pixelated; }
+  #overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+    background: rgba(8,6,16,.82);
+    border-radius: 10px;
+    text-align: center;
+    backdrop-filter: blur(2px);
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 { font-size: 30px; letter-spacing: 1px; }
+  #overlay p { color: var(--muted); max-width: 360px; line-height: 1.5; }
+  .btn {
+    margin-top: 6px;
+    background: linear-gradient(180deg, #ffd973, #f2a93c);
+    color: #2a1a06; font-weight: 700; font-size: 15px;
+    border: none; padding: 12px 26px; border-radius: 8px;
+    cursor: pointer; letter-spacing: .5px;
+    box-shadow: 0 6px 18px rgba(242,169,60,.35);
+  }
+  .btn:hover { filter: brightness(1.06); }
+  #panel {
+    width: 260px;
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 18px;
+    display: flex; flex-direction: column; gap: 16px;
+    box-shadow: 0 0 0 1px #2a2540;
+  }
+  #panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
+  .stat { display: flex; flex-direction: column; gap: 6px; }
+  .stat .row { display: flex; justify-content: space-between; font-size: 13px; }
+  .bar { height: 10px; border-radius: 6px; background: #0c0a14; overflow: hidden; }
+  .bar > span { display: block; height: 100%; }
+  .bar.hp > span { background: linear-gradient(90deg,#ff7a8c,#e8536b); }
+  .bar.xp > span { background: linear-gradient(90deg,#8affc1,#3ad29a); }
+  .keys { font-size: 12px; color: var(--muted); line-height: 1.9; }
+  .keys b { color: var(--ink); }
+  .log {
+    flex: 1; overflow: hidden; display: flex; flex-direction: column-reverse;
+    gap: 4px; font-size: 12.5px; line-height: 1.45;
+    border-top: 1px solid #2a2540; padding-top: 12px;
+  }
+  .log div { color: var(--muted); }
+  .log div.hit { color: var(--hp); }
+  .log div.good { color: #8affc1; }
+  .log div.warn { color: var(--accent); }
+  .meta { font-size: 12px; color: var(--muted); }
+  .meta b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="overlay">
+      <h1>Procedural Dungeon Crawler</h1>
+      <p>A new dungeon is generated from scratch every run. Explore room by room, slay the lurking horrors, grab the loot, and dive for the stairs to the next depth.</p>
+      <button class="btn" id="startBtn">Enter the Dungeon</button>
+    </div>
+  </div>
+  <div id="panel">
+    <h2>Adventurer</h2>
+    <div class="stat">
+      <div class="row"><span>Health</span><span id="hpTxt">20/20</span></div>
+      <div class="bar hp"><span id="hpBar" style="width:100%"></span></div>
+    </div>
+    <div class="stat">
+      <div class="row"><span>Experience</span><span id="xpTxt">Lv 1</span></div>
+      <div class="bar xp"><span id="xpBar" style="width:0%"></span></div>
+    </div>
+    <div class="meta">Depth <b id="depth">1</b> &nbsp;·&nbsp; Gold <b id="gold">0</b> &nbsp;·&nbsp; Kills <b id="kills">0</b></div>
+    <h2>Controls</h2>
+    <div class="keys">
+      <b>WASD / Arrows</b> — move &amp; attack<br>
+      <b>Space / .</b> — wait a turn<br>
+      <b>G</b> — pick up gold<br>
+      <b>R</b> — new dungeon<br>
+      <b>Enter</b> — descend stairs
+    </div>
+    <h2>Chronicle</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+(() => {
+  "use strict";
+  const TILE = 24;
+  const COLS = 33, ROWS = 25;
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  canvas.width = COLS * TILE;
+  canvas.height = ROWS * TILE;
+
+  const overlay = document.getElementById("overlay");
+  const startBtn = document.getElementById("startBtn");
+  const logEl = document.getElementById("log");
+
+  const ui = {
+    hpTxt: document.getElementById("hpTxt"),
+    hpBar: document.getElementById("hpBar"),
+    xpTxt: document.getElementById("xpTxt"),
+    xpBar: document.getElementById("xpBar"),
+    depth: document.getElementById("depth"),
+    gold: document.getElementById("gold"),
+    kills: document.getElementById("kills"),
+  };
+
+  // ---- RNG (mulberry32) ----
+  function makeRng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  let rng = makeRng(Date.now());
+  const ri = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
+  const pick = (arr) => arr[Math.floor(rng() * arr.length)];
+
+  // ---- Tile constants ----
+  const WALL = 0, FLOOR = 1, STAIRS = 2;
+
+  let map, player, enemies, items, depth, lit, visible, explored, gameOver, log;
+  let seedCounter = (Date.now() ^ 0x9e3779b9) >>> 0;
+
+  function logMsg(text, cls) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    if (cls) d.className = cls;
+    logEl.prepend(d);
+    while (logEl.childNodes.length > 40) logEl.removeChild(logEl.lastChild);
+  }
+
+  // ---- Dungeon generation (rooms + corridors, BSP-ish) ----
+  function generateDungeon() {
+    map = [];
+    for (let y = 0; y < ROWS; y++) {
+      map.push(new Array(COLS).fill(WALL));
+    }
+    const rooms = [];
+    const attempts = 60;
+    for (let i = 0; i < attempts; i++) {
+      const w = ri(4, 8), h = ri(4, 7);
+      const x = ri(1, COLS - w - 2), y = ri(1, ROWS - h - 2);
+      let ok = true;
+      for (const r of rooms) {
+        if (x <= r.x + r.w + 1 && x + w + 1 >= r.x && y <= r.y + r.h + 1 && y + h + 1 >= r.y) {
+          ok = false; break;
+        }
+      }
+      if (!ok) continue;
+      for (let yy = y; yy < y + h; yy++)
+        for (let xx = x; xx < x + w; xx++)
+          map[yy][xx] = FLOOR;
+      rooms.push({ x, y, w, h, cx: (x + w / 2) | 0, cy: (y + h / 2) | 0 });
+    }
+    // connect rooms
+    for (let i = 1; i < rooms.length; i++) {
+      const a = rooms[i - 1], b = rooms[i];
+      carveH(a.cx, b.cx, a.cy);
+      carveV(a.cy, b.cy, b.cx);
+    }
+    // ensure start room center reachable
+    const start = rooms[0];
+    const end = rooms[rooms.length - 1];
+    player = { x: start.cx, y: start.cy, hp: 20, maxhp: 20, xp: 0, level: 1, gold: player ? player.gold : 0, atk: 4 };
+    // stairs in last room
+    map[end.cy][end.cx] = STAIRS;
+    // spawn enemies + items in other rooms
+    enemies = [];
+    items = [];
+    const foeKinds = [
+      { name: "Rat", hp: 4, atk: 2, glyph: "r", color: "#b9a07a" },
+      { name: "Goblin", hp: 7, atk: 3, glyph: "g", color: "#7bd66a" },
+      { name: "Skeleton", hp: 10, atk: 4, glyph: "s", color: "#dfe6f0" },
+      { name: "Wraith", hp: 14, atk: 5, glyph: "w", color: "#b07dff" },
+    ];
+    const count = 4 + depth;
+    for (let i = 0; i < count; i++) {
+      const r = pick(rooms.slice(1));
+      const ex = ri(r.x, r.x + r.w - 1), ey = ri(r.y, r.y + r.h - 1);
+      if (map[ey][ex] !== FLOOR) continue;
+      if (ex === player.x && ey === player.y) continue;
+      const k = foeKinds[Math.min(foeKinds.length - 1, depth - 1 + ri(0, 1))];
+      const scale = 1 + (depth - 1) * 0.15;
+      enemies.push({
+        x: ex, y: ey, name: k.name, glyph: k.glyph, color: k.color,
+        hp: Math.round(k.hp * scale), maxhp: Math.round(k.hp * scale),
+        atk: Math.round(k.atk * scale), awake: false,
+      });
+    }
+    const goldCount = ri(3, 6);
+    for (let i = 0; i < goldCount; i++) {
+      const r = pick(rooms);
+      const gx = ri(r.x, r.x + r.w - 1), gy = ri(r.y, r.y + r.h - 1);
+      if (map[gy][gx] === FLOOR) items.push({ x: gx, y: gy, type: "gold", amount: ri(3, 12) });
+    }
+    // a potion
+    if (rng() < 0.7) {
+      const r = pick(rooms.slice(1));
+      items.push({ x: ri(r.x, r.x + r.w - 1), y: ri(r.y, r.y + r.h - 1), type: "potion", amount: ri(6, 12) });
+    }
+    computeFOV();
+  }
+
+  function carveH(x1, x2, y) {
+    for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+      if (map[y][x] === WALL) map[y][x] = FLOOR;
+    }
+  }
+  function carveV(y1, y2, x) {
+    for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+      if (map[y][x] === WALL) map[y][x] = FLOOR;
+    }
+  }
+
+  // ---- Field of view (simple radius + raycast) ----
+  function computeFOV() {
+    visible = [];
+    explored = explored || [];
+    for (let y = 0; y < ROWS; y++) {
+      visible.push(new Array(COLS).fill(false));
+      if (!explored[y]) explored.push(new Array(COLS).fill(false));
+    }
+    const px = player.x, py = player.y, R = 6;
+    visible[py][px] = true; explored[py][px] = true;
+    for (let a = 0; a < 360; a += 3) {
+      const rad = a * Math.PI / 180;
+      const dx = Math.cos(rad), dy = Math.sin(rad);
+      let x = px + 0.5, y = py + 0.5;
+      for (let step = 0; step < R; step++) {
+        x += dx; y += dy;
+        const ix = Math.floor(x), iy = Math.floor(y);
+        if (ix < 0 || iy < 0 || ix >= COLS || iy >= ROWS) break;
+        visible[iy][ix] = true; explored[iy][ix] = true;
+        if (map[iy][ix] === WALL) break;
+      }
+    }
+  }
+
+  function inBounds(x, y) { return x >= 0 && y >= 0 && x < COLS && y < ROWS; }
+  function enemyAt(x, y) { return enemies.find(e => e.hp > 0 && e.x === x && e.y === y); }
+  function itemAt(x, y) { return items.find(it => it.x === x && it.y === y); }
+
+  // ---- Turn logic ----
+  function tryMove(dx, dy) {
+    if (gameOver) return;
+    const nx = player.x + dx, ny = player.y + dy;
+    if (!inBounds(nx, ny)) return;
+    const e = enemyAt(nx, ny);
+    if (e) { attackEnemy(e); endTurn(); return; }
+    if (map[ny][nx] === WALL) return;
+    player.x = nx; player.y = ny;
+    const it = itemAt(nx, ny);
+    if (it) collectItem(it);
+    endTurn();
+  }
+
+  function attackEnemy(e) {
+    const dmg = player.atk + ri(0, 2);
+    e.hp -= dmg;
+    logMsg(`You strike the ${e.name} for ${dmg}.`, "hit");
+    if (e.hp <= 0) {
+      logMsg(`The ${e.name} crumbles to dust.`, "good");
+      player.xp += 3 + depth;
+      player.gold += ri(0, 2);
+      ui.kills.textContent = (+ui.kills.textContent + 1);
+      checkLevel();
+    }
+  }
+
+  function enemyTurn(e) {
+    const dist = Math.abs(e.x - player.x) + Math.abs(e.y - player.y);
+    if (!e.awake && dist <= 6 && visible[e.y] && visible[e.y][e.x]) e.awake = true;
+    if (!e.awake) return;
+    if (dist === 1) {
+      const dmg = Math.max(1, e.atk + ri(-1, 1));
+      player.hp -= dmg;
+      logMsg(`The ${e.name} hits you for ${dmg}.`, "warn");
+      if (player.hp <= 0) { player.hp = 0; doGameOver(); }
+      return;
+    }
+    // step toward player (greedy, avoid walls/occupied)
+    const dx = Math.sign(player.x - e.x), dy = Math.sign(player.y - e.y);
+    const opts = [];
+    if (dx) opts.push([e.x + dx, e.y]);
+    if (dy) opts.push([e.x, e.y + dy]);
+    opts.push([e.x + dx, e.y + dy]);
+    for (const [tx, ty] of opts) {
+      if (inBounds(tx, ty) && map[ty][tx] !== WALL && !enemyAt(tx, ty) && !(tx === player.x && ty === player.y)) {
+        e.x = tx; e.y = ty; return;
+      }
+    }
+  }
+
+  function endTurn() {
+    for (const e of enemies) if (e.hp > 0) enemyTurn(e);
+    computeFOV();
+    refreshUI();
+    draw();
+  }
+
+  function collectItem(it) {
+    if (it.type === "gold") {
+      player.gold += it.amount;
+      logMsg(`Picked up ${it.amount} gold.`, "good");
+    } else if (it.type === "potion") {
+      const before = player.hp;
+      player.hp = Math.min(player.maxhp, player.hp + it.amount);
+      logMsg(`Drank a potion (+${player.hp - before} HP).`, "good");
+    }
+    items = items.filter(x => x !== it);
+    refreshUI();
+  }
+
+  function checkLevel() {
+    const need = player.level * 12;
+    if (player.xp >= need) {
+      player.xp -= need;
+      player.level++;
+      player.maxhp += 5; player.hp = player.maxhp; player.atk += 1;
+      logMsg(`You reached level ${player.level}! Stronger and healed.`, "good");
+    }
+  }
+
+  function descend() {
+    if (map[player.y][player.x] !== STAIRS) {
+      logMsg("You must stand on the stairs (▼) to descend.", "warn");
+      return;
+    }
+    depth++;
+    logMsg(`You descend to depth ${depth}.`, "good");
+    generateDungeon();
+    refreshUI();
+    draw();
+  }
+
+  function doGameOver() {
+    gameOver = true;
+    logMsg("You have fallen. The dungeon claims another soul.", "hit");
+    overlay.querySelector("h1").textContent = "You Died";
+    overlay.querySelector("p").textContent = `You reached depth ${depth} at level ${player.level}. Press Enter the Dungeon to try a new randomly generated maze.`;
+    startBtn.textContent = "New Run";
+    overlay.classList.remove("hidden");
+  }
+
+  function newGame() {
+    seedCounter = (seedCounter * 1664525 + 1013904223) >>> 0;
+    rng = makeRng(seedCounter);
+    depth = 1;
+    gameOver = false;
+    logEl.innerHTML = "";
+    player = { x: 0, y: 0, hp: 20, maxhp: 20, xp: 0, level: 1, gold: 0, atk: 4 };
+    explored = null;
+    generateDungeon();
+    logMsg("You enter a freshly carved dungeon. Good luck.", "good");
+    refreshUI();
+    draw();
+  }
+
+  // ---- Rendering ----
+  function draw() {
+    ctx.fillStyle = "#05040a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (!explored[y] || !explored[y][x]) continue;
+        const vis = visible[y][x];
+        const t = map[y][x];
+        const sx = x * TILE, sy = y * TILE;
+        if (t === WALL) {
+          ctx.fillStyle = vis ? "#4a3f6e" : "#231f38";
+          ctx.fillRect(sx, sy, TILE, TILE);
+          ctx.fillStyle = vis ? "#5d5183" : "#2a2540";
+          ctx.fillRect(sx, sy, TILE, 3);
+        } else {
+          ctx.fillStyle = vis ? "#322b52" : "#181529";
+          ctx.fillRect(sx, sy, TILE, TILE);
+          if (t === STAIRS) {
+            ctx.fillStyle = vis ? "#ffcf5c" : "#7a6326";
+            ctx.font = "bold 18px serif";
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText("▼", sx + TILE / 2, sy + TILE / 2 + 1);
+          }
+        }
+      }
+    }
+    // items
+    for (const it of items) {
+      if (!visible[it.y][it.x]) continue;
+      const sx = it.x * TILE, sy = it.y * TILE;
+      ctx.fillStyle = it.type === "gold" ? "#ffcf5c" : "#ff7aa8";
+      ctx.beginPath();
+      ctx.arc(sx + TILE / 2, sy + TILE / 2, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // enemies
+    for (const e of enemies) {
+      if (e.hp <= 0 || !visible[e.y][e.x]) continue;
+      const sx = e.x * TILE, sy = e.y * TILE;
+      ctx.fillStyle = e.color;
+      ctx.fillRect(sx + 4, sy + 4, TILE - 8, TILE - 8);
+      ctx.fillStyle = "#0c0a14";
+      ctx.font = "bold 14px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(e.glyph, sx + TILE / 2, sy + TILE / 2 + 1);
+      // hp pip
+      const w = (TILE - 8) * (e.hp / e.maxhp);
+      ctx.fillStyle = "#e8536b";
+      ctx.fillRect(sx + 4, sy + TILE - 5, Math.max(0, w), 3);
+    }
+    // player
+    const p = player;
+    const psx = p.x * TILE, psy = p.y * TILE;
+    ctx.fillStyle = "#5ca8ff";
+    ctx.beginPath();
+    ctx.arc(psx + TILE / 2, psy + TILE / 2, TILE / 2 - 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0c0a14";
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("@", psx + TILE / 2, psy + TILE / 2 + 1);
+  }
+
+  function refreshUI() {
+    ui.hpTxt.textContent = `${player.hp}/${player.maxhp}`;
+    ui.hpBar.style.width = (100 * player.hp / player.maxhp) + "%";
+    ui.xpTxt.textContent = `Lv ${player.level}`;
+    ui.xpBar.style.width = (100 * player.xp / (player.level * 12)) + "%";
+    ui.depth.textContent = depth;
+    ui.gold.textContent = player.gold;
+  }
+
+  // ---- Input ----
+  const onKey = (ev) => {
+    if (overlay.classList.contains("hidden") === false) return;
+    let handled = true;
+    switch (ev.key) {
+      case "ArrowUp": case "w": case "W": tryMove(0, -1); break;
+      case "ArrowDown": case "s": case "S": tryMove(0, 1); break;
+      case "ArrowLeft": case "a": case "A": tryMove(-1, 0); break;
+      case "ArrowRight": case "d": case "D": tryMove(1, 0); break;
+      case " ": case ".": endTurn(); break;
+      case "g": case "G": {
+        const it = itemAt(player.x, player.y);
+        if (it) collectItem(it); else logMsg("Nothing to pick up here.", "warn");
+        break;
+      }
+      case "Enter": descend(); break;
+      case "r": case "R": newGame(); break;
+      default: handled = false;
+    }
+    if (handled) ev.preventDefault();
+  };
+  window.addEventListener("keydown", onKey);
+
+  startBtn.addEventListener("click", () => {
+    overlay.classList.add("hidden");
+    newGame();
+  });
+
+  // initial preview render behind overlay
+  newGame();
+  overlay.classList.remove("hidden");
+})();
+</script>
+</body>
+</html>

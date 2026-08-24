@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Colorful Fluid Simulation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05060a; }
+  #stage { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #hud {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    font: 13px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: rgba(255,255,255,0.82);
+    background: rgba(10,12,20,0.42);
+    border: 1px solid rgba(255,255,255,0.10);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 12px 14px; border-radius: 12px;
+    max-width: 260px; user-select: none; pointer-events: none;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+  }
+  #hud b { color: #fff; font-weight: 600; letter-spacing: .3px; }
+  #hud .row { margin-top: 6px; color: rgba(255,255,255,0.6); }
+  #hud kbd {
+    background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 5px; padding: 0 6px; color: #fff; font-size: 12px;
+  }
+  #tip {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 10; font: 12px ui-monospace, monospace; color: rgba(255,255,255,0.5);
+    background: rgba(10,12,20,0.4); padding: 7px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.08); pointer-events: none;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud">
+  <b>Colorful Fluid</b>
+  <div class="row">Move &amp; drag to stir the fluid.</div>
+  <div class="row"><kbd>Click</kbd> splash &nbsp; <kbd>C</kbd> clear</div>
+  <div class="row"><kbd>Space</kbd> swirl &nbsp; <kbd>R</kbd> recolor</div>
+</div>
+<div id="tip">A stable fluid solver advecting colorful dye</div>
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  // ---- Grid / simulation parameters -------------------------------------
+  const SCALE = 4;            // pixels per simulation cell
+  let W = 0, H = 0, cols = 0, rows = 0;
+  let velX, velY, velX0, velY0, densR, densG, densB, densR0, densG0, densB0;
+  const DIFF = 0.00002;       // diffusion (small)
+  const VISC = 0.00001;       // viscosity (small)
+  const DT = 0.016;
+  const ITER = 14;            // Gauss-Seidel iterations
+
+  function idx(i, j) { return i + j * cols; }
+
+  function allocate() {
+    cols = Math.max(8, Math.floor(canvas.width / SCALE));
+    rows = Math.max(8, Math.floor(canvas.height / SCALE));
+    const n = cols * rows;
+    velX = new Float32Array(n); velY = new Float32Array(n);
+    velX0 = new Float32Array(n); velY0 = new Float32Array(n);
+    densR = new Float32Array(n); densG = new Float32Array(n);
+    densB = new Float32Array(n);
+    densR0 = new Float32Array(n); densG0 = new Float32Array(n);
+    densB0 = new Float32Array(n);
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    allocate();
+    seed();
+  }
+
+  // Boundary helper: mirror velocities, walls for density
+  function setBnd(b, x) {
+    for (let i = 1; i < cols - 1; i++) {
+      x[idx(i, 0)] = b === 2 ? -x[idx(i, 1)] : x[idx(i, 1)];
+      x[idx(i, rows - 1)] = b === 2 ? -x[idx(i, rows - 2)] : x[idx(i, rows - 2)];
+    }
+    for (let j = 1; j < rows - 1; j++) {
+      x[idx(0, j)] = b === 1 ? -x[idx(1, j)] : x[idx(1, j)];
+      x[idx(cols - 1, j)] = b === 1 ? -x[idx(cols - 2, j)] : x[idx(cols - 2, j)];
+    }
+    x[idx(0, 0)] = 0.5 * (x[idx(1, 0)] + x[idx(0, 1)]);
+    x[idx(0, rows - 1)] = 0.5 * (x[idx(1, rows - 1)] + x[idx(0, rows - 2)]);
+    x[idx(cols - 1, 0)] = 0.5 * (x[idx(cols - 2, 0)] + x[idx(cols - 1, 1)]);
+    x[idx(cols - 1, rows - 1)] = 0.5 * (x[idx(cols - 2, rows - 1)] + x[idx(cols - 1, rows - 2)]);
+  }
+
+  function linSolve(b, x, x0, a, c) {
+    const invC = 1 / c;
+    for (let k = 0; k < ITER; k++) {
+      for (let j = 1; j < rows - 1; j++) {
+        for (let i = 1; i < cols - 1; i++) {
+          const id = idx(i, j);
+          x[id] = (x0[id] + a * (x[id - 1] + x[id + 1] + x[id - cols] + x[id + cols])) * invC;
+        }
+      }
+      setBnd(b, x);
+    }
+  }
+
+  function diffuse(b, x, x0, diff) {
+    const a = DT * diff * (cols - 2) * (rows - 2);
+    linSolve(b, x, x0, a, 1 + 4 * a);
+  }
+
+  function advect(b, d, d0, u, v) {
+    const dt0x = DT * (cols - 2);
+    const dt0y = DT * (rows - 2);
+    for (let j = 1; j < rows - 1; j++) {
+      for (let i = 1; i < cols - 1; i++) {
+        const id = idx(i, j);
+        let x = i - dt0x * u[id];
+        let y = j - dt0y * v[id];
+        if (x < 0.5) x = 0.5; if (x > cols - 1.5) x = cols - 1.5;
+        if (y < 0.5) y = 0.5; if (y > rows - 1.5) y = rows - 1.5;
+        const i0 = Math.floor(x), i1 = i0 + 1;
+        const j0 = Math.floor(y), j1 = j0 + 1;
+        const s1 = x - i0, s0 = 1 - s1, t1 = y - j0, t0 = 1 - t1;
+        d[id] = s0 * (t0 * d0[idx(i0, j0)] + t1 * d0[idx(i0, j1)]) +
+                s1 * (t0 * d0[idx(i1, j0)] + t1 * d0[idx(i1, j1)]);
+      }
+    }
+    setBnd(b, d);
+  }
+
+  function project(u, v, p, div) {
+    const hx = 1 / cols, hy = 1 / rows;
+    for (let j = 1; j < rows - 1; j++) {
+      for (let i = 1; i < cols - 1; i++) {
+        const id = idx(i, j);
+        div[id] = -0.5 * (hx * (u[id + 1] - u[id - 1]) + hy * (v[id + cols] - v[id - cols]));
+        p[id] = 0;
+      }
+    }
+    setBnd(0, div); setBnd(0, p);
+    linSolve(0, p, div, 1, 4);
+    for (let j = 1; j < rows - 1; j++) {
+      for (let i = 1; i < cols - 1; i++) {
+        const id = idx(i, j);
+        u[id] -= 0.5 * (p[id + 1] - p[id - 1]) / hx;
+        v[id] -= 0.5 * (p[id + cols] - p[id - cols]) / hy;
+      }
+    }
+    setBnd(1, u); setBnd(2, v);
+  }
+
+  // ---- Color helpers ----------------------------------------------------
+  function hsv(h, s, v) {
+    h = (h % 1 + 1) % 1;
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+    let r, g, b;
+    switch (i % 6) {
+      case 0: r = v; g = t; b = p; break;
+      case 1: r = q; g = v; b = p; break;
+      case 2: r = p; g = v; b = t; break;
+      case 3: r = p; g = q; b = v; break;
+      case 4: r = t; g = p; b = v; break;
+      default: r = v; g = p; b = q; break;
+    }
+    return [r, g, b];
+  }
+
+  function seed() {
+    // Inject a few colorful dye blobs with swirling velocity
+    const blobs = 6;
+    for (let b = 0; b < blobs; b++) {
+      const cx = (0.18 + 0.64 * (b / (blobs - 1 || 1))) * cols;
+      const cy = 0.5 * rows + (Math.random() - 0.5) * rows * 0.5;
+      const hue = b / blobs;
+      const [r, g, bl] = hsv(hue, 0.95, 1);
+      const rad = Math.min(cols, rows) * 0.10;
+      for (let j = -rad; j <= rad; j++) {
+        for (let i = -rad; i <= rad; i++) {
+          const ii = Math.round(cx + i), jj = Math.round(cy + j);
+          if (ii < 1 || ii >= cols - 1 || jj < 1 || jj >= rows - 1) continue;
+          const d2 = i * i + j * j;
+          if (d2 > rad * rad) continue;
+          const fall = 1 - d2 / (rad * rad);
+          const id = idx(ii, jj);
+          densR[id] += r * fall * 0.9;
+          densG[id] += g * fall * 0.9;
+          densB[id] += bl * fall * 0.9;
+          const ang = Math.atan2(j, i);
+          velX[id] += Math.cos(ang) * fall * 28;
+          velY[id] += Math.sin(ang) * fall * 28;
+        }
+      }
+    }
+  }
+
+  function clearField() {
+    velX.fill(0); velY.fill(0);
+    densR.fill(0); densG.fill(0); densB.fill(0);
+  }
+
+  // ---- Pointer / interaction -------------------------------------------
+  const pointer = { x: 0, y: 0, px: 0, py: 0, down: false, active: false };
+
+  function pointerToCell(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width * canvas.width;
+    const y = (clientY - rect.top) / rect.height * canvas.height;
+    return { x, y, ci: Math.floor(x / SCALE), cj: Math.floor(y / SCALE) };
+  }
+
+  function injectFromPointer(force) {
+    const rect = canvas.getBoundingClientRect();
+    const dx = (pointer.x - pointer.px);
+    const dy = (pointer.y - pointer.py);
+    const ci = Math.floor(pointer.x / SCALE);
+    const cj = Math.floor(pointer.y / SCALE);
+    const hue = (performance.now() * 0.00006) % 1;
+    const [r, g, b] = hsv(hue, 0.9, 1);
+    const rad = 3;
+    for (let j = -rad; j <= rad; j++) {
+      for (let i = -rad; i <= rad; i++) {
+        const ii = ci + i, jj = cj + j;
+        if (ii < 1 || ii >= cols - 1 || jj < 1 || jj >= rows - 1) continue;
+        const d2 = i * i + j * j;
+        if (d2 > rad * rad) continue;
+        const fall = 1 - d2 / (rad * rad);
+        const id = idx(ii, jj);
+        densR[id] += r * fall * 0.6;
+        densG[id] += g * fall * 0.6;
+        densB[id] += b * fall * 0.6;
+        velX[id] += dx * fall * force;
+        velY[id] += dy * fall * force;
+      }
+    }
+  }
+
+  canvas.addEventListener("pointermove", (e) => {
+    const p = pointerToCell(e.clientX, e.clientY);
+    pointer.px = pointer.x; pointer.py = pointer.y;
+    pointer.x = p.x; pointer.y = p.y;
+    pointer.active = true;
+    if (pointer.down) injectFromPointer(6);
+  });
+  canvas.addEventListener("pointerdown", (e) => {
+    const p = pointerToCell(e.clientX, e.clientY);
+    pointer.x = p.x; pointer.y = p.y;
+    pointer.px = p.x; pointer.py = p.y;
+    pointer.down = true;
+    injectFromPointer(10);
+  });
+  window.addEventListener("pointerup", () => { pointer.down = false; });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "c" || e.key === "C") clearField();
+    if (e.key === "r" || e.key === "R") { clearField(); seed(); }
+    if (e.key === " ") {
+      e.preventDefault();
+      const cx = cols / 2, cy = rows / 2;
+      for (let j = 1; j < rows - 1; j++) {
+        for (let i = 1; i < cols - 1; i++) {
+          const id = idx(i, j);
+          velX[id] += (j - cy) * 0.6;
+          velY[id] += -(i - cx) * 0.6;
+        }
+      }
+    }
+  });
+
+  // ---- Auto-stir so the sim is alive without input ----------------------
+  let autoT = 0;
+  function autoStir() {
+    autoT += DT;
+    const cx = cols / 2 + Math.cos(autoT * 0.7) * cols * 0.22;
+    const cy = rows / 2 + Math.sin(autoT * 1.1) * rows * 0.22;
+    const hue = (autoT * 0.04) % 1;
+    const [r, g, b] = hsv(hue, 0.95, 1);
+    const rad = 4;
+    for (let j = -rad; j <= rad; j++) {
+      for (let i = -rad; i <= rad; i++) {
+        const ii = Math.round(cx + i), jj = Math.round(cy + j);
+        if (ii < 1 || ii >= cols - 1 || jj < 1 || jj >= rows - 1) continue;
+        const d2 = i * i + j * j;
+        if (d2 > rad * rad) continue;
+        const fall = 1 - d2 / (rad * rad);
+        const id = idx(ii, jj);
+        densR[id] += r * fall * 0.12;
+        densG[id] += g * fall * 0.12;
+        densB[id] += b * fall * 0.12;
+        velX[id] += -Math.sin(autoT * 1.1) * fall * 12;
+        velY[id] += Math.cos(autoT * 0.7) * fall * 12;
+      }
+    }
+  }
+
+  // ---- Step -------------------------------------------------------------
+  function step() {
+    autoStir();
+
+    // velocity step
+    velX0.set(velX); velY0.set(velY);
+    diffuse(1, velX, velX0, VISC);
+    diffuse(2, velY, velY0, VISC);
+    project(velX, velY, velX0, velY0);
+    velX0.set(velX); velY0.set(velY);
+    advect(1, velX, velX0, velX0, velY0);
+    advect(2, velY, velY0, velX0, velY0);
+    project(velX, velY, velX0, velY0);
+
+    // density step (per channel)
+    densR0.set(densR); diffuse(0, densR, densR0, DIFF);
+    densG0.set(densG); diffuse(0, densG, densG0, DIFF);
+    densB0.set(densB); diffuse(0, densB, densB0, DIFF);
+    densR0.set(densR); advect(0, densR, densR0, velX, velY);
+    densG0.set(densG); advect(0, densG, densG0, velX, velY);
+    densB0.set(densB); advect(0, densB, densB0, velX, velY);
+
+    // gentle fade so colors stay vivid but evolve
+    const fade = 0.997;
+    for (let k = 0; k < densR.length; k++) {
+      densR[k] *= fade; densG[k] *= fade; densB[k] *= fade;
+    }
+  }
+
+  // ---- Render -----------------------------------------------------------
+  function render() {
+    const img = ctx.createImageData(canvas.width, canvas.height);
+    const data = img.data;
+    // upscale nearest from grid
+    for (let py = 0; py < canvas.height; py++) {
+      const j = Math.min(rows - 1, Math.floor(py / SCALE));
+      for (let px = 0; px < canvas.width; px++) {
+        const i = Math.min(cols - 1, Math.floor(px / SCALE));
+        const id = idx(i, j);
+        let r = densR[id], g = densG[id], b = densB[id];
+        // tone map for glow
+        r = 1 - Math.exp(-r * 1.4);
+        g = 1 - Math.exp(-g * 1.4);
+        b = 1 - Math.exp(-b * 1.4);
+        const o = (py * canvas.width + px) * 4;
+        data[o] = Math.min(255, r * 255);
+        data[o + 1] = Math.min(255, g * 255);
+        data[o + 2] = Math.min(255, b * 255);
+        data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function loop() {
+    step();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 150);
+  });
+
+  resize();
+  loop();
+})();
+</script>
+</body>
+</html>

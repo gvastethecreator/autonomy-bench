@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>2D Physics Sandbox</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: rgba(20, 26, 36, 0.82);
+    --ink: #e7ecf3;
+    --muted: #8b97a8;
+    --accent: #54d6ff;
+    --accent2: #ff7eb6;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    touch-action: none;
+    cursor: grab;
+  }
+  #stage.grabbing { cursor: grabbing; }
+  .hud {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 5;
+    background: var(--panel);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 16px;
+    width: 250px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    user-select: none;
+  }
+  .hud h1 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+  }
+  .hud p.sub {
+    margin: 0 0 12px;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 9px 0;
+    font-size: 12px;
+  }
+  .row label { color: var(--muted); }
+  .row .val { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+  input[type=range] { width: 120px; accent-color: var(--accent); }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button {
+    flex: 1 1 auto;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.05);
+    color: var(--ink);
+    border-radius: 9px;
+    padding: 8px 10px;
+    font-size: 12px;
+    transition: background .15s, transform .05s;
+    white-space: nowrap;
+  }
+  button:hover { background: rgba(84,214,255,0.16); border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: rgba(84,214,255,0.18); border-color: var(--accent); }
+  .hint {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--muted);
+    font-size: 11.5px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+  .stat {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 5;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+  .stat b { color: var(--ink); }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="hud">
+  <h1>2D Physics Sandbox</h1>
+  <p class="sub">Drag to grab &amp; throw bodies. Click empty space to drop a ball. Everything obeys gravity, restitution and friction.</p>
+  <div class="row">
+    <label>Gravity</label>
+    <input id="gravity" type="range" min="0" max="2400" value="900" />
+    <span class="val" id="gravityVal">900</span>
+  </div>
+  <div class="row">
+    <label>Restitution</label>
+    <input id="rest" type="range" min="0" max="100" value="62" />
+    <span class="val" id="restVal">0.62</span>
+  </div>
+  <div class="row">
+    <label>Friction</label>
+    <input id="fric" type="range" min="0" max="100" value="20" />
+    <span class="val" id="fricVal">0.20</span>
+  </div>
+  <div class="btns">
+    <button id="addBalls" class="primary">+ Balls</button>
+    <button id="addBoxes">+ Boxes</button>
+    <button id="clear">Clear</button>
+  </div>
+</div>
+
+<div class="stat">bodies: <b id="count">0</b> · fps: <b id="fps">0</b></div>
+<div class="hint">Drag a body to throw it · Click empty space to spawn · Adjust sliders live</div>
+
+<script>
+(() => {
+  "use strict";
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ---- tunables ----
+  const params = { gravity: 900, restitution: 0.62, friction: 0.20 };
+  const bind = (id, valId, fn, fmt) => {
+    const el = document.getElementById(id), out = document.getElementById(valId);
+    const upd = () => { fn(+el.value); out.textContent = fmt(+el.value); };
+    el.addEventListener("input", upd); upd();
+  };
+  bind("gravity", "gravityVal", v => params.gravity = v, v => v);
+  bind("rest", "restVal", v => params.restitution = v / 100, v => (v / 100).toFixed(2));
+  bind("fric", "fricVal", v => params.friction = v / 100, v => (v / 100).toFixed(2));
+
+  // ---- bodies ----
+  const palette = ["#54d6ff","#ff7eb6","#ffd166","#7CFFB2","#b79cff","#ff9e64","#6ee7ff","#ff6b6b"];
+  let colorIdx = 0;
+  const bodies = [];
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  function makeBall(x, y, r) {
+    return {
+      shape: "circle",
+      x, y,
+      px: x, py: y,
+      vx: rand(-40, 40), vy: 0,
+      r: r != null ? r : rand(16, 38),
+      m: 1, inv: 1,
+      rot: 0, vrot: 0,
+      color: palette[(colorIdx++) % palette.length]
+    };
+  }
+  function makeBox(x, y, s) {
+    const size = s != null ? s : rand(34, 62);
+    return {
+      shape: "box",
+      x, y,
+      px: x, py: y,
+      vx: rand(-40, 40), vy: 0,
+      hw: size / 2, hh: size / 2,
+      m: 1.4, inv: 1 / 1.4,
+      rot: rand(-0.4, 0.4), vrot: rand(-1, 1),
+      color: palette[(colorIdx++) % palette.length]
+    };
+  }
+
+  function spawn(n, factory) {
+    for (let i = 0; i < n; i++) {
+      const x = rand(W * 0.2, W * 0.8);
+      const y = rand(60, H * 0.35);
+      bodies.push(factory(x, y));
+    }
+  }
+  spawn(14, makeBall);
+  spawn(4, makeBox);
+
+  document.getElementById("addBalls").onclick = () => spawn(8, makeBall);
+  document.getElementById("addBoxes").onclick = () => spawn(6, makeBox);
+  document.getElementById("clear").onclick = () => { bodies.length = 0; colorIdx = 0; };
+
+  // ---- world geometry (walls) ----
+  function walls() {
+    return { left: 0, right: W, top: 0, bottom: H };
+  }
+
+  // ---- physics step (Verlet-ish with velocity + simple impulse) ----
+  const SUB = 2; // substeps for stability
+
+  function closestPointOnBox(b, px, py) {
+    // transform point into box local space
+    const c = Math.cos(b.rot), s = Math.sin(b.rot);
+    const dx = px - b.x, dy = py - b.y;
+    let lx = dx * c + dy * s;
+    let ly = -dx * s + dy * c;
+    const cx = Math.max(-b.hw, Math.min(b.hw, lx));
+    const cy = Math.max(-b.hh, Math.min(b.hh, ly));
+    const inside = (lx > -b.hw && lx < b.hw && ly > -b.hh && ly < b.hh);
+    // back to world
+    const wx = b.x + cx * c - cy * s;
+    const wy = b.y + cx * s + cy * c;
+    return { wx, wy, lx, ly, cx, cy, inside };
+  }
+
+  function integrate(dt) {
+    const g = params.gravity * dt;
+    for (const b of bodies) {
+      if (b === held) continue;
+      b.vy += g;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.rot += b.vrot * dt;
+    }
+  }
+
+  function resolveWalls() {
+    const w = walls();
+    for (const b of bodies) {
+      if (b.shape === "circle") {
+        if (b.x - b.r < w.left) { b.x = w.left + b.r; b.vx = -b.vx * params.restitution; b.vy *= (1 - params.friction); }
+        if (b.x + b.r > w.right) { b.x = w.right - b.r; b.vx = -b.vx * params.restitution; b.vy *= (1 - params.friction); }
+        if (b.y - b.r < w.top) { b.y = w.top + b.r; b.vy = -b.vy * params.restitution; b.vx *= (1 - params.friction); }
+        if (b.y + b.r > w.bottom) {
+          b.y = w.bottom - b.r; b.vy = -b.vy * params.restitution;
+          b.vx *= (1 - params.friction); b.vrot *= (1 - params.friction);
+        }
+      } else {
+        // box: test 4 corners + center against walls
+        const c = Math.cos(b.rot), s = Math.sin(b.rot);
+        const corners = [[-b.hw,-b.hh],[b.hw,-b.hh],[b.hw,b.hh],[-b.hw,b.hh]];
+        for (const [ox, oy] of corners) {
+          const wx = b.x + ox * c - oy * s;
+          const wy = b.y + ox * s + oy * c;
+          let nx = 0, ny = 0, hit = false;
+          if (wx < w.left) { nx = 1; hit = true; }
+          else if (wx > w.right) { nx = -1; hit = true; }
+          if (wy < w.top) { ny = 1; hit = true; }
+          else if (wy > w.bottom) { ny = -1; hit = true; }
+          if (hit) {
+            // push out along dominant axis (simple)
+            const c2 = Math.cos(b.rot), s2 = Math.sin(b.rot);
+            // distance from body center to contact in world
+            const rxp = wx - b.x, ryp = wy - b.y;
+            // velocity correction
+            const vn = b.vx * nx + b.vy * ny;
+            if (vn < 0) {
+              b.vx -= (1 + params.restitution) * vn * nx;
+              b.vy -= (1 + params.restitution) * vn * ny;
+              // tangential friction -> spin
+              const tx = -ny, ty = nx;
+              const vt = b.vx * tx + b.vy * ty;
+              b.vx -= params.friction * vt * tx;
+              b.vy -= params.friction * vt * ty;
+              const rvel = (rxp * (-b.vy) + ryp * (b.vx)) / (b.hw * b.hw);
+              b.vrot += rvel * params.friction * 0.5;
+            }
+            // positional correct
+            if (nx !== 0) { b.x += nx * Math.min(Math.abs(rxp), 2); }
+            if (ny !== 0) { b.y += ny * Math.min(Math.abs(ryp), 2); }
+          }
+        }
+      }
+    }
+  }
+
+  function collidePair(a, b) {
+    if (a.shape === "circle" && b.shape === "circle") {
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let dist = Math.hypot(dx, dy);
+      const min = a.r + b.r;
+      if (dist === 0) { dx = 0.01; dy = 0.01; dist = 0.0141; }
+      if (dist < min) {
+        const nx = dx / dist, ny = dy / dist;
+        const overlap = min - dist;
+        const totInv = a.inv + b.inv;
+        a.x -= nx * overlap * (a.inv / totInv);
+        a.y -= ny * overlap * (a.inv / totInv);
+        b.x += nx * overlap * (b.inv / totInv);
+        b.y += ny * overlap * (b.inv / totInv);
+        const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+        const vn = rvx * nx + rvy * ny;
+        if (vn < 0) {
+          const j = -(1 + params.restitution) * vn / totInv;
+          a.vx -= j * a.inv * nx; a.vy -= j * a.inv * ny;
+          b.vx += j * b.inv * nx; b.vy += j * b.inv * ny;
+        }
+      }
+    } else if (a.shape === "circle" && b.shape === "box") {
+      circleBox(a, b);
+    } else if (a.shape === "box" && b.shape === "circle") {
+      circleBox(b, a);
+    } else {
+      // box-box: approximate via corner-circle checks both ways
+      boxBox(a, b);
+    }
+  }
+
+  function circleBox(c, bx) {
+    const cp = closestPointOnBox(bx, c.x, c.y);
+    let dx, dy, dist, nx, ny;
+    if (cp.inside) {
+      // push circle out along nearest face
+      dx = c.x - cp.wx; dy = c.y - cp.wy; dist = Math.hypot(dx, dy) || 0.001;
+      nx = dx / dist; ny = dy / dist;
+      const c2 = Math.cos(bx.rot), s2 = Math.sin(bx.rot);
+      // distance to each face in local space
+      const dL = cp.lx + bx.hw, dR = bx.hw - cp.lx, dT = cp.ly + bx.hh, dB = bx.hh - cp.ly;
+      const m = Math.min(dL, dR, dT, dB);
+      let depth = c.r + m;
+      if (m === dL) { nx = -c2; ny = -s2; }
+      else if (m === dR) { nx = c2; ny = s2; }
+      else if (m === dT) { nx = s2; ny = -c2; }
+      else { nx = -s2; ny = c2; }
+      c.x += nx * depth * 0.5; c.y += ny * depth * 0.5;
+      bx.x -= nx * depth * 0.5; bx.y -= ny * depth * 0.5;
+      const vn = (c.vx - bx.vx) * nx + (c.vy - bx.vy) * ny;
+      if (vn < 0) {
+        const totInv = c.inv + bx.inv;
+        const j = -(1 + params.restitution) * vn / totInv;
+        c.vx += j * c.inv * nx; c.vy += j * c.inv * ny;
+        bx.vx -= j * bx.inv * nx; bx.vy -= j * bx.inv * ny;
+        bx.vrot += (c.x - bx.x) * (-c.vy) / (bx.hw * bx.hw) * params.friction;
+      }
+      return;
+    }
+    dx = c.x - cp.wx; dy = c.y - cp.wy; dist = Math.hypot(dx, dy);
+    if (dist < c.r && dist > 0) {
+      nx = dx / dist; ny = dy / dist;
+      const overlap = c.r - dist;
+      const totInv = c.inv + bx.inv;
+      c.x += nx * overlap * (c.inv / totInv);
+      c.y += ny * overlap * (c.inv / totInv);
+      bx.x -= nx * overlap * (bx.inv / totInv);
+      bx.y -= ny * overlap * (bx.inv / totInv);
+      const vn = (c.vx - bx.vx) * nx + (c.vy - bx.vy) * ny;
+      if (vn < 0) {
+        const j = -(1 + params.restitution) * vn / totInv;
+        c.vx += j * c.inv * nx; c.vy += j * c.inv * ny;
+        bx.vx -= j * bx.inv * nx; bx.vy -= j * bx.inv * ny;
+      }
+    }
+  }
+
+  function boxBox(a, b) {
+    // sample corners of a against b (as circle of radius 0) and vice versa
+    const cornersA = [[-a.hw,-a.hh],[a.hw,-a.hh],[a.hw,a.hh],[-a.hw,a.hh]];
+    const ca = Math.cos(a.rot), sa = Math.sin(a.rot);
+    for (const [ox, oy] of cornersA) {
+      const wx = a.x + ox * ca - oy * sa, wy = a.y + ox * sa + oy * ca;
+      const fake = { shape: "circle", x: wx, y: wy, r: 0, inv: a.inv, vx: a.vx, vy: a.vy };
+      circleBox(fake, b);
+      a.x += (fake.x - wx); a.y += (fake.y - wy);
+    }
+    const cornersB = [[-b.hw,-b.hh],[b.hw,-b.hh],[b.hw,b.hh],[-b.hw,b.hh]];
+    const cb = Math.cos(b.rot), sb = Math.sin(b.rot);
+    for (const [ox, oy] of cornersB) {
+      const wx = b.x + ox * cb - oy * sb, wy = b.y + ox * sb + oy * cb;
+      const fake = { shape: "circle", x: wx, y: wy, r: 0, inv: b.inv, vx: b.vx, vy: b.vy };
+      circleBox(fake, a);
+      b.x += (fake.x - wx); b.y += (fake.y - wy);
+    }
+  }
+
+  function step(dt) {
+    const h = dt / SUB;
+    for (let s = 0; s < SUB; s++) {
+      integrate(h);
+      resolveWalls();
+      for (let i = 0; i < bodies.length; i++)
+        for (let j = i + 1; j < bodies.length; j++)
+          collidePair(bodies[i], bodies[j]);
+    }
+  }
+
+  // ---- interaction ----
+  let held = null, grabDX = 0, grabDY = 0, lastX = 0, lastY = 0, lastT = 0;
+  function pointerPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  function bodyAt(x, y) {
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      if (b.shape === "circle") {
+        if (Math.hypot(b.x - x, b.y - y) <= b.r) return b;
+      } else {
+        const cp = closestPointOnBox(b, x, y);
+        if (cp.inside) return b;
+      }
+    }
+    return null;
+  }
+  canvas.addEventListener("pointerdown", e => {
+    const p = pointerPos(e);
+    const b = bodyAt(p.x, p.y);
+    if (b) {
+      held = b; canvas.classList.add("grabbing");
+      grabDX = b.x - p.x; grabDY = b.y - p.y;
+      lastX = p.x; lastY = p.y; lastT = performance.now();
+      canvas.setPointerCapture(e.pointerId);
+    } else {
+      const ball = makeBall(p.x, p.y, rand(16, 40));
+      ball.vy = 60;
+      bodies.push(ball);
+    }
+  });
+  canvas.addEventListener("pointermove", e => {
+    if (!held) return;
+    const p = pointerPos(e);
+    const now = performance.now();
+    const dt = Math.max((now - lastT) / 1000, 1e-3);
+    held.x = p.x + grabDX; held.y = p.y + grabDY;
+    held.vx = (p.x - lastX) / dt; held.vy = (p.y - lastY) / dt;
+    lastX = p.x; lastY = p.y; lastT = now;
+  });
+  function release(e) {
+    if (held) { held = null; canvas.classList.remove("grabbing"); }
+  }
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
+
+  // ---- render ----
+  function drawBody(b) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    if (b.shape === "box") ctx.rotate(b.rot);
+    ctx.fillStyle = b.color;
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 14;
+    if (b.shape === "circle") {
+      ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
+      ctx.beginPath(); ctx.arc(-b.r * 0.3, -b.r * 0.3, b.r * 0.28, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillRect(-b.hw, -b.hh, b.hw * 2, b.hh * 2);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-b.hw, -b.hh); ctx.lineTo(b.hw, -b.hh); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // soft floor shadow band
+  function drawBackground() {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, "#0e1116");
+    grad.addColorStop(1, "#161c27");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    // ground line
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, H - 1); ctx.lineTo(W, H - 1); ctx.stroke();
+  }
+
+  let frames = 0, fpsT = performance.now(), fps = 0;
+  function loop(t) {
+    const now = t || performance.now();
+    let dt = (now - (loop.last || now)) / 1000;
+    loop.last = now;
+    if (dt > 0.05) dt = 0.05; // clamp big gaps
+    step(dt);
+    drawBackground();
+    for (const b of bodies) drawBody(b);
+    if (held) {
+      ctx.strokeStyle = "rgba(84,214,255,0.7)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(held.x, held.y, (held.shape === "circle" ? held.r : Math.max(held.hw, held.hh)) + 6, 0, Math.PI * 2); ctx.stroke();
+    }
+    frames++;
+    if (now - fpsT >= 500) { fps = Math.round(frames * 1000 / (now - fpsT)); frames = 0; fpsT = now;
+      document.getElementById("fps").textContent = fps;
+      document.getElementById("count").textContent = bodies.length;
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

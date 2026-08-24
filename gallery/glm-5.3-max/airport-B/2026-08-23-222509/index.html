@@ -292,7 +292,7 @@ function pathRemain(a){
 }
 const DAYS=['SUN','MON','TUE','WED','THU','FRI','SAT'];
 const MONS=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-const BASE_MS = Date.UTC(2026,7,23,6,52,0);
+const BASE_MS = Date.UTC(2026,7,23);   // midnight, simClock counts from 06:52 local
 function simDate(sc){ return new Date(BASE_MS + sc*1000); }
 function fmtClock(sc){
   const d=simDate(sc);
@@ -307,7 +307,7 @@ const RWY={
   N:{y:250, x0:110, x1:1490, ew:'09L', we:'27R'},
   S:{y:750, x0:110, x1:1490, ew:'09R', we:'27L'}
 };
-const LINKS=[420,1180];
+const LINKS=[420,800,1180];
 const LOOP=[300,1300];
 const LANE_N=380, LANE_S=620;
 const TERM={x0:640,x1:960,y0:465,y1:535};
@@ -331,12 +331,12 @@ const stats={arr:0, dep:0, ga:0, otpN:0, otpD:0, taxiOut:[], taxiIn:[]};
 
 const wind={dir:86, spd:11, spdT:11, gust:0};
 const wxRegimes=[
-  {id:'NSC', vis:9999, phen:'NSC',  w:40, spd:[7,15],  taxiF:1},
-  {id:'FEW', vis:9999, phen:'FEW030',w:30, spd:[8,16],  taxiF:1},
-  {id:'HZ',  vis:6000, phen:'HZ',   w:15, spd:[4,9],    taxiF:.95},
-  {id:'RA',  vis:4500, phen:'-RA',  w:15, spd:[13,22],  taxiF:.85}
+  {id:'NSC', vis:9999, phen:'NSC',  w:40, spd:[7,15],  taxiF:1,   dir:[50,130]},
+  {id:'FEW', vis:9999, phen:'FEW030',w:28, spd:[8,16],  taxiF:1,   dir:[30,150]},
+  {id:'HZ',  vis:6000, phen:'HZ',   w:16, spd:[4,9],    taxiF:.95, dir:[210,320]},
+  {id:'RA',  vis:4500, phen:'-RA',  w:16, spd:[13,22],  taxiF:.85, dir:[230,310]}
 ];
-let wx={...wxRegimes[0]}, wxNext=340, wxTimer=1.5;
+let wx={...wxRegimes[0], dirT:rand(60,120)}, wxNext=340, wxTimer=1.5;
 let atisIdx=0, atisLtr='A';
 
 /* ---------------- flight data ---------------- */
@@ -373,17 +373,20 @@ function makeFlight(){
     id:nextId++, cs:makeCS(), type:t,
     kind:'ARR', origin:pick(long?LONG:SHORT), dest:pick(long?LONG:SHORT),
     standIdx:null, state:'INBOUND', x:0,y:0, hdg:0, spd:0, tSpd:0, turn:1.4, dir:1,
-    alt:1, alpha:1, path:null, pi:0, pathTotal:1,
+    alt:1, alpha:1, path:null, pi:0, pathTotal:1, wpRef:null,
     committed:false, tdX:0, exitX:0, heavyExit:false,
     phase:null, phaseT:0, phaseDur:[], std:0, sta:0,
     landClock:0, pushAt:0, offAt:0, delay:0,
-    trail:[], trailT:0, fadeT:0, reseqT:0, pbT:null, dead:false, gaCount:0
+    trail:[], trailT:0, fadeT:0, reseqT:0, pbT:null, dead:false, gaCount:0, stuckT:0
   };
 }
 function taxiF(){ return wx.taxiF; }
 
 /* ---------------- routes ---------------- */
 function dirOf(){ return config==='EAST'?1:-1; }
+function depLink(){ return dirOf()>0?LINKS[0]:LINKS[2]; }
+function flowEnd(){ return dirOf()>0?LOOP[1]:LOOP[0]; }   // apron loop collection end
+function farEnd(){ return dirOf()>0?LINKS[2]:LINKS[0]; }  // high-speed far exit
 function approachPath(){
   return dirOf()>0
     ? [{x:-30,y:560},{x:60,y:700},{x:150,y:750},{x:240,y:750}]
@@ -392,16 +395,17 @@ function approachPath(){
 function approachSpawn(){ return dirOf()>0? {x:-70,y:450} : {x:1670,y:450}; }
 function tdOf(){ return dirOf()>0?240:1360; }
 function lineupX(){ return dirOf()>0?340:1260; }
-function depLink(){ return dirOf()>0?LINKS[0]:LINKS[1]; }
 
 function buildTaxiIn(a){
   const st=stands[a.standIdx];
+  const fe=flowEnd();
   const pts=[{x:a.exitX,y:RWY.S.y-26},{x:a.exitX,y:LANE_S}];
   if(st.side==='S'){
     pts.push({x:st.x,y:LANE_S},{x:st.x,y:st.y});
   }else{
-    const ex=st.x<800?LOOP[0]:LOOP[1];
-    pts.push({x:ex,y:LANE_S},{x:ex,y:LANE_N},{x:st.x,y:LANE_N},{x:st.x,y:st.y});
+    // north stands: route around the terminal via the flow collection end
+    // so apron lanes stay effectively one-way per runway configuration
+    pts.push({x:fe,y:LANE_S},{x:fe,y:LANE_N},{x:st.x,y:LANE_N},{x:st.x,y:st.y});
   }
   return pts;
 }
@@ -410,14 +414,14 @@ function buildDepPath(a){
   const link=depLink(), lu=lineupX();
   const pts=[];
   if(st.side==='S'){
-    const ex=st.x<800?LOOP[0]:LOOP[1];
-    pts.push({x:ex,y:LANE_S},{x:ex,y:LANE_N});
+    const fe=flowEnd();
+    pts.push({x:fe,y:LANE_S},{x:fe,y:LANE_N});
   }
   pts.push({x:link,y:LANE_N},{x:link,y:RWY.N.y+34},{x:lu,y:RWY.N.y+34});
   return pts;
 }
 function setPath(a,pts){
-  a.path=pts; a.pi=0;
+  a.path=pts; a.pi=0; a.wpRef=null;
   let d=Math.hypot(pts[0].x-a.x,pts[0].y-a.y);
   for(let i=0;i<pts.length-1;i++) d+=wpDist(pts[i],pts[i+1]);
   a.pathTotal=Math.max(d,1);
@@ -428,7 +432,6 @@ const $=id=>document.getElementById(id);
 const cv=$('cv'), ctx=cv.getContext('2d');
 const stage=$('stage');
 let dpr=1, scale=1, ox=0, oy=0;
-const mouse={x:-999,y:-999};
 let hoverId=null, selId=null;
 
 /* ---------------- canvas setup ---------------- */
@@ -465,6 +468,8 @@ function prerender(){
   c.fillRect(RWY.N.x0-40,RWY.N.y-70,RWY.N.x1-RWY.N.x0+80,140);
   c.fillRect(RWY.S.x0-40,RWY.S.y-70,RWY.S.x1-RWY.S.x0+80,140);
 
+  // apron slab (under the taxi network so link stubs read through)
+  c.fillStyle='#141920'; c.fillRect(590,348,420,304);
   // ---- taxi network fill ----
   c.fillStyle='#1e242c';
   const TW=9;
@@ -475,8 +480,6 @@ function prerender(){
     c.fillRect(x-TW,RWY.N.y-TW,2*TW,LANE_N-RWY.N.y+2*TW);
     c.fillRect(x-TW,LANE_S-TW,2*TW,RWY.S.y-LANE_S+2*TW);
   });
-  // apron
-  c.fillStyle='#141920'; c.fillRect(590,348,420,304);
   // runways
   [RWY.N,RWY.S].forEach(r=>{
     c.fillStyle='#272d35';
@@ -585,39 +588,103 @@ if(document.fonts && document.fonts.ready) document.fonts.ready.then(prerender);
 const drops=Array.from({length:80},()=>({x:rand(0,DW),y:rand(0,DH),l:rand(9,18),v:rand(260,420)}));
 
 /* ---------------- movement core ---------------- */
+function normAng(a){ a=((a+Math.PI)%TAU+TAU)%TAU-Math.PI; return a; }
 function stepPath(a,dt){
-  let rem=a.spd*dt, guard=0;
-  while(rem>1e-3 && a.pi<a.path.length && guard++<60){
-    const wp=a.path[a.pi];
-    const dx=wp.x-a.x, dy=wp.y-a.y, d=Math.hypot(dx,dy);
-    if(d<=rem){ a.x=wp.x; a.y=wp.y; rem-=d; a.pi++; }
-    else{
-      a.hdg=turnToward(a.hdg, Math.atan2(dy,dx), a.turn*dt);
-      const mv=Math.min(d,rem);
-      a.x+=Math.cos(a.hdg)*mv; a.y+=Math.sin(a.hdg)*mv;
-      rem=0;
+  // lookahead path following: steer toward a point ahead on the path.
+  // waypoints advance by projecting onto the active segment; for the first
+  // waypoint (segment starts at the aircraft itself) a passing-plane test
+  // guarantees progress even while arcing, so no orbit locks can occur.
+  const look=Math.max(30, a.spd*0.5);
+  let remaining=a.spd*dt, guard=0;
+  while(remaining>1e-3 && a.pi<a.path.length && guard++<30){
+    const cur=a.path[a.pi];
+    const prev=a.pi>0?a.path[a.pi-1]:{x:a.x,y:a.y};
+    const sx=cur.x-prev.x, sy=cur.y-prev.y;
+    const segLen=Math.hypot(sx,sy)||1;
+    const distToCur=Math.hypot(cur.x-a.x,cur.y-a.y);
+    let pass=false;
+    if(a.pi>0){
+      const tproj=clamp(((a.x-prev.x)*sx+(a.y-prev.y)*sy)/segLen,0,segLen);
+      pass = tproj>=segLen-1.5;
+    }else{
+      if(!a.wpRef) a.wpRef={x:cur.x-a.x, y:cur.y-a.y};
+      pass = (cur.x-a.x)*a.wpRef.x + (cur.y-a.y)*a.wpRef.y <= 0;
     }
+    if(pass || distToCur<=Math.max(6,a.spd*0.1)){
+      a.pi++; a.wpRef=null; continue;
+    }
+    // lookahead target along the path
+    let lt=(a.pi>0?clamp(((a.x-prev.x)*sx+(a.y-prev.y)*sy)/segLen,0,segLen):0)+look;
+    let target=cur;
+    if(lt<=segLen){
+      target={x:prev.x+sx/segLen*lt, y:prev.y+sy/segLen*lt};
+    }else{
+      let extra=lt-segLen, i=a.pi, ok=false;
+      while(i+1<a.path.length){
+        const n=a.path[i+1];
+        const l=Math.hypot(n.x-cur.x,n.y-cur.y);
+        if(l>=extra){ const f=extra/(l||1);
+          target={x:cur.x+(n.x-cur.x)*f, y:cur.y+(n.y-cur.y)*f}; ok=true; break; }
+        extra-=l; target=n; i++;
+      }
+      if(!ok) target=cur;
+    }
+    a.hdg=normAng(turnToward(a.hdg, Math.atan2(target.y-a.y,target.x-a.x), a.turn*dt));
+    const step=Math.min(remaining, distToCur+2);
+    a.x+=Math.cos(a.hdg)*step;
+    a.y+=Math.sin(a.hdg)*step;
+    remaining=0;
   }
   return a.pi>=a.path.length;
 }
-function motionAng(a){ return a.state==='PUSHBACK' ? a.hdg+Math.PI : a.hdg; }
-function blockedAhead(a){
+function motionAng(a){
+  if(a.state==='PUSHBACK') return a.hdg+Math.PI;
+  // assess conflicts along the intended direction of travel, not the nose
+  if(a.path && a.pi<a.path.length){
+    const wp=a.path[a.pi];
+    return Math.atan2(wp.y-a.y, wp.x-a.x);
+  }
+  return a.hdg;
+}
+/* nearest traffic ahead (returns {d, st} or null); mutual head-on pairs
+   resolve by id — the lower id drives through */
+function aheadInfo(a){
   const m=motionAng(a), cm=Math.cos(m), sm=Math.sin(m);
+  let best=null;
   for(const b of planes){
     if(b===a || b.dead || b.alt>0.2) continue;
     const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy);
     if(d<1||d>46) continue;
-    if(cm*dx+sm*dy < d*0.4) continue;                 // not ahead
-    if(Math.abs(-sm*dx+cm*dy) > 15) continue;         // lateral offset too big
-    // mutual head-on: lower id has priority and drives through
+    if(cm*dx+sm*dy < d*0.5) continue;               // not ahead
+    if(Math.abs(-sm*dx+cm*dy) > 10) continue;       // lateral offset too big
     if(b.spd<8 && Math.abs(angDiff(m, motionAng(b)))>2.5 && a.id<b.id) continue;
-    return true;
+    if(!best || d<best.d) best={d, st:b.state, bstuck:(b.stuckT||0)};
   }
-  return false;
+  return best;
 }
+function blockedAhead(a){ return aheadInfo(a)!==null; }
 function easeSpd(a,tgt,acc,dt){
   const d=tgt-a.spd;
   a.spd += clamp(d, -acc*dt, acc*dt);
+}
+/* queue-aware taxi movement: brake smoothly for traffic ahead, keep
+   ~12 px spacing, creep through standstill after a wait so apron jams
+   always resolve — but never creep onto aircraft holding for runway */
+function taxiMove(a,dt){
+  const inf=aheadInfo(a);
+  a.stuckT = inf ? (a.stuckT||0)+dt : 0;
+  let tgt=a.tSpd;
+  if(inf){
+    const creepable = inf.st==='TAXI_IN'||inf.st==='TAXI_OUT'||inf.st==='PUSHBACK';
+    if(creepable && a.stuckT>2.5 && inf.d>16){
+      tgt=Math.min(a.tSpd,22);                 // creep: break the jam
+    }else if(creepable && a.stuckT>4 && inf.bstuck>3){
+      tgt=14;                                  // knot shuffle: mutual untangle
+    }else{
+      tgt=Math.max(0, Math.min(a.tSpd,(inf.d-16)*3.2));
+    }
+  }
+  easeSpd(a, tgt, inf?170:70, dt);
 }
 
 /* ---------------- ATC log / toasts ---------------- */
@@ -653,9 +720,8 @@ function tickWeather(dt){
   wxTimer-=dt;
   if(wxTimer>0) return;
   wxTimer=1.4;
-  // wind wanders
-  const wdir=wx.id==='RA'?250:(config==='EAST'?85:275);
-  wind.dir += (wdir-wind.dir)*0.02 + rand(-6,6);
+  // wind wanders toward the current airmass target direction
+  wind.dir += (wx.dirT-wind.dir)*0.02 + rand(-5,5);
   wind.dir=(wind.dir+360)%360;
   wind.spdT=clamp(wind.spdT+rand(-1.4,1.4), wx.spd[0], wx.spd[1]);
   wind.spd=clamp(wind.spd+(wind.spdT-wind.spd)*0.15+rand(-.8,.8),2,26);
@@ -668,7 +734,7 @@ function tickWeather(dt){
     let r=Math.random()*tot, reg=wxRegimes[0];
     for(const g of wxRegimes){ r-=g.w; if(r<=0){ reg=g; break; } }
     if(reg.id!==wx.id){
-      wx={...reg};
+      wx={...reg, dirT:rand(reg.dir[0],reg.dir[1])};
       const L=atisInfo();
       addLog('ATIS','info '+L+': '+reg.phen+', vis '+(reg.vis>8000?'9999':reg.vis)+'m, wind '+pad(Math.round(wind.dir),3)+'/'+Math.round(wind.spd)+'kt');
       if(reg.id==='RA') toast('WEATHER: RAIN MOVING IN · TAXI SPEED REDUCED','ok');
@@ -682,7 +748,7 @@ function tickWeather(dt){
   if(want && want!==config){
     cfgHold+=1.4;
     if(cfgHold>=60){
-      const old=config; config=want; cfgHold=0;
+      config=want; cfgHold=0;
       const L=atisInfo();
       addLog('ATIS','info '+L+': runway config change — now '+(want==='EAST'?'EAST':'WEST')+' OPS, landing '+arrRwy()+', departing '+depRwy());
       toast('RUNWAY CONFIG CHANGE · '+(want==='EAST'?'EAST':'WEST')+' OPS · LDG '+arrRwy()+' DEP '+depRwy(),'');
@@ -705,12 +771,11 @@ function spawnArrival(){
   const sp=approachSpawn();
   a.x=sp.x; a.y=sp.y; a.hdg=dirOf()>0?0.35:Math.PI-0.35;
   a.tdX=tdOf();
-  const heavyExit=a.type.heavy||Math.random()<.2;
-  a.heavyExit=heavyExit;
-  a.exitX=heavyExit ? (dirOf()>0?LINKS[1]:LINKS[0])
-                    : (Math.random()<.6 ? (dirOf()>0?LINKS[1]:LINKS[0]) : (dirOf()>0?LINKS[0]:LINKS[1]));
+  // rollouts: standard types vacate at the near exit, heavies mid, A388 far
+  a.exitX = a.type.n==='A388' ? farEnd() : (a.type.heavy ? LINKS[1] : depLink());
+  a.heavyExit=a.exitX!==depLink();
   setPath(a,approachPath());
-  a.spd=125; a.tSpd=125; a.turn=1.2; a.alt=1;
+  a.spd=125; a.tSpd=125; a.turn=1.6; a.alt=1;
   a.sta=simClock+ (pathRemain(a)/125+rand(4,7))*CLOCK_RATE;
   planes.push(a);
   addLog('TWR',a.cs+' established final RWY '+arrRwy()+' · '+a.type.n+' from '+a.origin);
@@ -731,7 +796,7 @@ function updatePlane(a,dt){
           lockS=a.id; a.committed=true;
           addLog('TWR',a.cs+' cleared to land RWY '+arrRwy()+' · wind '+pad(Math.round(wind.dir),3)+'/'+Math.round(wind.spd)+'kt');
         }else{
-          a.state='GOAROUND'; a.turn=1.2; a.tSpd=170;
+          a.state='GOAROUND'; a.turn=1.6; a.tSpd=170;
           const gp = dir>0
             ? [{x:1250,y:735},{x:1500,y:600},{x:1650,y:400}]
             : [{x:350,y:735},{x:100,y:600},{x:-50,y:400}];
@@ -750,7 +815,7 @@ function updatePlane(a,dt){
     case 'GOAROUND':{
       easeSpd(a,190,50,dt);
       a.alt=clamp(a.alt+dt*0.14,0,1);
-      if(stepPath(a,dt)){ a.state='RESEQ'; a.reseqT=7; a.alpha=0; a.spd=0; }
+      if(stepPath(a,dt)){ a.state='RESEQ'; a.reseqT=rand(16,24); a.alpha=0; a.spd=0; }
       break;
     }
     case 'RESEQ':{
@@ -777,9 +842,10 @@ function updatePlane(a,dt){
       break;
     }
     case 'TAXI_IN':{
-      if(lockS===a.id && Math.abs(a.y-750)>26){ lockS=null; }
-      const bl=blockedAhead(a);
-      easeSpd(a, bl?0:a.tSpd, bl?150:70, dt);
+      // runway is considered occupied until the arrival is well clear
+      // of the exit corridor — prevents pile-ups at the high-speed exit
+      if(lockS===a.id && Math.abs(a.y-750)>55){ lockS=null; }
+      taxiMove(a,dt);
       if(stepPath(a,dt)) dock(a);
       break;
     }
@@ -822,8 +888,7 @@ function updatePlane(a,dt){
       break;
     }
     case 'TAXI_OUT':{
-      const bl=blockedAhead(a);
-      easeSpd(a, bl?0:a.tSpd, bl?150:70, dt);
+      taxiMove(a,dt);
       if(stepPath(a,dt)){
         a.state='HOLD'; a.spd=0;
         addLog('GND',a.cs+' holding short RWY '+depRwy());
@@ -831,7 +896,7 @@ function updatePlane(a,dt){
       break;
     }
     case 'HOLD':{
-      if(lockN===null && mt-lastDepAir>10){
+      if(lockN===null && mt-lastDepAir>7){
         lockN=a.id; a.dir=dirOf();
         a.state='LINEUP'; a.turn=2.2; a.tSpd=34; a.spd=14;
         setPath(a,[{x:lineupX(),y:RWY.N.y}]);
@@ -884,7 +949,7 @@ function dock(a){
   a.phase='DEPLANE'; a.phaseT=0;
   a.phaseDur=[rand(18,26),rand(26,40),rand(22,34)];
   const tot=a.phaseDur[0]+a.phaseDur[1]+a.phaseDur[2];
-  a.std=simClock+(tot+55)*CLOCK_RATE;
+  a.std=simClock+(tot+105)*CLOCK_RATE;
   stats.arr++;
   const ti=(simClock-a.landClock)/60;
   stats.taxiIn.push(ti); if(stats.taxiIn.length>10) stats.taxiIn.shift();
@@ -897,7 +962,7 @@ function tick(dt){
   tickWeather(dt);
   if(mt>=nextArr){
     const ok=spawnArrival();
-    nextArr=mt+(Math.random()<.3?rand(8,13):rand(16,26));
+    nextArr=mt+(Math.random()<.3?rand(10,13):rand(18,28));
     if(!ok) nextArr=mt+7;
   }
   for(const a of planes) if(!a.dead) updatePlane(a,dt);
@@ -1160,6 +1225,7 @@ function domSync(force){
     const a=planes.find(p=>p.id===s.occ&&!p.dead);
     if(a){ busy++;
       gc.textContent=a.cs;
+      gc.style.color='';
       const gp=gatePhase(a);
       bar.style.setProperty('--c',gp.c); bar.style.setProperty('--w',Math.round(gp.w*100)+'%');
       bar.style.background=gp.c; bar.style.width=Math.round(gp.w*100)+'%';
@@ -1298,7 +1364,7 @@ function seed(){
     a.phaseT=a.phaseDur[i]*(k===0?0.9:rand(.2,.7));
     let rem=a.phaseDur[i]-a.phaseT;
     for(let j=i+1;j<3;j++) rem+=a.phaseDur[j];
-    a.std=simClock+(rem+55)*CLOCK_RATE;
+    a.std=simClock+(rem+105)*CLOCK_RATE;
     a.sta=simClock-rand(20,40)*60;
     planes.push(a);
   });
@@ -1321,9 +1387,10 @@ function seed(){
     const a=makeFlight();
     a.standIdx=si; stands[si].occ=a.id;
     a.state='INBOUND'; a.committed=true; lockS=a.id;
-    a.x=620; a.y=750; a.hdg=0; a.spd=126; a.tSpd=126; a.turn=1.2; a.alt=0.08;
-    a.tdX=240; a.heavyExit=a.type.heavy;
-    a.exitX=a.heavyExit?1180:(Math.random()<.6?1180:420);
+    a.x=620; a.y=750; a.hdg=0; a.spd=126; a.tSpd=126; a.turn=1.6; a.alt=0.08;
+    a.tdX=240;
+    a.exitX = a.type.n==='A388' ? LINKS[2] : (a.type.heavy ? LINKS[1] : LINKS[0]);
+    a.heavyExit=true;
     setPath(a,[{x:240,y:750}]);
     a.sta=simClock+60;
     planes.push(a);

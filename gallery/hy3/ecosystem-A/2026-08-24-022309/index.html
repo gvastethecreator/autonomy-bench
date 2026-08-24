@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Self-Sustaining Ecosystem</title>
+<style>
+  :root{
+    --bg:#0a0f14;
+    --panel:#121b22;
+    --ink:#dfeaf0;
+    --muted:#8aa0ad;
+    --plant:#5fd35f;
+    --herb:#ffd166;
+    --carn:#ff6b6b;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{display:flex;flex-direction:column;height:100%;}
+  header{padding:10px 16px;display:flex;align-items:center;gap:14px;
+    border-bottom:1px solid #1d2a33;background:var(--panel);}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px;}
+  header .sub{font-size:12px;color:var(--muted);}
+  .stats{margin-left:auto;display:flex;gap:18px;font-size:12px;}
+  .stat b{display:block;font-size:16px;font-weight:700;line-height:1;}
+  .stat span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;}
+  .c-plant b{color:var(--plant);}
+  .c-herb b{color:var(--herb);}
+  .c-carn b{color:var(--carn);}
+  .stage{flex:1;position:relative;overflow:hidden;}
+  canvas{display:block;width:100%;height:100%;}
+  footer{padding:8px 16px;background:var(--panel);border-top:1px solid #1d2a33;
+    display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted);flex-wrap:wrap;}
+  button{background:#1d2a33;color:var(--ink);border:1px solid #2b3d49;border-radius:6px;
+    padding:6px 12px;font-size:12px;cursor:pointer;}
+  button:hover{background:#26363f;}
+  .legend{display:flex;gap:14px;align-items:center;}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle;}
+  input[type=range]{vertical-align:middle;}
+  .pill{padding:2px 8px;border-radius:999px;background:#1d2a33;border:1px solid #2b3d49;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Self-Sustaining Ecosystem</h1>
+      <div class="sub">Plants · Herbivores · Carnivores — a closed loop of energy</div>
+    </div>
+    <div class="stats">
+      <div class="stat c-plant"><b id="nPlant">0</b><span>Plants</span></div>
+      <div class="stat c-herb"><b id="nHerb">0</b><span>Herbivores</span></div>
+      <div class="stat c-carn"><b id="nCarn">0</b><span>Carnivores</span></div>
+      <div class="stat"><b id="tick">0</b><span>Cycles</span></div>
+    </div>
+  </header>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+  </div>
+
+  <footer>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--plant)"></span>Plant</span>
+      <span><span class="dot" style="background:var(--herb)"></span>Herbivore</span>
+      <span><span class="dot" style="background:var(--carn)"></span>Carnivore</span>
+    </div>
+    <label>Speed <input id="spd" type="range" min="1" max="6" value="3"></label>
+    <button id="pause">Pause</button>
+    <button id="reset">Reset</button>
+    <span class="pill" id="state">running</span>
+    <span style="margin-left:auto">Watch: populations oscillate and self-balance. Starvation, predation, and reproduction keep the world alive.</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const W = () => cv.clientWidth, H = () => cv.clientHeight;
+
+  function resize(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = W() * dpr; cv.height = H() * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resize);
+
+  // --- World parameters ---
+  const CFG = {
+    plantMax: 900,
+    plantSpawn: 4,         // plants try to spawn per tick
+    plantEnergy: 6,        // energy a plant gives
+    herbStart: 40,
+    carnStart: 12,
+    herbSpeed: 1.1,
+    carnSpeed: 1.4,
+    senseHerb: 70,         // herbivore vision
+    senseCarn: 110,        // carnivore vision
+    herbRepro: 80,         // energy needed to reproduce
+    carnRepro: 130,
+    herbMetab: 0.045,      // energy lost per tick
+    carnMetab: 0.06,
+    eatDist: 6,
+    maxAge: 2600,
+  };
+
+  let plants = [], herbs = [], carns = [];
+  let tick = 0, paused = false, speed = 3;
+
+  const rnd = (a,b)=> a + Math.random()*(b-a);
+  const dist2 = (a,b)=>{const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;};
+
+  function makePlant(){
+    return {x:rnd(0,W()), y:rnd(0,H()), e:CFG.plantEnergy, grow:rnd(0,1)};
+  }
+  function makeAnimal(kind){
+    return {
+      x:rnd(0,W()), y:rnd(0,H()),
+      vx:rnd(-1,1), vy:rnd(-1,1),
+      e: kind==='carn'? rnd(70,110): rnd(40,70),
+      age:0, kind
+    };
+  }
+
+  function init(){
+    resize();
+    plants=[]; herbs=[]; carns=[]; tick=0;
+    for(let i=0;i<CFG.plantMax*0.45;i++) plants.push(makePlant());
+    for(let i=0;i<CFG.herbStart;i++) herbs.push(makeAnimal('herb'));
+    for(let i=0;i<CFG.carnStart;i++) carns.push(makeAnimal('carn'));
+  }
+
+  function wrap(a){
+    if(a.x<0)a.x+=W(); if(a.x>W())a.x-=W();
+    if(a.y<0)a.y+=H(); if(a.y>H())a.y-=H();
+  }
+
+  function step(){
+    const w=W(), h=H();
+
+    // Plants grow + spread
+    for(const p of plants){ if(p.grow<1) p.grow=Math.min(1,p.grow+0.01); }
+    for(let i=0;i<CFG.plantSpawn && plants.length<CFG.plantMax;i++){
+      // new plants spawn near existing ones (seeding) or randomly
+      if(plants.length && Math.random()<0.7){
+        const s=plants[(Math.random()*plants.length)|0];
+        plants.push({x:Math.max(0,Math.min(w,s.x+rnd(-40,40))),
+                     y:Math.max(0,Math.min(h,s.y+rnd(-40,40))),
+                     e:CFG.plantEnergy, grow:0});
+      } else {
+        plants.push(makePlant());
+      }
+    }
+    // random decay keeps it bounded
+    if(plants.length>CFG.plantMax*0.95 && Math.random()<0.3){
+      plants.splice((Math.random()*plants.length)|0,1);
+    }
+
+    // Herbivores: seek plants, flee carnivores, eat, reproduce, die
+    const newHerbs=[];
+    for(let i=herbs.length-1;i>=0;i--){
+      const a=herbs[i];
+      a.age++; a.e-=CFG.herbMetab;
+      // threat?
+      let threat=null, td=CFG.senseCarn*CFG.senseCarn;
+      for(const c of carns){const d=dist2(a,c); if(d<td){td=d;threat=c;}}
+      // food?
+      let food=null, fd=CFG.senseHerb*CFG.senseHerb;
+      for(const p of plants){const d=dist2(a,p); if(d<fd){fd=d;food=p;}}
+
+      if(threat){
+        const dx=a.x-threat.x, dy=a.y-threat.y, m=Math.hypot(dx,dy)||1;
+        a.vx+=dx/m*0.4; a.vy+=dy/m*0.4;
+      } else if(food){
+        const dx=food.x-a.x, dy=food.y-a.y, m=Math.hypot(dx,dy)||1;
+        a.vx+=dx/m*0.3; a.vy+=dy/m*0.3;
+      } else {
+        a.vx+=rnd(-0.2,0.2); a.vy+=rnd(-0.2,0.2);
+      }
+      const sp=Math.hypot(a.vx,a.vy)||1;
+      a.vx=a.vx/sp*CFG.herbSpeed; a.vy=a.vy/sp*CFG.herbSpeed;
+      a.x+=a.vx; a.y+=a.vy; wrap(a);
+
+      // eat
+      if(food && dist2(a,food)<CFG.eatDist*CFG.eatDist){
+        a.e+=food.e;
+        const idx=plants.indexOf(food); if(idx>=0) plants.splice(idx,1);
+      }
+      // reproduce / die
+      if(a.e>CFG.herbRepro){
+        a.e*=0.5;
+        newHerbs.push({x:a.x,y:a.y,vx:rnd(-1,1),vy:rnd(-1,1),e:a.e,age:0,kind:'herb'});
+      }
+      if(a.e<=0 || a.age>CFG.maxAge){ herbs.splice(i,1); }
+    }
+    herbs.push(...newHerbs);
+
+    // Carnivores: seek herbivores, eat, reproduce, die
+    const newCarns=[];
+    for(let i=carns.length-1;i>=0;i--){
+      const a=carns[i];
+      a.age++; a.e-=CFG.carnMetab;
+      let prey=null, pd=CFG.senseCarn*CFG.senseCarn;
+      for(const b of herbs){const d=dist2(a,b); if(d<pd){pd=d;prey=b;}}
+      if(prey){
+        const dx=prey.x-a.x, dy=prey.y-a.y, m=Math.hypot(dx,dy)||1;
+        a.vx+=dx/m*0.35; a.vy+=dy/m*0.35;
+      } else {
+        a.vx+=rnd(-0.2,0.2); a.vy+=rnd(-0.2,0.2);
+      }
+      const sp=Math.hypot(a.vx,a.vy)||1;
+      a.vx=a.vx/sp*CFG.carnSpeed; a.vy=a.vy/sp*CFG.carnSpeed;
+      a.x+=a.vx; a.y+=a.vy; wrap(a);
+
+      if(prey && dist2(a,prey)<CFG.eatDist*CFG.eatDist){
+        a.e+=prey.e*0.6+10;
+        const idx=herbs.indexOf(prey); if(idx>=0) herbs.splice(idx,1);
+      }
+      if(a.e>CFG.carnRepro){
+        a.e*=0.5;
+        newCarns.push({x:a.x,y:a.y,vx:rnd(-1,1),vy:rnd(-1,1),e:a.e,age:0,kind:'carn'});
+      }
+      if(a.e<=0 || a.age>CFG.maxAge){ carns.splice(i,1); }
+    }
+    carns.push(...newCarns);
+
+    // Rescue valve: if herbivores crash, a few seeds survive; if all plants gone, regrow
+    if(plants.length<30){ for(let i=0;i<20;i++) plants.push(makePlant()); }
+    if(herbs.length===0 && carns.length>0){ /* carnivores will starve, plants rebound */ }
+    if(herbs.length===0 && plants.length>200){ for(let i=0;i<6;i++) herbs.push(makeAnimal('herb')); }
+
+    tick++;
+  }
+
+  function draw(){
+    const w=W(), h=H();
+    ctx.fillStyle='#0a0f14';
+    ctx.fillRect(0,0,w,h);
+
+    // subtle ground grid
+    ctx.strokeStyle='rgba(255,255,255,0.02)';
+    ctx.lineWidth=1;
+    for(let x=0;x<w;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+    for(let y=0;y<h;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+
+    // plants
+    for(const p of plants){
+      const r=1.5+ (p.grow||1)*1.6;
+      ctx.fillStyle='rgba(95,211,95,'+(0.55+(p.grow||1)*0.4)+')';
+      ctx.beginPath();ctx.arc(p.x,p.y,r,0,7);ctx.fill();
+    }
+    // herbivores
+    for(const a of herbs){
+      const r=2.5+ a.e/40;
+      ctx.fillStyle='#ffd166';
+      ctx.beginPath();ctx.arc(a.x,a.y,r,0,7);ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.lineWidth=0.5;ctx.stroke();
+    }
+    // carnivores
+    for(const a of carns){
+      const r=3+ a.e/45;
+      ctx.fillStyle='#ff6b6b';
+      ctx.beginPath();ctx.arc(a.x,a.y,r,0,7);ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=0.6;ctx.stroke();
+    }
+  }
+
+  function updateStats(){
+    document.getElementById('nPlant').textContent=plants.length;
+    document.getElementById('nHerb').textContent=herbs.length;
+    document.getElementById('nCarn').textContent=carns.length;
+    document.getElementById('tick').textContent=tick;
+  }
+
+  function loop(){
+    if(!paused){
+      for(let s=0;s<speed;s++) step();
+      draw(); updateStats();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('pause').onclick=()=>{
+    paused=!paused;
+    document.getElementById('pause').textContent=paused?'Resume':'Pause';
+    document.getElementById('state').textContent=paused?'paused':'running';
+  };
+  document.getElementById('reset').onclick=()=>{init();};
+  document.getElementById('spd').oninput=(e)=>{speed=+e.target.value;};
+
+  init();
+  loop();
+})();
+</script>
+</body>
+</html>

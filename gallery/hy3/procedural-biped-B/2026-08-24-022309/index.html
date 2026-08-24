@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Procedural Biped — Walking</title>
+<style>
+  :root {
+    --ink: #e8ecf4;
+    --dim: #8a93a8;
+    --accent: #6fd3ff;
+    --panel: rgba(14, 18, 28, 0.72);
+    --stroke: rgba(120, 140, 180, 0.22);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05070c; }
+  body {
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    color: var(--ink);
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .hud {
+    position: fixed; left: 18px; top: 16px;
+    padding: 14px 16px; max-width: 330px;
+    background: var(--panel);
+    border: 1px solid var(--stroke);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+  .hud h1 {
+    margin: 0 0 4px; font-size: 14px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .hud p { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--dim); }
+
+  .controls {
+    position: fixed; left: 18px; bottom: 18px;
+    padding: 14px 16px; width: 300px;
+    background: var(--panel);
+    border: 1px solid var(--stroke);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+  .row label { font-size: 11px; color: var(--dim); width: 64px; flex: none; text-transform: uppercase; letter-spacing: 0.05em; }
+  .row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .row .val { font-size: 11px; color: var(--ink); width: 44px; text-align: right; flex: none; }
+  .btns { display: flex; gap: 8px; margin-top: 6px; }
+  button {
+    flex: 1; cursor: pointer; color: var(--ink);
+    background: rgba(111, 211, 255, 0.08);
+    border: 1px solid var(--stroke); border-radius: 8px;
+    padding: 8px 6px; font: inherit; font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover { background: rgba(111, 211, 255, 0.18); border-color: var(--accent); }
+  button.active { background: rgba(111, 211, 255, 0.22); border-color: var(--accent); }
+
+  .tag {
+    position: fixed; right: 18px; bottom: 18px;
+    font-size: 10.5px; color: var(--dim); letter-spacing: 0.08em;
+    text-transform: uppercase; opacity: 0.7; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud">
+  <h1>Procedural Biped</h1>
+  <p>A two-legged walker assembled from primitives. The gait is generated entirely in code — limb swing, knee bend, and body bob are driven by layered sine phases, no keyframes. Drag to orbit, scroll to zoom.</p>
+</div>
+
+<div class="controls">
+  <div class="row">
+    <label for="speed">Cadence</label>
+    <input id="speed" type="range" min="0" max="2.4" step="0.01" value="1" />
+    <span class="val" id="speedVal">1.00</span>
+  </div>
+  <div class="row">
+    <label for="stride">Stride</label>
+    <input id="stride" type="range" min="0.3" max="1.3" step="0.01" value="0.85" />
+    <span class="val" id="strideVal">0.85</span>
+  </div>
+  <div class="btns">
+    <button id="playBtn" class="active">Pause</button>
+    <button id="camBtn">Free Cam</button>
+    <button id="spinBtn" class="active">Track</button>
+  </div>
+</div>
+
+<div class="tag">three.js · procedural gait</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- renderer / scene ----------
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070a12);
+scene.fog = new THREE.Fog(0x070a12, 14, 42);
+
+const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(5.5, 4.2, 7.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 1.6, 0);
+controls.minDistance = 3;
+controls.maxDistance = 26;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+// ---------- lighting ----------
+const hemi = new THREE.HemisphereLight(0x9fc4ff, 0x141026, 0.55);
+scene.add(hemi);
+
+const key = new THREE.DirectionalLight(0xfff2d8, 1.25);
+key.position.set(6, 11, 5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 40;
+key.shadow.camera.left = -16;
+key.shadow.camera.right = 16;
+key.shadow.camera.top = 16;
+key.shadow.camera.bottom = -16;
+key.shadow.bias = -0.0004;
+scene.add(key);
+
+const rim = new THREE.DirectionalLight(0x5f8bff, 0.5);
+rim.position.set(-7, 4, -6);
+scene.add(rim);
+
+// ---------- ground ----------
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(40, 96),
+  new THREE.MeshStandardMaterial({ color: 0x0d1322, roughness: 0.95, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(80, 80, 0x2a3b66, 0x182238);
+grid.material.opacity = 0.5;
+grid.material.transparent = true;
+scene.add(grid);
+
+// ---------- materials ----------
+const skin   = new THREE.MeshStandardMaterial({ color: 0x6fd3ff, roughness: 0.45, metalness: 0.15, emissive: 0x12283a, emissiveIntensity: 0.6 });
+const joint  = new THREE.MeshStandardMaterial({ color: 0x10151f, roughness: 0.6, metalness: 0.3 });
+const limb   = new THREE.MeshStandardMaterial({ color: 0x3f8fb8, roughness: 0.5, metalness: 0.2, emissive: 0x0c1d2a, emissiveIntensity: 0.5 });
+const accent = new THREE.MeshStandardMaterial({ color: 0xffd27a, roughness: 0.4, metalness: 0.2, emissive: 0x3a2c10, emissiveIntensity: 0.7 });
+
+// helper to make a capsule-ish limb segment
+function segment(len, rad, mat) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(rad, len - rad * 2, 6, 14), mat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  // capsule is centered on its local origin and aligned with Y; shift so top is at origin pivot
+  m.position.y = -len / 2;
+  g.add(m);
+  return g;
+}
+function ball(rad, mat) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(rad, 20, 16), mat);
+  m.castShadow = true;
+  return m;
+}
+
+// ---------- build the biped ----------
+// root -> hips -> torso -> head
+//           legs (L/R): hip joint -> thigh -> knee -> shin -> foot
+//           arms (L/R): shoulder -> upper -> elbow -> forearm -> hand
+const root = new THREE.Group();
+scene.add(root);
+
+const biped = new THREE.Group();
+root.add(biped);
+
+// hips
+const hips = new THREE.Group();
+hips.position.y = 1.05;
+biped.add(hips);
+
+const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.32, 0.34), joint);
+pelvis.castShadow = true;
+hips.add(pelvis);
+
+// torso
+const torso = new THREE.Group();
+torso.position.y = 0.16;
+hips.add(torso);
+const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 0.5, 8, 18), skin);
+chest.scale.set(1, 1, 0.78);
+chest.position.y = 0.45;
+chest.castShadow = true;
+torso.add(chest);
+const collar = ball(0.18, accent);
+collar.position.y = 0.74;
+torso.add(collar);
+
+// neck + head
+const neck = segment(0.18, 0.09, joint);
+neck.position.y = 0.74;
+torso.add(neck);
+const head = new THREE.Group();
+head.position.y = 0.95;
+torso.add(head);
+const skull = new THREE.Mesh(new THREE.SphereGeometry(0.26, 24, 20), skin);
+skull.castShadow = true;
+head.add(skull);
+const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.06), accent);
+visor.position.set(0, 0.02, 0.23);
+head.add(visor);
+const antL = segment(0.28, 0.03, accent); antL.position.set(0.1, 0.22, 0); antL.rotation.z = -0.5; head.add(antL);
+const antR = segment(0.28, 0.03, accent); antR.position.set(-0.1, 0.22, 0); antR.rotation.z = 0.5; head.add(antR);
+
+// limbs factory
+function buildLeg(side) {
+  const hip = new THREE.Group();
+  hip.position.set(side * 0.17, -0.02, 0);
+  hips.add(hip);
+  const hipBall = ball(0.13, joint); hip.add(hipBall);
+
+  const thigh = segment(0.5, 0.1, limb);
+  hip.add(thigh);
+
+  const knee = new THREE.Group();
+  knee.position.y = -0.5;
+  thigh.add(knee);
+  knee.add(ball(0.1, joint));
+
+  const shin = segment(0.46, 0.085, limb);
+  knee.add(shin);
+
+  const ankle = new THREE.Group();
+  ankle.position.y = -0.46;
+  shin.add(ankle);
+  ankle.add(ball(0.08, joint));
+
+  const foot = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.42), accent);
+  foot.position.set(0, -0.02, 0.13);
+  foot.castShadow = true;
+  ankle.add(foot);
+
+  return { hip, thigh, knee, shin, ankle };
+}
+
+function buildArm(side) {
+  const shoulder = new THREE.Group();
+  shoulder.position.set(side * 0.42, 0.7, 0);
+  torso.add(shoulder);
+  shoulder.add(ball(0.12, joint));
+
+  const upper = segment(0.42, 0.085, limb);
+  shoulder.add(upper);
+
+  const elbow = new THREE.Group();
+  elbow.position.y = -0.42;
+  upper.add(elbow);
+  elbow.add(ball(0.09, joint));
+
+  const fore = segment(0.38, 0.075, limb);
+  elbow.add(fore);
+
+  const hand = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), accent);
+  hand.position.y = -0.4;
+  hand.castShadow = true;
+  fore.add(hand);
+
+  return { shoulder, upper, elbow, fore };
+}
+
+const legL = buildLeg(1);
+const legR = buildLeg(-1);
+const armL = buildArm(1);
+const armR = buildArm(-1);
+
+// ---------- gait parameters ----------
+const gait = {
+  speed: 1.0,
+  stride: 0.85,
+  playing: true,
+  freeCam: false,
+  track: true,
+  t: 0,
+};
+
+// ---------- walk animation ----------
+// Classic inverted-pendulum-ish procedural gait.
+function applyGait(t) {
+  const phase = t * 2.4;            // stride frequency
+  const A = gait.stride;             // hip swing amplitude (radians)
+  const sL = Math.sin(phase);
+  const sR = Math.sin(phase + Math.PI);
+
+  // hip swing (legs rotate about X)
+  legL.hip.rotation.x = sL * A;
+  legR.hip.rotation.x = sR * A;
+
+  // knee bend: only bends significantly while the leg is in the back / lifting
+  // knee bends when thigh angle < 0 (moving back) — use a shaped function
+  const kneeBend = (angle) => {
+    // angle>0 = forward swing (straightish), angle<0 = back/lift (bend)
+    const f = Math.max(0, -angle / A);        // 0..1 as leg goes back
+    return f * f * 1.5;                        // up to ~1.5 rad bend
+  };
+  legL.knee.rotation.x = kneeBend(legL.hip.rotation.x) + 0.05;
+  legR.knee.rotation.x = kneeBend(legR.hip.rotation.x) + 0.05;
+
+  // ankle: counter-rotate slightly so foot stays flatter
+  legL.ankle.rotation.x = -legL.hip.rotation.x * 0.35 - 0.1;
+  legR.ankle.rotation.x = -legR.hip.rotation.x * 0.35 - 0.1;
+
+  // arms swing opposite to legs, with a slight elbow flex
+  armL.upper.rotation.x = -sL * A * 0.7;
+  armR.upper.rotation.x = -sR * A * 0.7;
+  armL.elbow.rotation.x = 0.4 + Math.max(0, sL) * 0.5;
+  armR.elbow.rotation.x = 0.4 + Math.max(0, sR) * 0.5;
+
+  // torso counter-rotation and lean
+  torso.rotation.y = Math.sin(phase + Math.PI / 2) * 0.12;
+  torso.rotation.z = -sL * 0.05;
+
+  // vertical body bob: two bobs per stride (fast when legs pass)
+  const bob = Math.abs(Math.sin(phase)) * 0.06 + Math.cos(phase * 2) * 0.02;
+  hips.position.y = 1.05 + bob;
+
+  // subtle head bob / look
+  head.rotation.y = Math.sin(phase) * 0.08;
+}
+
+// ---------- movement path ----------
+// The creature walks along a large circle so it stays in frame.
+const pathRadius = 4.2;
+function updatePosition(t) {
+  const angular = gait.speed * 0.42;          // radians/sec around circle
+  const a = -t * angular;
+  const x = Math.cos(a) * pathRadius;
+  const z = Math.sin(a) * pathRadius;
+  biped.position.set(x, 0, z);
+  // face direction of travel (tangent)
+  const tangent = Math.atan2(Math.cos(a), -Math.sin(a));
+  biped.rotation.y = tangent;
+}
+
+// ---------- loop ----------
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if (gait.playing) gait.t += dt * gait.speed;
+
+  applyGait(gait.t);
+  if (gait.playing) updatePosition(gait.t);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ---------- UI ----------
+const speedEl = document.getElementById('speed');
+const strideEl = document.getElementById('stride');
+const speedVal = document.getElementById('speedVal');
+const strideVal = document.getElementById('strideVal');
+const playBtn = document.getElementById('playBtn');
+const camBtn = document.getElementById('camBtn');
+const spinBtn = document.getElementById('spinBtn');
+
+speedEl.addEventListener('input', () => {
+  gait.speed = parseFloat(speedEl.value);
+  speedVal.textContent = gait.speed.toFixed(2);
+});
+strideEl.addEventListener('input', () => {
+  gait.stride = parseFloat(strideEl.value);
+  strideVal.textContent = gait.stride.toFixed(2);
+});
+playBtn.addEventListener('click', () => {
+  gait.playing = !gait.playing;
+  playBtn.textContent = gait.playing ? 'Pause' : 'Play';
+  playBtn.classList.toggle('active', gait.playing);
+});
+spinBtn.addEventListener('click', () => {
+  gait.track = !gait.track;
+  spinBtn.textContent = gait.track ? 'Track' : 'Circle';
+  spinBtn.classList.toggle('active', gait.track);
+  // toggle between orbit-follow of root and free orbit
+  controls.target.copy(gait.track ? biped.position : new THREE.Vector3(0, 1.6, 0));
+});
+camBtn.addEventListener('click', () => {
+  gait.freeCam = !gait.freeCam;
+  camBtn.textContent = gait.freeCam ? 'Orbit' : 'Free Cam';
+  camBtn.classList.toggle('active', gait.freeCam);
+  controls.autoRotate = !gait.freeCam;
+  controls.autoRotateSpeed = 0.6;
+});
+
+// keep camera following the walker when tracking
+const baseTarget = new THREE.Vector3(0, 1.6, 0);
+function followTick() {
+  if (gait.track) {
+    controls.target.lerp(biped.position.clone().add(new THREE.Vector3(0, 1.4, 0)), 0.12);
+  } else {
+    controls.target.lerp(baseTarget, 0.04);
+  }
+  requestAnimationFrame(followTick);
+}
+followTick();
+
+// ---------- resize ----------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// expose for debugging
+window.__biped = { scene, biped, gait };
+</script>
+</body>
+</html>
