@@ -163,8 +163,8 @@
     <button data-s="1" class="active">1×</button><button data-s="2">2×</button><button data-s="4">4×</button>
   </div>
   <label class="ctl">Density
-    <input type="range" id="density" min="10" max="110" step="5" value="70">
-    <output id="densityVal">70</output>
+    <input type="range" id="density" min="10" max="110" step="5" value="60">
+    <output id="densityVal">60</output>
   </label>
   <label class="ctl switch">Pedestrians
     <input type="checkbox" id="pedsToggle" checked><span class="knob"></span>
@@ -524,9 +524,9 @@ function drawStaticLayer(pal, night){
 /* ---------- simulation state ---------- */
 let cars = [], peds = [], followed = null;
 let simTime = 0, dayT = 0.38, trips = 0, tripTimes = [];
-let running = true, simSpeed = 1, targetCars = 70, pedsOn = true;
+let running = true, simSpeed = 1, targetCars = 60, pedsOn = true;
 let timeMode = 'auto', idc = 0;
-let spawnAcc = 0, pedAcc = 0, avgSpeedEMA = 60, lastMove = 0;
+let spawnAcc = 0, pedAcc = 0, avgSpeedEMA = 60, lastMove = 0, lastCull = 0;
 const cam = {x:WW/2, y:WH/2, s:1, tx:WW/2, ty:WH/2, ts:1, follow:false};
 
 /* ---------- signals ---------- */
@@ -568,7 +568,7 @@ function chooseNext(c){
     if(dot > 0.9) straight = l;
     else if(L.ux*l.uy - L.uy*l.ux > 0) right = l; else left = l;
   }
-  const opts = [[straight,0.58],[right,0.24],[left,0.18]].filter(o=>o[0]);
+  const opts = [[straight,0.62],[right,0.24],[left,0.14]].filter(o=>o[0]);
   let tot = 0; for(const o of opts) tot += o[1];
   let r = Math.random()*tot, pick = opts[0][0];
   for(const o of opts){ r -= o[1]; if(r <= 0){ pick = o[0]; break; } }
@@ -613,15 +613,16 @@ function leaderGap(c){
       if(o.conn.fromLink === c.conn.fromLink){
         // diverter from my own approach: shared start point, compare progress
         if(o.s > c.s){
-          const g = o.s - c.s - (o.L+c.L)/2 - 4;
+          const g = o.s - c.s - (o.L+c.L)/2 - 6;
           if(g < best) best = g;
         }
       } else if(o.conn.nextLink === NL){
         // compare distance-to-lane-entry across the two different chords;
-        // only the car that is actually behind yields (no mutual freeze)
+        // only the car that is actually behind yields (no mutual freeze).
+        // extra margin absorbs hard-braking overshoot during merges
         const myRem = c.conn.len - c.s, oRem = o.conn.len - o.s;
         if(oRem < myRem){
-          const g = myRem - oRem - (o.L+c.L)/2 - 4;
+          const g = myRem - oRem - (o.L+c.L)/2 - 14;
           if(g < best) best = g;
         }
       }
@@ -644,7 +645,7 @@ function leaderGap(c){
       if(g < best) best = g;
     } else if(o.conn && o.conn.fromLink === L){
       // a vehicle from my own approach diverging inside the box is still my leader
-      const g = (L.len - c.s) + o.s - (o.L+c.L)/2 - 4;
+      const g = (L.len - c.s) + o.s - (o.L+c.L)/2 - 8;
       if(g < best) best = g;
     }
   }
@@ -684,9 +685,11 @@ function gateInfo(c){
   if(ok){
     for(const m of T.box){
       if(m.car === c) continue;
-      if(m.fromLink !== L && (m.toLink === c.nextLink || m.turn === -1 || c.turnNext === -1)){
-        ok = false; break;
-      }
+      if(m.fromLink === L) continue;                 // tandems from one approach queue up safely
+      const opp = m.fromLink.ux*L.ux + m.fromLink.uy*L.uy < -0.9;   // opposing approach
+      // only opposing straight-through movements run in parallel lanes;
+      // every other combination crosses or merges, so the box is exclusive
+      if(!(opp && m.turn === 0 && c.turnNext === 0)){ ok = false; break; }
     }
   }
   if(ok && c.turnNext !== 0 && pedNear(T)) ok = false;  // turns wait for pedestrians
@@ -840,15 +843,15 @@ function step(dt){
     if(peds[i].fade <= 0) peds.splice(i,1);
   }
   if(timeMode === 'auto') dayT = (dayT + dt/DAYLEN) % 1;
-  // stats EMA + gridlock recovery: when the whole fleet crawls for a long
-  // stretch, quietly dissolve one vehicle from the longest dead queue so
-  // standing waves can drain again
+  // stats EMA + gridlock recovery: while the whole fleet is stalled, quietly
+  // dissolve the head of the longest dead queue every few seconds so standing
+  // waves and spillback circles can drain again
   if(cars.length){
     let sum = 0; for(const c of cars) sum += c.v;
     const fleetAvg = sum / cars.length;
     avgSpeedEMA = lerp(avgSpeedEMA, fleetAvg, 0.02);
     if(fleetAvg > 6) lastMove = simTime;
-    else if(cars.length > 8 && simTime - lastMove > 12){
+    else if(cars.length > 8 && simTime - lastMove > 8 && simTime - lastCull > 2.5){
       let best = null, bn = 2;
       for(const l of links){ if(l.cars.length > bn){ bn = l.cars.length; best = l; } }
       if(best){
@@ -858,7 +861,7 @@ function step(dt){
           if(o.conn || (bx && bx.some(m => m.car === o))) continue;
           if(!victim || o.s > victim.s) victim = o;
         }
-        if(victim){ removeCar(victim); lastMove = simTime; }
+        if(victim){ removeCar(victim); lastCull = simTime; }
       }
     }
   }
@@ -1192,7 +1195,7 @@ window.addEventListener('resize', resize);
 /* ---------- reset & boot ---------- */
 function reset(){
   for(const c of cars.slice()) removeCar(c);
-  cars = []; peds = []; tripTimes = []; trips = 0; simTime = 0; dayT = 0.38; lastMove = 0;
+  cars = []; peds = []; tripTimes = []; trips = 0; simTime = 0; dayT = 0.38; lastMove = 0; lastCull = 0;
   followed = null; cam.follow = false; carCard.classList.remove('on');
   for(const l of links) l.cars.length = 0;
   for(const T of INTERS) T.box.length = 0;
