@@ -1,1 +1,0 @@
-Create a real-time system monitoring dashboard in a single HTML file using simulated data. Make design, pacing, composition, and implementation decisions yourself wherever details are unspecified, turning the idea into a coherent finished experience.

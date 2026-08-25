@@ -1,1 +1,0 @@
-Create a shader playground in a single HTML file using WebGL. Make design, pacing, composition, and implementation decisions yourself wherever details are unspecified, turning the idea into a coherent finished experience.
