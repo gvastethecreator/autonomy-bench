@@ -100,6 +100,56 @@ describe('publishRun', () => {
     expect(catalog.promptRevisions[0].prompt).toContain('Create a ride');
   });
 
+  it('does not inherit a previous catalog label when publishing a specific run', () => {
+    const galleryDir = tempDir();
+    mkdirSync(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413', 'index.html'),
+      '<html></html>',
+    );
+    writeJson(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413', 'receipt.json'), {
+      schemaVersion: 1,
+      runId: 'run-old',
+      cellId: 'rollercoaster--a--grok-4.6--a01',
+      benchmarkId: 'rollercoaster',
+      promptLevel: 'A',
+      attempt: 1,
+      requestedModel: 'grok-4.6',
+      promptSha256: 'aaa',
+      status: 'complete',
+      adapter: 'agent',
+      harness: 'cursor',
+      startedAt: 'not captured',
+      completedAt: 'not captured',
+      durationMs: 1200,
+      tokenUsage: 'not captured',
+      contributor: {
+        github: 'gvastethecreator',
+        avatarUrl: 'https://github.com/gvastethecreator.png',
+      },
+    });
+    writeJson(join(galleryDir, 'catalog.json'), {
+      runId: 'run-old',
+      label: 'ox-alpha-free-rollercoaster-bc',
+      harness: 'opencode',
+      adapter: 'agent',
+    });
+    const catalog = writeCatalogFile(galleryDir, suite, {
+      runId: 'run-new',
+      label: '',
+      harness: 'claude-code',
+      adapter: 'agent',
+    });
+    expect(catalog.label).toBe('');
+    expect(catalog.harness).toBe('claude-code');
+    expect(catalog.runs.find((run) => run.runId === 'run-old')).toMatchObject({
+      harness: 'cursor',
+      label: '',
+    });
+  });
+
   it('publishes html-only takes as pending and playable', () => {
     const root = tempDir();
     const runDir = join(root, 'run');
