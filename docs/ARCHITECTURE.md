@@ -5,7 +5,7 @@ Autonomy Bench has five layers:
 1. **Suite** — versioned benchmark definitions and frozen A/B/C prompts.
 2. **Planner** — expands benchmark × model × attempt into immutable cells.
 3. **Adapter** — manual, isolated agent, or Prototype Lab execution.
-4. **Ledger** — per-cell factual receipts (including generation time and token spend) plus output hashes and the GitHub contributor.
+4. **Ledger** — per-cell factual receipts (including generation time and token spend) plus output hashes and the GitHub contributor. Cell receipts live under `runs/`, not a separate workflow-receipt tree.
 5. **Evaluation** — optional blind scores/reviews stored separately from execution provenance.
 
 Gallery winner votes are not a sixth method layer. They are a public popularity mark on the stage viewer. They live in D1, not in receipts.
@@ -29,8 +29,6 @@ gallery/
   index.html                    public stage viewer
   catalog.json
   <model>/<prompt-V>/<fecha>/
-exports/prototype-lab/<run-id>/ generated Prototype Lab specs
-receipts/YYYY/MM/DD/            workflow receipts
 SKILLS/autonomy-bench/          coordinator skill
 scripts/bench.mjs               CLI over plan / status / finalize
 scripts/plan.mjs                plan, status, finalize
@@ -42,6 +40,8 @@ workers/gallery.ts              vote API in front of gallery assets
 migrations/                     D1 schema for gallery votes
 schemas/                        receipt and manifest schemas
 ```
+
+`bench export-prototype-lab` writes gitignored Prototype Lab specs under `exports/prototype-lab/<run-id>/`.
 
 `<prompt-V>` is `{benchmark}-{A|B|C}` (`rollercoaster-A`). `<fecha>` is `{YYYY-MM-DD}-{HHMMSS}` from the run id. Extra attempts append `-a02` on the gallery date folder, or an `a02/` child in the ledger.
 
