@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.4 — 2026-08-24
+
+- Single view fills the stage: no outer gap around the take. The toolbar spans the top edge. A receipt status bar sits on the bottom edge in Single and on compact Models cards (duration, ≈ tokens, contributor, harness). On a wide take those fields are labeled inline.
+
 ## 0.7.3 — 2026-08-24
 
 - Show vendor brand marks for models and harnesses in the gallery (Gemini, DeepSeek, GLM/Z.ai, Kimi, Qwen, Hunyuan, Meta, OpenCode, Antigravity). Fallback stays the generic brain when no mark exists.
