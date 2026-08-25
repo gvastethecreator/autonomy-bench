@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rollercoaster</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87b8d4; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b8d4);
+scene.fog = new THREE.Fog(0x87b8d4, 60, 320);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 500);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+// Lights
+scene.add(new THREE.HemisphereLight(0xffffff, 0x556644, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.2);
+sun.position.set(60, 100, 40);
+scene.add(sun);
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(400, 48),
+  new THREE.MeshLambertMaterial({ color: 0x6c9e5a })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// Track: closed loop with lift hill, big drop, hills, banked-feel turns
+const pts = [
+  [0, 4, 60], [40, 5, 55], [70, 20, 30],      // lift hill climb
+  [80, 34, 0],                                 // crest
+  [70, 6, -35],                                // big drop
+  [40, 12, -60], [0, 5, -70], [-35, 16, -55], // hills
+  [-65, 8, -25], [-70, 14, 10],               // wide turn
+  [-50, 4, 45], [-25, 10, 60], [-8, 4, 65],   // final swoop home
+];
+const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p)), true);
+
+// Rails: two thin tubes offset from center, plus crossties
+const N = 600;
+function railCurve(side) {
+  const railPts = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const p = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t);
+    const right = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0, 1, 0)).normalize();
+    railPts.push(p.clone().addScaledVector(right, side * 0.5));
+  }
+  return new THREE.CatmullRomCurve3(railPts, true);
+}
+const railMat = new THREE.MeshLambertMaterial({ color: 0xcc3333 });
+for (const side of [-1, 1]) {
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(railCurve(side), N, 0.12, 6, true), railMat));
+}
+const tieMat = new THREE.MeshLambertMaterial({ color: 0x664433 });
+const tieGeo = new THREE.BoxGeometry(1.4, 0.08, 0.3);
+const ties = new THREE.InstancedMesh(tieGeo, tieMat, 200);
+const m = new THREE.Matrix4();
+const up = new THREE.Vector3(0, 1, 0);
+for (let i = 0; i < 200; i++) {
+  const t = i / 200;
+  const p = curve.getPointAt(t);
+  const tan = curve.getTangentAt(t);
+  const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3().crossVectors(tan, up).normalize());
+  m.compose(p, quat, new THREE.Vector3(1, 1, 1));
+  ties.setMatrixAt(i, m);
+}
+scene.add(ties);
+
+// Support pillars
+const pillarMat = new THREE.MeshLambertMaterial({ color: 0x888899 });
+for (let i = 0; i < 40; i++) {
+  const p = curve.getPointAt(i / 40);
+  if (p.y < 1.5) continue;
+  const h = p.y - 0.2;
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, h, 8), pillarMat);
+  pillar.position.set(p.x, h / 2, p.z);
+  scene.add(pillar);
+}
+
+// Scenery: scattered trees for motion parallax
+const trunkMat = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
+const leafMat = new THREE.MeshLambertMaterial({ color: 0x3e7d3a });
+for (let i = 0; i < 120; i++) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 90 + Math.random() * 200;
+  const x = Math.cos(a) * r, z = Math.sin(a) * r;
+  const s = 0.8 + Math.random() * 1.6;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3 * s, 0.4 * s, 3 * s, 6), trunkMat);
+  trunk.position.set(x, 1.5 * s, z);
+  const leaves = new THREE.Mesh(new THREE.ConeGeometry(2.2 * s, 5 * s, 8), leafMat);
+  leaves.position.set(x, 3 * s + 2.5 * s, z);
+  scene.add(trunk, leaves);
+}
+
+// Ride: continuous playback, gravity-flavored speed
+const maxY = Math.max(...pts.map(p => p[1]));
+let t = 0;
+const clock = new THREE.Clock();
+const eye = new THREE.Vector3(), look = new THREE.Vector3();
+const HEAD = 1.0;
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const pos = curve.getPointAt(t);
+  const speed = (6 + 0.9 * (maxY - pos.y)) / curve.getLength(); // faster at the bottom
+  t = (t + speed * dt) % 1;
+
+  eye.copy(curve.getPointAt(t)).y += HEAD;
+  look.copy(curve.getPointAt((t + 0.008) % 1)).y += HEAD;
+  camera.position.copy(eye);
+  camera.lookAt(look);
+
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

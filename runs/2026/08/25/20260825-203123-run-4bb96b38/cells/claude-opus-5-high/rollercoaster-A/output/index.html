@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First-Person Rollercoaster</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #8fc4e8; }
+  canvas { display: block; }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    font: 500 15px/1.4 system-ui, sans-serif; color: #12314a; background: #8fc4e8;
+  }
+</style>
+</head>
+<body>
+<div id="loading">Building the coaster&hellip;</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ------------------------------------------------------------------ *
+ * Track layout: one closed circuit. [x, y, z] in metres.
+ * ------------------------------------------------------------------ */
+const CONTROL = [
+  [   0,  8,    0],  // station, heading +x
+  [  60,  8,   -2],
+  [ 110, 24,    0],  // lift hill
+  [ 150, 42,   10],
+  [ 168, 46,   45],  // crest, turning to +z
+  [ 155, 22,   85],  // first drop
+  [ 120,  5,  110],  // valley
+  [  70, 30,  118],  // airtime hill
+  [  20,  9,  120],
+  [ -25, 28,  112],  // second hill
+  [ -58, 16,   88],  // banked turn
+  [ -70, 22,   55],
+  [ -72,  9,   20],
+  [ -68, 20,  -20],
+  [ -50, 12,  -45],
+  [ -25, 18,  -40],  // finale hook
+  [ -10, 10,  -20],
+];
+
+const G = 9.8;          // gravity
+const V_MIN = 6;        // never stall
+const PAD = 3;          // energy headroom above the highest point
+const EYE_H = 1.35;     // rider eye above the rail plane
+const GAUGE = 2.4;      // distance between rails
+const N = 1400;         // frame-table resolution
+
+const curve = new THREE.CatmullRomCurve3(
+  CONTROL.map(p => new THREE.Vector3(...p)), true, 'catmullrom', 0.5
+);
+const LEN = curve.getLength();
+const DS = LEN / N;
+
+/* --- Frame table: one source of truth for geometry AND camera. ----- *
+ * ponytail: world-up frames + banking, so no inversions are possible.
+ * Swap in parallel-transport frames if the track ever needs a loop.  */
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const P = [], T = [], R = [], U = [];
+
+for (let i = 0; i < N; i++) {
+  const u = i / N;                       // getPointAt is arc-length parameterised
+  P.push(curve.getPointAt(u));
+  T.push(curve.getTangentAt(u).normalize());
+}
+
+let yMax = -Infinity;
+for (const p of P) yMax = Math.max(yMax, p.y);
+const speedAt = y => Math.sqrt(Math.max(V_MIN * V_MIN, 2 * G * (yMax + PAD - y)));
+
+// Unbanked frame + signed horizontal curvature -> bank angle.
+const bank = new Float32Array(N);
+const rightRaw = [], upRaw = [];
+const tmp = new THREE.Vector3();
+for (let i = 0; i < N; i++) {
+  let r = new THREE.Vector3().crossVectors(T[i], WORLD_UP);
+  if (r.lengthSq() < 1e-8) r.copy(rightRaw[i - 1] || new THREE.Vector3(0, 0, 1));
+  r.normalize();
+  rightRaw.push(r);
+  upRaw.push(new THREE.Vector3().crossVectors(r, T[i]).normalize());
+}
+for (let i = 0; i < N; i++) {
+  const dT = tmp.copy(T[(i + 1) % N]).sub(T[i]).divideScalar(DS);
+  const k = dT.dot(rightRaw[i]);                       // + = turning right
+  const v = speedAt(P[i].y);
+  bank[i] = THREE.MathUtils.clamp(Math.atan((v * v * k) / G), -0.6, 0.6);
+}
+// Circular box-smooth: unsmoothed banking is the main source of camera jitter.
+for (let pass = 0; pass < 4; pass++) {
+  const src = bank.slice(), W = 5;
+  for (let i = 0; i < N; i++) {
+    let sum = 0;
+    for (let j = -W; j <= W; j++) sum += src[(i + j + N) % N];
+    bank[i] = sum / (2 * W + 1);
+  }
+}
+const q = new THREE.Quaternion();
+for (let i = 0; i < N; i++) {
+  q.setFromAxisAngle(T[i], bank[i]);
+  R.push(rightRaw[i].clone().applyQuaternion(q));
+  U.push(upRaw[i].clone().applyQuaternion(q));
+}
+
+/* ------------------------------------------------------------------ */
+const scene = new THREE.Scene();
+const SKY = 0x8fc4e8;
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 220, 900);
+
+const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.1, 2000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xbfe0ff, 0x4a6b3c, 1.1));
+const sun = new THREE.DirectionalLight(0xfff3dd, 1.5);
+sun.position.set(120, 220, 60);
+scene.add(sun);
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(2400, 2400),
+  new THREE.MeshLambertMaterial({ color: 0x4f7a41 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+/* --- Rails, spine, ties, pillars ---------------------------------- */
+const railMat = new THREE.MeshStandardMaterial({ color: 0xe8453c, roughness: 0.45, metalness: 0.35 });
+const steelMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ab, roughness: 0.6, metalness: 0.5 });
+
+const STEP = 3;
+const offsetPath = (lat, vert) => {
+  const pts = [];
+  for (let i = 0; i < N; i += STEP) {
+    pts.push(P[i].clone().addScaledVector(R[i], lat).addScaledVector(U[i], vert));
+  }
+  return new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+};
+const segs = Math.floor(N / STEP) * 2;
+scene.add(new THREE.Mesh(new THREE.TubeGeometry(offsetPath(-GAUGE / 2, 0), segs, 0.16, 6, true), railMat));
+scene.add(new THREE.Mesh(new THREE.TubeGeometry(offsetPath(GAUGE / 2, 0), segs, 0.16, 6, true), railMat));
+scene.add(new THREE.Mesh(new THREE.TubeGeometry(offsetPath(0, -1.0), segs, 0.34, 6, true), steelMat));
+
+// Ties
+const TIE_EVERY = 8;
+const tieGeo = new THREE.BoxGeometry(GAUGE + 0.9, 0.18, 0.42);
+const ties = new THREE.InstancedMesh(tieGeo, steelMat, Math.ceil(N / TIE_EVERY));
+const m4 = new THREE.Matrix4();
+let n = 0;
+for (let i = 0; i < N; i += TIE_EVERY) {
+  m4.makeBasis(R[i], U[i], T[i]).setPosition(P[i].clone().addScaledVector(U[i], -0.28));
+  ties.setMatrixAt(n++, m4);
+}
+ties.count = n;
+scene.add(ties);
+
+// Support pillars (unit box with its origin at the base, scaled to reach the ground)
+const PILLAR_EVERY = 42;
+const pillarGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+const pillars = new THREE.InstancedMesh(pillarGeo, steelMat, Math.ceil(N / PILLAR_EVERY));
+n = 0;
+for (let i = 0; i < N; i += PILLAR_EVERY) {
+  const h = P[i].y - 1.2;
+  if (h < 2) continue;
+  m4.makeScale(0.7, h, 0.7).setPosition(P[i].x, 0, P[i].z);
+  pillars.setMatrixAt(n++, m4);
+}
+pillars.count = n;
+scene.add(pillars);
+
+/* --- Scenery: trees kept clear of the track ------------------------ */
+const coarse = P.filter((_, i) => i % 10 === 0).map(p => new THREE.Vector2(p.x, p.z));
+const nearTrack = (x, z) => coarse.some(c => (c.x - x) ** 2 + (c.y - z) ** 2 < 900);
+
+const trunkGeo = new THREE.CylinderGeometry(0.4, 0.55, 4, 5).translate(0, 2, 0);
+const leafGeo = new THREE.ConeGeometry(3, 9, 7).translate(0, 8, 0);
+const COUNT = 320;
+const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: 0x5b3f2a }), COUNT);
+const leaves = new THREE.InstancedMesh(leafGeo, new THREE.MeshLambertMaterial({ color: 0x2f6b34 }), COUNT);
+n = 0;
+for (let guard = 0; guard < 6000 && n < COUNT; guard++) {
+  const x = (Math.random() - 0.5) * 1100, z = (Math.random() - 0.5) * 1100;
+  if (nearTrack(x, z)) continue;
+  const s = 0.7 + Math.random() * 0.9;
+  m4.makeScale(s, s, s).setPosition(x, 0, z);
+  trunks.setMatrixAt(n, m4);
+  leaves.setMatrixAt(n, m4);
+  n++;
+}
+trunks.count = leaves.count = n;
+scene.add(trunks, leaves);
+
+// Lap bar, for the first-person anchor
+const lapBar = new THREE.Mesh(
+  new THREE.BoxGeometry(0.95, 0.1, 0.1),
+  new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: 0.7 })
+);
+scene.add(lapBar);
+
+/* --- Ride ---------------------------------------------------------- */
+const sample = (s, outP, outU, outT) => {
+  const f = ((s / DS) % N + N) % N;
+  const i0 = Math.floor(f), i1 = (i0 + 1) % N, t = f - i0;
+  outP.copy(P[i0]).lerp(P[i1], t);
+  if (outU) outU.copy(U[i0]).lerp(U[i1], t).normalize();
+  if (outT) outT.copy(T[i0]).lerp(T[i1], t).normalize();
+};
+
+let s = 0, last = performance.now();
+const pNow = new THREE.Vector3(), uNow = new THREE.Vector3();
+const pAhead = new THREE.Vector3(), uAhead = new THREE.Vector3();
+const eye = new THREE.Vector3(), target = new THREE.Vector3();
+camera.up.set(0, 1, 0);
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.05, (now - last) / 1000);   // clamp tab-refocus spikes
+  last = now;
+
+  sample(s, pNow, uNow);
+  sample(s + 6, pAhead, uAhead);
+
+  eye.copy(pNow).addScaledVector(uNow, EYE_H);
+  target.copy(pAhead).addScaledVector(uAhead, EYE_H);
+
+  camera.up.lerp(uNow, 1 - Math.exp(-8 * dt)).normalize();
+  camera.position.copy(eye);
+  camera.lookAt(target);
+
+  lapBar.position.copy(camera.position);
+  lapBar.quaternion.copy(camera.quaternion);
+  lapBar.translateY(-0.62);
+  lapBar.translateZ(-1.15);
+
+  s += speedAt(pNow.y) * dt;                        // energy-driven, loops forever
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+document.getElementById('loading').remove();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MERIDIAN &mdash; First-Person Coaster</title>
+<style>
+  :root{
+    --ink:#f2f5f8; --dim:rgba(242,245,248,.55); --line:rgba(242,245,248,.18);
+    --hot:#ff6a3d;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d12}
+  body{font:400 14px/1.4 ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--ink);
+       -webkit-font-smoothing:antialiased;user-select:none;cursor:default}
+  canvas{display:block}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
+  /* soft vignette + subtle warm tint, sells the "in the seat" feel */
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:4;
+       background:radial-gradient(120% 90% at 50% 45%,transparent 42%,rgba(6,8,14,.55) 100%)}
+
+  .panel{position:absolute;pointer-events:none}
+
+  /* ---- speed, bottom left ---- */
+  #spd{left:max(24px,env(safe-area-inset-left));bottom:26px;display:flex;align-items:baseline;gap:8px}
+  #spdN{font-size:clamp(44px,7vw,76px);font-weight:600;letter-spacing:-.03em;line-height:.85;
+        font-variant-numeric:tabular-nums;text-shadow:0 2px 24px rgba(0,0,0,.6)}
+  #spdU{font-size:12px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase}
+
+  /* ---- gauges, bottom right ---- */
+  #meta{right:max(24px,env(safe-area-inset-right));bottom:28px;text-align:right;display:grid;gap:10px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:baseline}
+  .k{font-size:10px;letter-spacing:.2em;color:var(--dim);text-transform:uppercase}
+  .v{font-size:20px;font-variant-numeric:tabular-nums;min-width:4.2ch;text-align:right}
+  #gbar{width:132px;height:3px;background:rgba(255,255,255,.14);position:relative;margin-left:auto;overflow:hidden}
+  #gfill{position:absolute;top:0;bottom:0;left:33.3%;width:0;background:var(--hot);transition:none}
+  #gzero{position:absolute;top:-3px;bottom:-3px;left:33.3%;width:1px;background:rgba(255,255,255,.5)}
+
+  /* ---- element name + lap track, top ---- */
+  #top{left:50%;transform:translateX(-50%);top:22px;width:min(560px,86vw);text-align:center}
+  #elem{font-size:12px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink);
+        text-shadow:0 1px 14px rgba(0,0,0,.7);min-height:16px}
+  #lap{margin-top:12px;height:2px;background:rgba(255,255,255,.16);position:relative}
+  #lapfill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--ink);opacity:.85}
+  #lapfill::after{content:"";position:absolute;right:-3px;top:-2.5px;width:7px;height:7px;
+                  border-radius:50%;background:var(--hot);box-shadow:0 0 12px var(--hot)}
+  .tick{position:absolute;top:-4px;width:1px;height:10px;background:rgba(255,255,255,.34)}
+
+  /* ---- brand, top left ---- */
+  #brand{left:max(24px,env(safe-area-inset-left));top:22px;line-height:1.5}
+  #brand b{display:block;font-size:15px;font-weight:600;letter-spacing:.34em}
+  #brand span{font-size:10px;letter-spacing:.2em;color:var(--dim);text-transform:uppercase}
+
+  /* ---- sound toggle, top right (only interactive element) ---- */
+  #snd{position:absolute;right:max(24px,env(safe-area-inset-right));top:22px;pointer-events:auto;
+       cursor:pointer;font:inherit;font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+       color:var(--dim);background:rgba(10,12,18,.4);border:1px solid var(--line);
+       padding:8px 12px;backdrop-filter:blur(6px);transition:color .2s,border-color .2s}
+  #snd:hover{color:var(--ink);border-color:rgba(242,245,248,.4)}
+  #snd[data-on="1"]{color:var(--hot);border-color:rgba(255,106,61,.5)}
+
+  /* ---- opening card ---- */
+  #card{position:fixed;inset:0;z-index:8;display:grid;place-content:center;text-align:center;gap:14px;
+        background:radial-gradient(80% 60% at 50% 50%,rgba(8,10,16,.72),rgba(8,10,16,.92));
+        animation:fade 1.1s ease 4.4s forwards;pointer-events:none}
+  #card h1{margin:0;font-size:clamp(26px,5vw,46px);font-weight:600;letter-spacing:.4em;text-indent:.4em}
+  #card p{margin:0;font-size:11px;letter-spacing:.26em;color:var(--dim);text-transform:uppercase}
+  #card .stats{margin-top:10px;font-size:11px;letter-spacing:.16em;color:var(--dim)}
+  @keyframes fade{to{opacity:0;visibility:hidden}}
+
+  @media (max-width:560px){
+    #meta{display:none}
+    #brand span{display:none}
+  }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="vig"></div>
+<div id="hud">
+  <div class="panel" id="brand"><b>MERIDIAN</b><span>steel &middot; looping &middot; 1979</span></div>
+  <button id="snd" data-on="0" title="Toggle ride audio">Sound Off</button>
+  <div class="panel" id="top">
+    <div id="elem"></div>
+    <div id="lap"><div id="lapfill"></div></div>
+  </div>
+  <div class="panel" id="spd"><div id="spdN">0</div><div id="spdU">km/h</div></div>
+  <div class="panel" id="meta">
+    <div class="row"><span class="k">Height</span><span class="v" id="hgt">0 m</span></div>
+    <div class="row"><span class="k">Force</span><span class="v" id="gvl">1.0 g</span></div>
+    <div id="gbar"><div id="gfill"></div><div id="gzero"></div></div>
+  </div>
+</div>
+<div id="card">
+  <p>Now boarding</p>
+  <h1>MERIDIAN</h1>
+  <div class="stats" id="cardstats">&nbsp;</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================================
+   1. TRACK  —  a walker over (length, pitch-change, yaw-change) segments.
+   Four segment lengths are solved at load so the circuit closes on itself
+   exactly: same point, same heading, same pitch. That exactness is what makes
+   continuous playback seamless — there is no seam to hide.
+   ========================================================================== */
+const D = Math.PI / 180, G = 9.81;
+const DS = 0.5;                 // sample spacing, metres
+const APEX = 62, VALLEY = 4, STATION_Y = 7;
+const LOOP_H = 63;              // energy height the loop is shaped against
+const LOOP_OFF = 12;            // lateral drift through the loop so its entry
+                                // and exit legs pass beside each other
+
+// A constant-g clothoid loop: radius is solved from the speed the train will
+// actually have at each height, so the rider gets ~3.6 g at the bottom easing
+// to ~2.3 g over the top instead of the brutal 6 g a circular loop would give.
+function buildLoop(H, y0, gBase, gVar, nSeg) {
+  const n = 3600, arc = [];
+  let th = 0, y = 0;
+  for (let i = 0; i < n; i++) {
+    const v2 = Math.max(25, 2 * G * (H - (y0 + y)));
+    const r = v2 / (G * Math.max(0.8, (gBase - gVar * Math.cos(th)) - Math.cos(th)));
+    const dth = (360 * D) / n, ds = r * dth;
+    th += dth; y += Math.sin(th) * ds; arc.push(ds);
+  }
+  const per = n / nSeg, out = [];
+  for (let k = 0; k < nSeg; k++) {
+    let L = 0; for (let i = 0; i < per; i++) L += arc[k * per + i];
+    out.push([L, 360 / nSeg, 0, 'LOOP' + k]);
+  }
+  return out;
+}
+
+// [length m, pitch change deg, yaw change deg, id]
+function segs(p) {
+  const [lift, home, helixPitch, turn2, dropLen] = p;
+  return [
+    [34, 0, 0, 'station'],
+    [20, 34, 0, 'liftin'],
+    [lift, 0, 0, 'LIFT'],
+    [24, -34, 0, 'crest'],
+    [14, -12, 0, 'predrop'],
+    [22, -58, 0, 'dropin'],
+    [dropLen, 0, 0, 'DROP'],
+    [64, 70, 0, 'pullout'],
+    [10, 0, 0, 'loopin'],
+    ...buildLoop(LOOP_H, VALLEY, 3.0, 0.5, 24),
+    [14, 0, 0, 'loopout'],
+    [34, 30, 12, 'risein'],
+    [40, 0, 26, 'rise'],
+    [42, -30, 10, 'riseout'],
+    [112, 0, 132, 'TURN1'],
+    [16, helixPitch, 0, 'helixin'],
+    [180, 0, 360, 'HELIX'],
+    [16, -helixPitch, 0, 'helixout'],
+    [30, 22, 0, 'c1up'],
+    [60, -44, 0, 'C1'],
+    [14, 0, 16, 'c1dn'],
+    [34, 22, 14, 'c1out'],
+    [40, 0, 0, 'legB'],
+    [26, 20, -14, 'c2up'],
+    [62, -40, -16, 'C2'],
+    [12, 0, 0, 'c2dn'],
+    [30, 20, 0, 'c2out'],
+    [24, -10, 0, 'tunin'],
+    [30, 0, 0, 'TUNNEL'],
+    [24, 10, 0, 'tunout'],
+    [20, 0, 0, 'str2'],
+    [60, 0, 0, 'BRAKE'],
+    [turn2, 0, 180, 'TURN2'],
+    [home, 0, 0, 'HOME'],
+  ];
+}
+
+const START = { x: 0, y: STATION_Y, z: 0, yaw: 0, pitch: 0 };
+function walk(p, collect) {
+  let { x, y, z, yaw, pitch } = START;
+  const pts = [], marks = [];
+  for (const [len, dp, dy, id] of segs(p)) {
+    marks.push({ id, i: pts.length, y });
+    const n = Math.max(1, Math.round(len / DS)), step = len / n;
+    for (let i = 0; i < n; i++) {
+      pitch += (dp * D) / n; yaw += (dy * D) / n;
+      const cp = Math.cos(pitch);
+      x += Math.sin(yaw) * cp * step;
+      y += Math.sin(pitch) * step;
+      z += Math.cos(yaw) * cp * step;
+      if (collect) pts.push([x, y, z]);
+    }
+  }
+  const end = { x: x + LOOP_OFF, y, z, yaw, pitch };
+  if (collect) {
+    // Slide the loop (and everything downstream of it) sideways. The loop sits
+    // at yaw 0, so its lateral axis is world X — a plain offset does the job.
+    const i0 = marks.find(m => m.id === 'LOOP0').i, i1 = marks.find(m => m.id === 'loopout').i;
+    for (let i = 0; i < pts.length; i++) {
+      const u = Math.min(1, Math.max(0, (i - i0) / (i1 - i0)));
+      pts[i][0] += LOOP_OFF * u * u * (3 - 2 * u);
+    }
+  }
+  return { pts, marks, end };
+}
+
+const markY = (p, id) => walk(p, false).marks.find(m => m.id === id).y;
+function secant(f, target, p, idx, a, b) {
+  for (let k = 0; k < 24; k++) {
+    const pa = p.slice(); pa[idx] = a; const pb = p.slice(); pb[idx] = b;
+    const fa = f(pa) - target, fb = f(pb) - target;
+    if (!isFinite(fa) || !isFinite(fb) || fa === fb) break;
+    if (Math.abs(fb) < 1e-6) break;
+    const c = b - fb * (b - a) / (fb - fa); a = b; b = c;
+  }
+  return b;
+}
+// lift length -> apex height; home & turn2 -> plan closure; helix pitch -> height
+// closure; drop length -> valley height. Solved at the same DS used for render,
+// so the closure the solver reports is the closure the geometry gets.
+const P = [80, 90, -4, 130, 9];
+for (let it = 0; it < 5; it++) {
+  P[0] = secant(q => markY(q, 'predrop'), APEX, P, 0, 60, 130);
+  P[1] = secant(q => walk(q, false).end.z, 0, P, 1, 40, 200);
+  P[2] = secant(q => walk(q, false).end.y, STATION_Y, P, 2, -2, -8);
+  P[3] = secant(q => walk(q, false).end.x, 0, P, 3, 80, 300);
+  P[4] = secant(q => markY(q, 'loopin'), VALLEY, P, 4, 2, 30);
+}
+
+const RAW = walk(P, true);
+const N = RAW.pts.length, LEN = N * DS;
+const PT = RAW.pts.map(a => new THREE.Vector3(a[0], a[1], a[2]));
+const MARK = RAW.marks;
+const markI = id => MARK.find(m => m.id === id).i;
+
+/* ---- frames: tangent, parallel-transported up, physical bank ------------- */
+const TAN = new Array(N), UP = new Array(N), RT = new Array(N);
+const at = i => PT[(i % N + N) % N];
+
+for (let i = 0; i < N; i++) TAN[i] = at(i + 1).clone().sub(at(i - 1)).normalize();
+
+// A rotation-minimising frame: carry "up" forward with the tangent instead of
+// deriving it from curvature. Airtime hills then feel light without the camera
+// flipping, while a loop rolls a full 360 because the tangent genuinely does.
+{
+  let u = new THREE.Vector3(0, 1, 0);
+  u.addScaledVector(TAN[0], -u.dot(TAN[0])).normalize();
+  UP[0] = u.clone();
+  const axis = new THREE.Vector3();
+  for (let i = 1; i < N; i++) {
+    axis.crossVectors(TAN[i - 1], TAN[i]);
+    const s = axis.length();
+    const up = UP[i - 1].clone();
+    if (s > 1e-9) up.applyAxisAngle(axis.divideScalar(s), Math.asin(Math.min(1, s)));
+    up.addScaledVector(TAN[i], -up.dot(TAN[i])).normalize();
+    UP[i] = up;
+  }
+  // A closed circuit generally does not hand the frame back unrotated. Measure
+  // that leftover twist once and bleed it out evenly around the lap.
+  axis.crossVectors(TAN[N - 1], TAN[0]);
+  const s = axis.length();
+  const wrapped = UP[N - 1].clone();
+  if (s > 1e-9) wrapped.applyAxisAngle(axis.divideScalar(s), Math.asin(Math.min(1, s)));
+  wrapped.addScaledVector(TAN[0], -wrapped.dot(TAN[0])).normalize();
+  const cr = new THREE.Vector3().crossVectors(wrapped, UP[0]);
+  const twist = Math.atan2(cr.dot(TAN[0]), wrapped.dot(UP[0]));
+  for (let i = 0; i < N; i++) UP[i].applyAxisAngle(TAN[i], twist * i / (N - 1)).normalize();
+}
+for (let i = 0; i < N; i++) RT[i] = new THREE.Vector3().crossVectors(TAN[i], UP[i]).normalize();
+
+/* ---- speed: energy conservation, plus chain lift and brakes -------------- */
+const VLIFT = 8, DRAG = 0.004;
+const sOf = id => markI(id) * DS;
+const sLift = sOf('predrop'), sBrake = sOf('BRAKE'), sTurn2 = sOf('TURN2'), sHome = sOf('HOME');
+const V = new Float64Array(N);
+for (let i = 0; i < N; i++) {
+  const s = i * DS, y = PT[i].y;
+  let v = Math.sqrt(Math.max(16, 2 * G * (LOOP_H - y - DRAG * s)));
+  if (s < sLift) v = VLIFT;
+  else if (s < sLift + 16) { const t = (s - sLift) / 16; v = VLIFT + (v - VLIFT) * t * t; }
+  if (s >= sBrake) {
+    const cap = s < sTurn2 ? 33 + (15 - 33) * (s - sBrake) / (sTurn2 - sBrake)
+      : s < sHome ? 15
+        : 15 + (VLIFT - 15) * Math.min(1, (s - sHome) / (LEN - sHome));
+    v = Math.min(v, cap);
+  }
+  V[i] = v;
+}
+for (let k = 0; k < 10; k++) {
+  const c = V.slice();
+  for (let i = 0; i < N; i++) V[i] = (c[(i - 1 + N) % N] + 2 * c[i] + c[(i + 1) % N]) / 4;
+}
+
+/* ---- bank: roll the frame until the net force sits under the rider ------- */
+const BANK = new Float64Array(N), GF = new Float64Array(N);
+{
+  const kv = new THREE.Vector3(), nv = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    kv.copy(TAN[(i + 1) % N]).sub(TAN[(i - 1 + N) % N]).divideScalar(2 * DS);
+    const v2 = V[i] * V[i];
+    nv.set(kv.x * v2, kv.y * v2 + G, kv.z * v2);
+    nv.addScaledVector(TAN[i], -nv.dot(TAN[i]));
+    const lat = nv.dot(RT[i]), vert = nv.dot(UP[i]);
+    GF[i] = nv.length() / G;
+    BANK[i] = Math.max(-1.31, Math.min(1.31, Math.atan2(lat, Math.max(vert, 3.0))));
+  }
+  // Segment joins give piecewise-constant curvature, so raw bank steps at every
+  // join. A ±10 m circular blur turns those steps into transitions.
+  for (let pass = 0; pass < 2; pass++) {
+    const c = BANK.slice(), w = 20;
+    for (let i = 0; i < N; i++) {
+      let a = 0; for (let j = -w; j <= w; j++) a += c[(i + j + N * 2) % N];
+      BANK[i] = a / (2 * w + 1);
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    UP[i].applyAxisAngle(TAN[i], BANK[i]).normalize();
+    RT[i].crossVectors(TAN[i], UP[i]).normalize();
+  }
+}
+
+/* ---- named beats, for the readout and the lap ticks --------------------- */
+const NAMES = {
+  station: 'Station', liftin: 'Chain Lift', LIFT: 'Chain Lift', crest: 'Crest',
+  predrop: 'Crest', dropin: 'First Drop', DROP: 'First Drop', pullout: 'First Drop',
+  loopin: 'Vertical Loop', loopout: 'Vertical Loop',
+  risein: 'Cobra Rise', rise: 'Cobra Rise', riseout: 'Cobra Rise',
+  TURN1: 'Overbank Turn', helixin: 'Descending Helix', HELIX: 'Descending Helix',
+  helixout: 'Descending Helix', c1up: 'Airtime Hill', C1: 'Airtime Hill',
+  c1dn: 'Airtime Hill', c1out: 'Airtime Hill', legB: 'Back Straight',
+  c2up: 'Second Camelback', C2: 'Second Camelback', c2dn: 'Second Camelback',
+  c2out: 'Second Camelback', tunin: 'Tunnel Dive', TUNNEL: 'Tunnel Dive',
+  tunout: 'Tunnel Dive', str2: 'Brake Run', BRAKE: 'Brake Run',
+  TURN2: 'Return Curve', HOME: 'Station Approach',
+};
+for (let k = 0; k < 24; k++) NAMES['LOOP' + k] = 'Vertical Loop';
+const BEATS = [];
+for (const m of MARK) {
+  const n = NAMES[m.id];
+  if (n && (!BEATS.length || BEATS[BEATS.length - 1].name !== n)) BEATS.push({ name: n, s: m.i * DS });
+}
+
+/* ============================================================================
+   2. SCENE
+   ========================================================================== */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.06;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const HORIZON = new THREE.Color(0xf0a878), ZENITH = new THREE.Color(0x1f3f78);
+scene.fog = new THREE.FogExp2(0xd9a888, 0.00135);
+
+const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.08, 6000);
+scene.add(camera);
+
+// late-afternoon sun, low and behind the lift hill
+const SUNDIR = new THREE.Vector3(-0.42, 0.20, -0.88).normalize();
+const sun = new THREE.DirectionalLight(0xffd2a1, 2.5);
+sun.position.copy(SUNDIR).multiplyScalar(400);
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xa8c8ff, 0x4d5233, 1.05));
+scene.add(new THREE.AmbientLight(0xffe8d0, 0.18));
+
+/* ---- sky dome ---- */
+{
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      top: { value: ZENITH }, bot: { value: HORIZON },
+      sunDir: { value: SUNDIR }, sunCol: { value: new THREE.Color(0xffd9a0) },
+    },
+    vertexShader: `varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+    fragmentShader: `
+      varying vec3 vP; uniform vec3 top,bot,sunDir,sunCol;
+      void main(){
+        vec3 d=normalize(vP);
+        float h=clamp(d.y*1.25+0.14,0.,1.);
+        vec3 c=mix(bot,top,pow(h,0.62));
+        float s=max(dot(d,sunDir),0.);
+        c+=sunCol*pow(s,1400.)*4.2;              // disc
+        c+=sunCol*pow(s,9.)*0.34*(1.-h*0.7);     // glow
+        c*=1.0-0.10*smoothstep(0.5,1.0,h);
+        gl_FragColor=vec4(c,1.);
+      }`,
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(3000, 40, 24), mat));
+}
+
+/* ---- ground ---- */
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x5c6b3c, roughness: 0.98, metalness: 0 });
+{
+  const g = new THREE.PlaneGeometry(4200, 4200, 90, 90);
+  const pos = g.attributes.position;
+  // gentle rolling relief, small enough that the track's footings still land
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    const h = Math.sin(x * 0.0042) * Math.cos(y * 0.0037) * 2.2
+      + Math.sin(x * 0.011 + 1.7) * Math.cos(y * 0.009 - .4) * 0.9;
+    pos.setZ(i, h);
+  }
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, groundMat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = -0.4;
+  scene.add(m);
+}
+
+/* ---- the hill the tunnel runs through ---- */
+// Shape the hill around the diving section, then read the tunnel's extent back
+// off the hill: the liner has to start before the track goes under the surface,
+// or the rider spends a few metres inside a hill that is invisible from within.
+const MOUND = (() => {
+  const a = PT[markI('tunin')], b = PT[markI('str2')];
+  return {
+    x: (a.x + b.x) / 2, z: (a.z + b.z) / 2,
+    rx: 46, ry: 46, rz: Math.abs(a.z - b.z) / 2 + 14, yc: -18,
+  };
+})();
+const surfaceY = (x, z) => {
+  const q = ((x - MOUND.x) / MOUND.rx) ** 2 + ((z - MOUND.z) / MOUND.rz) ** 2;
+  return q >= 1 ? -1e9 : MOUND.yc + MOUND.ry * Math.sqrt(1 - q);
+};
+const [tunA, tunB] = (() => {
+  let a = -1, b = -1;
+  for (let i = markI('c2out'); i <= markI('BRAKE'); i++) {
+    const p = PT[i];
+    if (surfaceY(p.x, p.z) > p.y + 1.2) { if (a < 0) a = i; b = i; }
+  }
+  return [a - 10, b + 10];
+})();
+{
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 26),
+    new THREE.MeshStandardMaterial({ color: 0x556438, roughness: 1 }));
+  m.scale.set(MOUND.rx, MOUND.ry, MOUND.rz);
+  m.position.set(MOUND.x, MOUND.yc, MOUND.z);
+  scene.add(m);
+}
+const onMound = (x, z) => ((x - MOUND.x) / MOUND.rx) ** 2 + ((z - MOUND.z) / MOUND.rz) ** 2 < 1.05;
+
+/* ---- lake ---- */
+const LAKE = { x: -175, z: 165, r: 96 };
+{
+  const m = new THREE.Mesh(new THREE.CircleGeometry(LAKE.r, 56),
+    new THREE.MeshStandardMaterial({ color: 0x2b4a63, roughness: 0.12, metalness: 0.55 }));
+  m.rotation.x = -Math.PI / 2; m.position.set(LAKE.x, 0.35, LAKE.z);
+  scene.add(m);
+}
+
+/* ---- distant ridgeline ---- */
+{
+  const geo = new THREE.ConeGeometry(1, 1, 5);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5d6b86, roughness: 1, flatShading: true });
+  const inst = new THREE.InstancedMesh(geo, mat, 34);
+  const m4 = new THREE.Matrix4();
+  for (let i = 0; i < 34; i++) {
+    const j = Math.sin(i * 12.9898) * 43758.5453;
+    const rnd = j - Math.floor(j);
+    const a = (i / 34) * Math.PI * 2 + 0.3 + (rnd - 0.5) * 0.14;
+    const d = 1420 + rnd * 420;
+    const h = 150 + rnd * 300, r = h * (0.95 + rnd * 0.7);
+    m4.makeScale(r, h, r);
+    m4.setPosition(Math.sin(a) * d + 60, h / 2 - 24, Math.cos(a) * d + 160);
+    inst.setMatrixAt(i, m4);
+  }
+  scene.add(inst);
+}
+
+/* ---- forest ---- */
+{
+  const near = [];
+  for (let i = 0; i < N; i += 18) near.push(PT[i]);
+  const clear = (x, z) => {
+    for (const p of near) { const dx = p.x - x, dz = p.z - z; if (dx * dx + dz * dz < 620) return false; }
+    return true;
+  };
+  const COUNT = 900;
+  const foliage = new THREE.InstancedMesh(
+    new THREE.ConeGeometry(1, 1, 6),
+    new THREE.MeshStandardMaterial({ color: 0x35502c, roughness: 1, flatShading: true }), COUNT);
+  const trunk = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.34, 0.5, 1, 5),
+    new THREE.MeshStandardMaterial({ color: 0x3d2f22, roughness: 1 }), COUNT);
+  const m4 = new THREE.Matrix4();
+  let n = 0, guard = 0;
+  while (n < COUNT && guard++ < 40000) {
+    const x = -520 + Math.random() * 1180, z = -460 + Math.random() * 1300;
+    if (!clear(x, z)) continue;
+    if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r + 10) continue;
+    if (onMound(x, z)) continue;
+    const h = 9 + Math.random() * 11, r = h * (0.20 + Math.random() * 0.10);
+    m4.makeScale(r, h * 0.72, r); m4.setPosition(x, h * 0.36 + h * 0.28, z);
+    foliage.setMatrixAt(n, m4);
+    m4.makeScale(1, h * 0.32, 1); m4.setPosition(x, h * 0.16, z);
+    trunk.setMatrixAt(n, m4);
+    n++;
+  }
+  foliage.count = trunk.count = n;
+  scene.add(foliage, trunk);
+}
+
+/* ============================================================================
+   3. TRACK GEOMETRY  —  everything is swept along the solved frames
+   ========================================================================== */
+function sweep(i0, i1, radius, radial, lateral, vertical) {
+  const cnt = i1 - i0 + 1;
+  const pos = new Float32Array(cnt * radial * 3);
+  const nor = new Float32Array(cnt * radial * 3);
+  const idx = [];
+  const c = new THREE.Vector3(), nrm = new THREE.Vector3();
+  for (let k = 0; k < cnt; k++) {
+    const i = ((i0 + k) % N + N) % N;
+    c.copy(PT[i]).addScaledVector(RT[i], lateral).addScaledVector(UP[i], vertical);
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+      nrm.set(RT[i].x * ca + UP[i].x * sa, RT[i].y * ca + UP[i].y * sa, RT[i].z * ca + UP[i].z * sa);
+      const o = (k * radial + j) * 3;
+      pos[o] = c.x + nrm.x * radius; pos[o + 1] = c.y + nrm.y * radius; pos[o + 2] = c.z + nrm.z * radius;
+      nor[o] = nrm.x; nor[o + 1] = nrm.y; nor[o + 2] = nrm.z;
+    }
+  }
+  for (let k = 0; k < cnt - 1; k++) for (let j = 0; j < radial; j++) {
+    const a = k * radial + j, b = k * radial + (j + 1) % radial;
+    idx.push(a, a + radial, b, b, a + radial, b + radial);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+const railMat = new THREE.MeshStandardMaterial({ color: 0xff6a3d, roughness: 0.38, metalness: 0.55 });
+const steelMat = new THREE.MeshStandardMaterial({ color: 0x2c3138, roughness: 0.62, metalness: 0.4 });
+const strutMat = new THREE.MeshStandardMaterial({ color: 0x8d99a6, roughness: 0.55, metalness: 0.5 });
+
+scene.add(new THREE.Mesh(sweep(0, N, 0.15, 7, 0.72, 0), railMat));
+scene.add(new THREE.Mesh(sweep(0, N, 0.15, 7, -0.72, 0), railMat));
+scene.add(new THREE.Mesh(sweep(0, N, 0.30, 8, 0, -0.62), steelMat));
+
+/* ---- cross ties ---- */
+{
+  const step = 4, cnt = Math.floor(N / step);
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1.94, 0.15, 0.34), steelMat, cnt);
+  const m4 = new THREE.Matrix4(), p = new THREE.Vector3();
+  for (let k = 0; k < cnt; k++) {
+    const i = k * step;
+    m4.makeBasis(RT[i], UP[i], TAN[i]);
+    m4.setPosition(p.copy(PT[i]).addScaledVector(UP[i], -0.30));
+    inst.setMatrixAt(k, m4);
+  }
+  scene.add(inst);
+}
+
+/* ---- footings: a column wherever the track is upright and off the ground -- */
+{
+  const cols = [];
+  for (let i = 0; i < N; i += 22) {
+    if (UP[i].y < 0.56) continue;
+    const h = PT[i].y - 0.85;
+    if (h < 3) continue;
+    if (onMound(PT[i].x, PT[i].z)) continue;
+    cols.push([PT[i].x, h, PT[i].z]);
+  }
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(0.62, 1, 0.62), strutMat, cols.length);
+  const m4 = new THREE.Matrix4();
+  cols.forEach(([x, h, z], k) => { m4.makeScale(1, h, 1); m4.setPosition(x, h / 2 - 0.4, z); inst.setMatrixAt(k, m4); });
+  scene.add(inst);
+  // a lattice cross-brace halfway up each tall column reads as truss at speed
+  const tall = cols.filter(c => c[1] > 14);
+  const br = new THREE.InstancedMesh(new THREE.BoxGeometry(3.4, 0.34, 0.34), strutMat, tall.length * 2);
+  tall.forEach(([x, h, z], k) => {
+    for (let j = 0; j < 2; j++) {
+      m4.makeRotationY(j ? Math.PI / 2 : 0);
+      m4.setPosition(x, h * (0.34 + 0.34 * j), z);
+      br.setMatrixAt(k * 2 + j, m4);
+    }
+  });
+  scene.add(br);
+}
+
+/* ---- lift chain ---- */
+{
+  const a = markI('liftin'), b = markI('crest');
+  const g = sweep(a, b, 0.14, 5, 0, -0.30);
+  scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: 0.9, metalness: 0.3 })));
+}
+
+/* ---- tunnel liner ---- */
+{
+  const g = sweep(tunA, tunB, 4.4, 14, 0, -1.4);
+  const m = new THREE.MeshStandardMaterial({ color: 0x24262c, roughness: 1, side: THREE.BackSide });
+  scene.add(new THREE.Mesh(g, m));
+  // concrete portals
+  const ring = new THREE.TorusGeometry(4.7, 0.7, 8, 20);
+  const pm = new THREE.MeshStandardMaterial({ color: 0x8e8878, roughness: 1 });
+  for (const i of [tunA, tunB]) {
+    const t = new THREE.Mesh(ring, pm);
+    t.position.copy(PT[i]).addScaledVector(UP[i], -1.4);
+    t.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(RT[i], UP[i], TAN[i]));
+    scene.add(t);
+  }
+}
+
+/* ---- station: platform + roof over the boarding straight ---- */
+{
+  const a = markI('HOME'), b = markI('station') + Math.round(34 / DS);
+  const z0 = PT[a].z, z1 = PT[b].z, len = z1 - z0, cz = (z0 + z1) / 2;
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(11, 0.6, len),
+    new THREE.MeshStandardMaterial({ color: 0x6b5a46, roughness: 1 }));
+  deck.position.set(0, STATION_Y - 1.5, cz);
+  scene.add(deck);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(14, 0.5, len + 6),
+    new THREE.MeshStandardMaterial({ color: 0x3a4750, roughness: 0.85, metalness: 0.2 }));
+  roof.position.set(0, STATION_Y + 5.4, cz);
+  scene.add(roof);
+  const post = new THREE.InstancedMesh(new THREE.BoxGeometry(0.45, 7, 0.45), strutMat, 24);
+  const m4 = new THREE.Matrix4();
+  for (let k = 0; k < 24; k++) {
+    m4.makeTranslation((k % 2 ? 1 : -1) * 5.4, STATION_Y + 1.7, z0 + (len * (Math.floor(k / 2) / 11)));
+    post.setMatrixAt(k, m4);
+  }
+  scene.add(post);
+}
+
+/* ============================================================================
+   4. THE CAR  —  parented to the camera so it stays glued to the rider
+   ========================================================================== */
+{
+  const car = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: 0xd23b26, roughness: 0.35, metalness: 0.45, fog: false });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1a1d22, roughness: 0.7, metalness: 0.35, fog: false });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.25, metalness: 0.9, fog: false });
+
+  // Sized against the eye point: enough car to feel seated in it, low enough
+  // in frame that the ride stays the subject.
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.40, 2.5), body);
+  nose.position.set(0, -1.44, -2.00); nose.rotation.x = -0.05; car.add(nose);
+
+  const cowl = new THREE.Mesh(new THREE.BoxGeometry(1.50, 0.26, 0.82), dark);
+  cowl.position.set(0, -1.18, -1.16); car.add(cowl);
+
+  for (const s of [-1, 1]) {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.52, 1.76), body);
+    w.position.set(s * 0.82, -1.12, -0.92); car.add(w);
+  }
+  const bar = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.05, 8, 18, Math.PI), chrome);
+  bar.position.set(0, -0.88, -0.62); car.add(bar);
+  const stem = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.52), chrome);
+  stem.position.set(0, -0.88, -0.34); car.add(stem);
+
+  camera.add(car);
+}
+
+/* ============================================================================
+   5. AUDIO  —  wind rises with speed, rumble rides the rails
+   ========================================================================== */
+let ac = null, gWind = null, gRoll = null, muted = true;
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  const n = ac.sampleRate * 2;
+  const buf = ac.createBuffer(1, n, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < n; i++) { const w = Math.random() * 2 - 1; last = (last + 0.028 * w) / 1.028; d[i] = last * 3.4; }
+  const chain = (cut, q) => {
+    const src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cut; f.Q.value = q;
+    const g = ac.createGain(); g.gain.value = 0;
+    src.connect(f).connect(g).connect(ac.destination); src.start();
+    return g;
+  };
+  gWind = chain(1100, 0.6);
+  gRoll = chain(150, 2.2);
+}
+const sndBtn = document.getElementById('snd');
+sndBtn.addEventListener('click', () => {
+  if (!ac) initAudio();
+  ac.resume();
+  muted = !muted;
+  sndBtn.dataset.on = muted ? '0' : '1';
+  sndBtn.textContent = muted ? 'Sound Off' : 'Sound On';
+});
+
+/* ============================================================================
+   6. RIDE LOOP
+   ========================================================================== */
+const elSpd = document.getElementById('spdN'), elHgt = document.getElementById('hgt');
+const elG = document.getElementById('gvl'), elGF = document.getElementById('gfill');
+const elElem = document.getElementById('elem'), elLap = document.getElementById('lapfill');
+{ // lap ticks for the named beats
+  const lap = document.getElementById('lap');
+  for (const b of BEATS) {
+    const t = document.createElement('div');
+    t.className = 'tick'; t.style.left = (b.s / LEN * 100) + '%';
+    lap.appendChild(t);
+  }
+  let vmax = 0; for (let i = 0; i < N; i++) vmax = Math.max(vmax, V[i]);
+  let ride = 0; for (let i = 0; i < N; i++) ride += DS / V[i];
+  document.getElementById('cardstats').textContent =
+    `${Math.round(LEN)} m  ·  ${Math.round(APEX - VALLEY)} m drop  ·  ${Math.round(vmax * 3.6)} km/h  ·  ${Math.round(ride)} s`;
+}
+
+const camUp = new THREE.Vector3(), camFwd = new THREE.Vector3(), camPos = new THREE.Vector3();
+const bx = new THREE.Vector3(), by = new THREE.Vector3(), bz = new THREE.Vector3();
+const basis = new THREE.Matrix4();
+let s = 0, prev = performance.now(), fov = 74;
+let shX = 0, shY = 0, shR = 0, dispG = 1, dispV = 0;
+
+function sampleAt(dist) {
+  const f = ((dist / DS) % N + N) % N, i = Math.floor(f), t = f - i, j = (i + 1) % N;
+  return { i, j, t };
+}
+
+function tick(now) {
+  // rAF hands back the previous frame's timestamp, which can predate module
+  // init, and a backgrounded tab returns a huge gap. Clamp both ends.
+  const dt = Math.max(0, Math.min(0.05, (now - prev) / 1000));
+  prev = now;
+
+  const a = sampleAt(s);
+  const v = V[a.i] + (V[a.j] - V[a.i]) * a.t;
+  s = (s + v * dt) % LEN;
+
+  const b = sampleAt(s);
+  camPos.lerpVectors(PT[b.i], PT[b.j], b.t);
+  camUp.lerpVectors(UP[b.i], UP[b.j], b.t).normalize();
+  camFwd.lerpVectors(TAN[b.i], TAN[b.j], b.t).normalize();
+  const gNow = GF[b.i] + (GF[b.j] - GF[b.i]) * b.t;
+
+  // seat pose
+  bz.copy(camFwd).negate();
+  bx.crossVectors(camUp, bz).normalize();
+  by.crossVectors(bz, bx).normalize();
+  basis.makeBasis(bx, by, bz);
+  camera.quaternion.setFromRotationMatrix(basis);
+
+  // rattle: grows with speed, spikes with load
+  const rough = Math.min(1, v / 30) * (0.55 + Math.min(1.6, Math.abs(gNow - 1)) * 0.5);
+  const j = () => (Math.random() * 2 - 1);
+  shX += (j() * 0.0026 * rough - shX) * 0.35;
+  shY += (j() * 0.0026 * rough - shY) * 0.35;
+  shR += (j() * 0.0032 * rough - shR) * 0.28;
+  camera.rotateX(shY); camera.rotateY(shX); camera.rotateZ(shR);
+
+  camera.position.copy(camPos)
+    .addScaledVector(camUp, 1.28 + shY * 6)
+    .addScaledVector(bx, shX * 6);
+
+  // speed reads on the lens too
+  const targetFov = 70 + 16 * Math.min(1, v / 34);
+  fov += (targetFov - fov) * Math.min(1, dt * 2.2);
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+
+  // audio
+  if (ac && !muted) {
+    const f = v / 34;
+    gWind.gain.setTargetAtTime(0.020 + f * f * 0.24, ac.currentTime, 0.08);
+    gRoll.gain.setTargetAtTime(0.030 + f * 0.34, ac.currentTime, 0.06);
+  } else if (ac) {
+    gWind.gain.setTargetAtTime(0, ac.currentTime, 0.1);
+    gRoll.gain.setTargetAtTime(0, ac.currentTime, 0.1);
+  }
+
+  // readouts
+  dispV += (v * 3.6 - dispV) * Math.min(1, dt * 7);
+  dispG += (gNow - dispG) * Math.min(1, dt * 5);
+  elSpd.textContent = Math.round(dispV);
+  elHgt.textContent = Math.round(camPos.y) + ' m';
+  elG.textContent = dispG.toFixed(1) + ' g';
+  const gn = Math.max(0, Math.min(3, dispG));   // bar: 0 g at 0%, 1 g at the tick
+  elGF.style.left = Math.min(gn, 1) * 33.3 + '%';
+  elGF.style.width = Math.abs(gn - 1) * 33.3 + '%';
+  elLap.style.width = (s / LEN * 100) + '%';
+  let name = BEATS[0].name;
+  for (const bt of BEATS) if (s >= bt.s) name = bt.name;
+  if (elElem.textContent !== name) elElem.textContent = name;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+addEventListener('visibilitychange', () => { prev = performance.now(); });
+</script>
+</body>
+</html>

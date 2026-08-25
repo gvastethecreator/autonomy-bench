@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vertigo Run</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; left: 16px; bottom: 14px; color: #eaf2ff;
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .08em; text-shadow: 0 1px 4px rgba(0,0,0,.6);
+    user-select: none; pointer-events: none;
+  }
+  #title {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none;
+    color: #fff; text-align: center;
+    font-family: Georgia, 'Times New Roman', serif;
+    animation: fadeout 2.2s ease 3.6s forwards;
+  }
+  #title h1 {
+    margin: 0; font-size: clamp(38px, 7vw, 84px); font-weight: 400;
+    letter-spacing: .28em; text-indent: .28em;
+    text-shadow: 0 2px 24px rgba(0,0,0,.55);
+  }
+  #title p {
+    margin: 10px 0 0; font-size: clamp(12px, 1.6vw, 16px);
+    letter-spacing: .34em; text-indent: .34em; opacity: .8;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  @keyframes fadeout { to { opacity: 0; } }
+  #err { position: fixed; inset: 0; display: none; place-items: center;
+    color: #fff; font: 15px system-ui; padding: 2em; text-align: center; }
+</style>
+</head>
+<body>
+<div id="title"><h1>VERTIGO RUN</h1><p>THE RIDE NEVER STOPS</p></div>
+<div id="hud"></div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// ---------- track layout (control points of a closed circuit) ----------
+const CP = [
+  // station straight
+  [0, 6, 0], [25, 6, 0],
+  // lift hill
+  [55, 12, -1], [85, 24, -4], [110, 36, -10], [128, 45, -18],
+  // first drop
+  [140, 28, -34], [147, 8, -55],
+  // valley run into the loop
+  [148, 6, -78],
+  // vertical loop (circle in the y/z plane, drifting +x so it doesn't self-hit)
+  [146.5, 7, -100], [148, 14, -111], [150, 27, -110.5], [151, 33, -99.5],
+  [152, 26.5, -89], [153, 13.5, -89], [154, 7, -101],
+  // run out to the far turn
+  [154, 7, -125],
+  // big banked 180 turn
+  [140, 10, -160], [106, 14, -172], [72, 12, -160], [58, 9, -128],
+  // airtime hills coming home
+  [56, 16, -105], [55, 6, -85], [53, 14, -65], [50, 6, -45],
+  // final sweep into the station
+  [30, 7, -28], [2, 8, -20], [-20, 6.5, -6],
+];
+const curve = new THREE.CatmullRomCurve3(CP.map(p => new THREE.Vector3(...p)), true);
+const L = curve.getLength();
+
+// ---------- uniform arc-length samples + parallel-transport frames ----------
+const N = 2600, ds = L / N;
+const pos = [], tan = [];
+for (let i = 0; i < N; i++) {
+  pos.push(curve.getPointAt(i / N));
+  tan.push(curve.getTangentAt(i / N).normalize());
+}
+// parallel transport an initial normal around the whole circuit
+const nrm = [new THREE.Vector3(0, 1, 0).addScaledVector(tan[0], -tan[0].y).normalize()];
+for (let i = 1; i < N; i++) {
+  const n = nrm[i - 1].clone().addScaledVector(tan[i], -nrm[i - 1].dot(tan[i]));
+  nrm.push(n.normalize());
+}
+// closure twist: angle between transported end frame and start frame, spread over i
+const nEnd = nrm[N - 1].clone().addScaledVector(tan[0], -nrm[N - 1].dot(tan[0])).normalize();
+const closure = Math.atan2(nEnd.clone().cross(nrm[0]).dot(tan[0]), nEnd.dot(nrm[0]));
+
+// ---------- speed profile (precomputed, so playback is one lookup) ----------
+const g = 9.8, MU = 0.85, VMIN = 3, LIFTV = 6;
+const yTop = Math.max(...pos.map(p => p.y));
+let crest = 0; pos.forEach((p, i) => { if (p.y === yTop) crest = i; });
+let liftStart = 0;
+for (let i = 0; i < crest; i++) if (pos[i].y > 7.2) { liftStart = i; break; }
+const spd = pos.map(p => Math.sqrt(VMIN * VMIN + 2 * g * MU * Math.max(0, yTop + 1 - p.y)));
+// brake run: taper down across the last stretch and through the station
+const brake = Math.floor(0.92 * N);
+for (let k = brake; k < N + liftStart; k++) {
+  const p = (k - brake) / (N + liftStart - brake), s = p * p * (3 - 2 * p);
+  const i = k % N;
+  spd[i] = Math.min(spd[i], spd[brake] + (LIFTV - spd[brake]) * s);
+}
+for (let i = liftStart; i <= crest; i++) spd[i] = LIFTV;      // chain lift
+const smooth = (a, w, passes) => {
+  for (let p = 0; p < passes; p++) {
+    const b = a.slice();
+    for (let i = 0; i < N; i++) {
+      let s = 0;
+      for (let k = -w; k <= w; k++) s += b[(i + k + N) % N];
+      a[i] = s / (2 * w + 1);
+    }
+  }
+};
+smooth(spd, 20, 3);
+
+// ---------- banking: tilt into felt lateral acceleration, then smooth ----------
+// station-aligned base roll (constant per-frame twist keeps closure intact)
+const d0 = new THREE.Vector3(0, 1, 0).addScaledVector(tan[0], -tan[0].y).normalize();
+const b0 = tan[0].clone().cross(nrm[0]);
+const roll0 = Math.atan2(d0.dot(b0), d0.dot(nrm[0]));
+const baseUp = i => {
+  const r = roll0 - closure * (i / N);
+  return nrm[i].clone().multiplyScalar(Math.cos(r))
+    .addScaledVector(tan[i].clone().cross(nrm[i]), Math.sin(r)).normalize();
+};
+const bank = new Array(N);
+for (let i = 0; i < N; i++) {
+  const up = baseUp(i), right = tan[i].clone().cross(up).normalize();
+  const dT = tan[(i + 1) % N].clone().sub(tan[(i - 1 + N) % N]).divideScalar(2 * ds);
+  const lat = dT.dot(right) * spd[i] * spd[i];
+  bank[i] = THREE.MathUtils.clamp(Math.atan2(lat, g) * 0.85, -0.95, 0.95);
+}
+smooth(bank, 26, 3);
+
+// final frames
+const up = [], right = [];
+for (let i = 0; i < N; i++) {
+  const u0 = baseUp(i), r0 = tan[i].clone().cross(u0).normalize();
+  const u = u0.multiplyScalar(Math.cos(bank[i])).addScaledVector(r0, Math.sin(bank[i])).normalize();
+  up.push(u); right.push(tan[i].clone().cross(u).normalize());
+}
+
+const frameAt = (s, out) => { // interpolated position/tangent/up at arc length s
+  s = ((s % L) + L) % L;
+  const f = s / ds, i = Math.floor(f) % N, j = (i + 1) % N, a = f - Math.floor(f);
+  out.p.copy(pos[i]).lerp(pos[j], a);
+  out.t.copy(tan[i]).lerp(tan[j], a).normalize();
+  out.u.copy(up[i]).lerp(up[j], a).normalize();
+  return out;
+};
+
+// ---------- scene ----------
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (e) {
+  document.getElementById('err').style.display = 'grid';
+  document.getElementById('err').textContent = 'WebGL is not available in this browser.';
+  throw e;
+}
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xcfd8e8, 160, 850);
+const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.1, 3000);
+
+// gradient sky dome
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1400, 24, 12),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {},
+    vertexShader: 'varying vec3 w; void main(){ w = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `varying vec3 w;
+      void main(){
+        float h = clamp(normalize(w).y, -0.05, 1.0);
+        vec3 hor = vec3(0.92, 0.87, 0.78);
+        vec3 mid = vec3(0.55, 0.70, 0.88);
+        vec3 top = vec3(0.16, 0.34, 0.62);
+        vec3 c = mix(hor, mid, smoothstep(0.0, 0.22, h));
+        c = mix(c, top, smoothstep(0.18, 0.75, h));
+        gl_FragColor = vec4(c, 1.0);
+      }`
+  })
+);
+scene.add(sky);
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x4a5a3a, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
+sun.position.set(-300, 400, 200);
+scene.add(sun);
+
+// ground
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(1200, 48),
+  new THREE.MeshLambertMaterial({ color: 0x5b7f45 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// ---------- track geometry ----------
+class RailCurve extends THREE.Curve {
+  constructor(ox, oy) { super(); this.ox = ox; this.oy = oy; this.tmp = { p: new THREE.Vector3(), t: new THREE.Vector3(), u: new THREE.Vector3() }; }
+  getPoint(t, target = new THREE.Vector3()) {
+    const f = frameAt(t * L, this.tmp);
+    const r = f.t.clone().cross(f.u).normalize();
+    return target.copy(f.p).addScaledVector(r, this.ox).addScaledVector(f.u, this.oy);
+  }
+}
+const railMat = new THREE.MeshStandardMaterial({ color: 0xd8452c, metalness: 0.55, roughness: 0.35 });
+const spineMat = new THREE.MeshStandardMaterial({ color: 0x8c2f1e, metalness: 0.4, roughness: 0.55 });
+for (const ox of [-0.85, 0.85])
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(new RailCurve(ox, 0), 1600, 0.14, 7, true), railMat));
+scene.add(new THREE.Mesh(new THREE.TubeGeometry(new RailCurve(0, -0.75), 1200, 0.3, 8, true), spineMat));
+
+// crossties
+const tieStep = Math.max(1, Math.round(2.4 / ds));
+const tieIdx = []; for (let i = 0; i < N; i += tieStep) tieIdx.push(i);
+const ties = new THREE.InstancedMesh(
+  new THREE.BoxGeometry(2.2, 0.13, 0.55),
+  new THREE.MeshStandardMaterial({ color: 0x50555e, metalness: 0.5, roughness: 0.5 }),
+  tieIdx.length
+);
+{
+  const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  tieIdx.forEach((i, k) => {
+    m.makeBasis(right[i], up[i], tan[i]);
+    m.setPosition(p.copy(pos[i]).addScaledVector(up[i], -0.38));
+    ties.setMatrixAt(k, m);
+  });
+}
+scene.add(ties);
+
+// support columns (skip inverted / steep-bank sections like the loop)
+const supIdx = [];
+const supStep = Math.max(1, Math.round(16 / ds));
+for (let i = 0; i < N; i += supStep)
+  if (pos[i].y > 2.5 && up[i].y > 0.55) supIdx.push(i);
+const sups = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.32, 0.42, 1, 8),
+  new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.3, roughness: 0.6 }),
+  supIdx.length
+);
+{
+  const m = new THREE.Matrix4();
+  supIdx.forEach((i, k) => {
+    const h = pos[i].y - 0.9;
+    m.makeScale(1, h, 1);
+    m.setPosition(pos[i].x, h / 2, pos[i].z);
+    sups.setMatrixAt(k, m);
+  });
+}
+scene.add(sups);
+
+// scattered pine trees, kept clear of the track
+const coarse = []; for (let i = 0; i < N; i += 25) coarse.push(pos[i]);
+const treeSpots = [];
+while (treeSpots.length < 160) {
+  const x = (Math.random() - 0.5) * 900, z = (Math.random() - 0.5) * 900 - 60;
+  if (coarse.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 26 * 26)) continue;
+  treeSpots.push([x, z, 0.7 + Math.random() * 1.5]);
+}
+const canopy = new THREE.InstancedMesh(
+  new THREE.ConeGeometry(3.2, 10, 7),
+  new THREE.MeshLambertMaterial({ color: 0x35633a }), treeSpots.length);
+const trunks = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.5, 0.6, 3, 6),
+  new THREE.MeshLambertMaterial({ color: 0x5d4634 }), treeSpots.length);
+{
+  const m = new THREE.Matrix4(), c = new THREE.Color();
+  treeSpots.forEach(([x, z, s], k) => {
+    m.makeScale(s, s, s); m.setPosition(x, 3 * s + 5 * s, z); canopy.setMatrixAt(k, m);
+    canopy.setColorAt(k, c.setHSL(0.32 + Math.random() * 0.04, 0.4, 0.22 + Math.random() * 0.1));
+    m.makeScale(s, s, s); m.setPosition(x, 1.5 * s, z); trunks.setMatrixAt(k, m);
+  });
+}
+scene.add(canopy, trunks);
+
+// station platform
+{
+  const plat = new THREE.Mesh(
+    new THREE.BoxGeometry(30, 0.6, 8),
+    new THREE.MeshStandardMaterial({ color: 0x7c6f5f, roughness: 0.8 }));
+  plat.position.set(12, 4.6, -3.2);
+  scene.add(plat);
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(30, 0.4, 10),
+    new THREE.MeshStandardMaterial({ color: 0x40352a, roughness: 0.8 }));
+  roof.position.set(12, 11, -2);
+  scene.add(roof);
+  const postGeo = new THREE.CylinderGeometry(0.2, 0.2, 6.2, 6);
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x40352a });
+  for (const px of [-1, 25]) for (const pz of [-6, 2]) {
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(px, 7.8, pz);
+    scene.add(post);
+  }
+}
+
+// ---------- ride loop ----------
+const hud = document.getElementById('hud');
+const F = { p: new THREE.Vector3(), t: new THREE.Vector3(), u: new THREE.Vector3() };
+const A = { p: new THREE.Vector3(), t: new THREE.Vector3(), u: new THREE.Vector3() };
+const eye = new THREE.Vector3(), look = new THREE.Vector3();
+let s = 5, last = performance.now(), hudTick = 0;
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(now => {
+  const dt = Math.min((now - last) / 1000, 0.05); // clamp: background tabs can't teleport us
+  last = now;
+  const v = spd[Math.floor(s / ds) % N];
+  s += v * dt;
+
+  frameAt(s, F);
+  frameAt(s + 7, A);
+  eye.copy(F.p).addScaledVector(F.u, 1.35);
+  look.copy(A.p).addScaledVector(A.u, 1.35);
+  camera.position.copy(eye);
+  camera.up.copy(F.u);
+  camera.lookAt(look);
+  sky.position.copy(eye);
+
+  if ((hudTick = (hudTick + 1) % 10) === 0) {
+    hud.textContent = `${(v * 3.6).toFixed(0).padStart(3, ' ')} km/h   ·   ${Math.round(F.p.y - 5)} m`;
+    window.__ride = { s: s % L, L, v, y: F.p.y };
+  }
+
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

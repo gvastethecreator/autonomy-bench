@@ -144,6 +144,28 @@ describe('catalog', () => {
     expect(catalog.models.map((row) => row.id)).toEqual(['grok-4.6', 'kimi-k3-max']);
   });
 
+  it('keeps each run entry on its own provenance instead of the latest publish extras', () => {
+    const cell = (runId: string, harness: string | undefined) => ({
+      model: `m-${runId}`,
+      experiment: 'rollercoaster',
+      title: 'Rollercoaster',
+      level: 'A',
+      date: '2026-08-21-021413',
+      runId,
+      promptSha256: 'aaa',
+      status: 'complete',
+      src: 'a.html',
+      receipt: harness ? { runId, harness, adapter: 'agent' } : undefined,
+    });
+    const catalog = buildCatalogFromCells(
+      [cell('run-old', undefined), cell('run-old', 'cursor'), cell('run-new', 'claude-code')],
+      { runId: 'run-new', label: 'new-label', harness: 'claude-code', adapter: 'agent' },
+    );
+    const byId = new Map(catalog.runs.map((run) => [run.runId, run]));
+    expect(byId.get('run-old')).toMatchObject({ harness: 'cursor', label: '' });
+    expect(byId.get('run-new')).toMatchObject({ harness: 'claude-code', label: 'new-label' });
+  });
+
   it('adds thinking and modelKey without renaming models[].id', () => {
     const catalog = buildCatalogFromCells([
       {
