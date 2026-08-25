@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { attemptFromDateFolder, cellId, parsePromptVersion } from '../scripts/cell-id.mjs';
+import { attemptFromDateFolder, cellId } from '../scripts/cell-id.mjs';
 
 describe('cell identity', () => {
   it('builds cellId with slugged model and padded attempt', () => {
@@ -16,12 +16,5 @@ describe('cell identity', () => {
   it('reads attempt from a date folder suffix', () => {
     expect(attemptFromDateFolder('2026-08-21-021413-a02')).toBe(2);
     expect(attemptFromDateFolder('2026-08-21-021413')).toBe(1);
-  });
-
-  it('parses hyphenated benchmark ids on the last hyphen', () => {
-    expect(parsePromptVersion('endless-driving-A')).toEqual({
-      benchmarkId: 'endless-driving',
-      promptLevel: 'A',
-    });
   });
 });

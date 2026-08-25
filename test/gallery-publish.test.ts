@@ -29,6 +29,7 @@ describe('parseGalleryArgs', () => {
 
   it('selects one run', () => {
     expect(galleryCommand(parseGalleryArgs(['--run', 'abc']))).toBe('run');
+    expect(galleryCommand(parseGalleryArgs(['--', '--run', 'abc']))).toBe('run');
   });
 
   it('selects viewer rebuild', () => {

@@ -1,4 +1,4 @@
-import { parsePromptVersion } from './cell-id.mjs';
+import { parsePromptVersion } from './layout.mjs';
 
 const PROMPT_LEVEL = /^[ABC]$/;
 const MODEL_ID = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
