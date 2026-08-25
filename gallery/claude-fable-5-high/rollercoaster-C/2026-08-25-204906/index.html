@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Meridian</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎢</text></svg>">
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#0a0416; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+
+  /* vignette + horizon haze, cheap post */
+  #vignette { position:fixed; inset:0; pointer-events:none; z-index:5;
+    background: radial-gradient(ellipse at 50% 55%, transparent 55%, rgba(5,0,15,.55) 100%);
+    mix-blend-mode: multiply; }
+  #speedglow { position:fixed; inset:0; pointer-events:none; z-index:6; opacity:0;
+    background: radial-gradient(ellipse at 50% 50%, transparent 62%, rgba(0,229,255,.10) 100%);
+    transition: opacity .3s linear; }
+
+  .ui { font-family:"Avenir Next","Segoe UI",Helvetica,Arial,sans-serif; color:#e8dcff;
+    text-shadow:0 0 12px rgba(160,80,255,.55); user-select:none; }
+
+  #intro { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; pointer-events:none;
+    background: radial-gradient(ellipse at 50% 60%, rgba(10,4,22,.25), rgba(6,2,14,.88) 100%);
+    transition: opacity 1.6s ease; }
+  #intro h1 { margin:0; font-size:clamp(34px,7vw,84px); font-weight:800; letter-spacing:.34em;
+    text-indent:.34em; color:#fff;
+    background: linear-gradient(180deg,#8fefff 0%,#e6a8ff 45%,#ff2d95 100%);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    filter: drop-shadow(0 0 22px rgba(255,45,149,.45)); }
+  #intro p { margin:0; font-size:clamp(11px,1.6vw,15px); letter-spacing:.52em; text-indent:.52em;
+    text-transform:uppercase; color:#b9a4e8; }
+  #intro .rule { width:min(420px,60vw); height:1px;
+    background:linear-gradient(90deg,transparent,#ff2d95,transparent); }
+
+  #hud { position:fixed; left:26px; bottom:24px; z-index:10; display:flex; align-items:flex-end;
+    gap:16px; opacity:0; transition:opacity 1.2s ease; }
+  #speedNum { font-size:46px; font-weight:800; line-height:.9; letter-spacing:.04em;
+    font-variant-numeric:tabular-nums; color:#fff; text-shadow:0 0 16px rgba(0,229,255,.7); }
+  #speedNum small { font-size:13px; font-weight:600; letter-spacing:.28em; color:#8ff3ff;
+    display:block; margin-top:6px; }
+  #meter { width:120px; height:5px; background:rgba(255,255,255,.12); border-radius:3px;
+    overflow:hidden; margin-bottom:9px; }
+  #meterFill { height:100%; width:0%;
+    background:linear-gradient(90deg,#00e5ff,#ff2d95); border-radius:3px;
+    box-shadow:0 0 10px rgba(255,45,149,.8); }
+  #alt { font-size:11px; letter-spacing:.3em; color:#b9a4e8; margin-top:7px;
+    font-variant-numeric:tabular-nums; }
+
+  #corner { position:fixed; right:26px; bottom:24px; z-index:10; text-align:right;
+    opacity:0; transition:opacity 1.2s ease; }
+  #lap { font-size:12px; letter-spacing:.42em; color:#b9a4e8; margin-bottom:10px;
+    font-variant-numeric:tabular-nums; }
+  #soundBtn { pointer-events:auto; cursor:pointer; display:inline-block;
+    font-size:11px; letter-spacing:.34em; text-indent:.34em; padding:9px 16px 9px 18px;
+    color:#8ff3ff; border:1px solid rgba(0,229,255,.45); border-radius:999px;
+    background:rgba(6,2,20,.5); transition:all .25s ease; }
+  #soundBtn:hover { box-shadow:0 0 18px rgba(0,229,255,.5); color:#fff; }
+  #soundBtn.on { color:#ffd0e8; border-color:rgba(255,45,149,.65);
+    box-shadow:0 0 18px rgba(255,45,149,.45); }
+
+  #title { position:fixed; left:26px; top:22px; z-index:10; font-size:13px; font-weight:700;
+    letter-spacing:.5em; color:#e6a8ff; opacity:0; transition:opacity 1.2s ease; }
+  #title span { color:#8ff3ff; }
+
+  #err { position:fixed; inset:0; z-index:50; display:none; align-items:center; justify-content:center;
+    text-align:center; padding:30px; font-size:15px; letter-spacing:.08em; color:#ffb3d1;
+    background:#0a0416; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="speedglow"></div>
+
+<div id="title" class="ui">NEON&nbsp;MERIDIAN&nbsp;<span>//&nbsp;NIGHT&nbsp;CIRCUIT</span></div>
+
+<div id="hud" class="ui">
+  <div>
+    <div id="speedNum">0<small>KM/H</small></div>
+  </div>
+  <div>
+    <div id="meter"><div id="meterFill"></div></div>
+    <div id="alt">ALT&nbsp;000&nbsp;M</div>
+  </div>
+</div>
+
+<div id="corner" class="ui">
+  <div id="lap">LAP&nbsp;01</div>
+  <div id="soundBtn">SOUND&nbsp;OFF</div>
+</div>
+
+<div id="intro" class="ui">
+  <p>strap in &middot; continuous ride</p>
+  <div class="rule"></div>
+  <h1>NEON MERIDIAN</h1>
+  <div class="rule"></div>
+  <p>a first-person coaster loop</p>
+</div>
+
+<div id="err" class="ui">WebGL could not start in this browser.<br>Try a recent Chrome, Edge, Firefox or Safari.</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const $ = id => document.getElementById(id);
+
+try { main(); } catch (e) { $('err').style.display = 'flex'; console.error(e); }
+
+function main() {
+
+/* ---------------------------------------------------------------- renderer */
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+$('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const FOG_COLOR = new THREE.Color(0x1c0b36);
+scene.fog = new THREE.FogExp2(FOG_COLOR, 0.0034);
+
+const camera = new THREE.PerspectiveCamera(74, innerWidth/innerHeight, 0.1, 1600);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ------------------------------------------------------------------- light */
+scene.add(new THREE.HemisphereLight(0x5a2d8f, 0x0a0416, 0.85));
+const sunDir = new THREE.Vector3(0.25, 0.16, -1).normalize();
+const dir = new THREE.DirectionalLight(0xff7a5c, 1.1);
+dir.position.copy(sunDir).multiplyScalar(300);
+scene.add(dir);
+const fill = new THREE.DirectionalLight(0x3355ff, 0.35);
+fill.position.set(-200, 120, 200);
+scene.add(fill);
+
+/* --------------------------------------------------------------------- sky */
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1200, 32, 20),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite:false, fog:false,
+    uniforms: { uSun: { value: sunDir }, uTime: { value: 0 } },
+    vertexShader: `
+      varying vec3 vDir;
+      void main(){ vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vDir; uniform vec3 uSun; uniform float uTime;
+      void main(){
+        vec3 d = normalize(vDir);
+        float h = clamp(d.y, -0.15, 1.0);
+        vec3 zen = vec3(0.016, 0.004, 0.055);
+        vec3 mid = vec3(0.180, 0.050, 0.330);
+        vec3 hor = vec3(0.960, 0.300, 0.240);
+        vec3 col = mix(mid, zen, smoothstep(0.06, 0.55, h));
+        col = mix(hor, col, smoothstep(-0.03, 0.16, h));
+        // sun disc with retro stripe cuts
+        float a = acos(clamp(dot(d, normalize(uSun)), -1.0, 1.0));
+        float R = 0.155;
+        float disc = smoothstep(R, R - 0.006, a);
+        float sy = (d.y - (uSun.y - R)) / (2.0 * R);          // 0 bottom .. 1 top of disc
+        float bands = step(0.42, fract(sy * 9.0 - uTime * 0.05));
+        float stripes = mix(bands, 1.0, smoothstep(0.42, 0.62, sy));
+        vec3 sunCol = mix(vec3(1.0, 0.20, 0.55), vec3(1.0, 0.88, 0.45), smoothstep(0.1, 0.9, sy));
+        col += sunCol * disc * stripes * 1.45;
+        col += vec3(1.0, 0.35, 0.45) * exp(-a * 4.2) * 0.42;   // glow
+        col += vec3(0.55, 0.12, 0.55) * exp(-max(d.y, 0.0) * 9.0) * 0.30; // horizon haze
+        gl_FragColor = vec4(col, 1.0);
+      }`
+  })
+);
+scene.add(sky);
+
+/* ------------------------------------------------------------------- stars */
+{
+  const n = 1600, pos = new Float32Array(n*3), cols = new Float32Array(n*3);
+  const c1 = new THREE.Color(0xbfd8ff), c2 = new THREE.Color(0xffd9f2);
+  for (let i=0;i<n;i++){
+    const t = Math.random()*Math.PI*2, p = Math.acos(THREE.MathUtils.lerp(0.10, 0.999, Math.random()));
+    const r = 1100;
+    pos[i*3]   = r*Math.sin(p)*Math.cos(t);
+    pos[i*3+1] = r*Math.cos(p);
+    pos[i*3+2] = r*Math.sin(p)*Math.sin(t);
+    const fade = THREE.MathUtils.smoothstep(pos[i*3+1]/r, 0.04, 0.35) * (0.35+Math.random()*0.65);
+    const c = Math.random()<0.5?c1:c2;
+    cols[i*3]=c.r*fade; cols[i*3+1]=c.g*fade; cols[i*3+2]=c.b*fade;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color', new THREE.BufferAttribute(cols,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+    size:2.2, sizeAttenuation:false, vertexColors:true, fog:false,
+    transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false })));
+}
+
+/* ----------------------------------------------------------------- terrain */
+function groundY(x, z){
+  return -1.0
+    + 1.6*Math.sin(x*0.021+1.7)*Math.cos(z*0.017-0.4)
+    + 1.0*Math.sin(x*0.043+z*0.031)
+    + 0.5*Math.sin(x*0.011-z*0.023+2.0);
+}
+{
+  const g = new THREE.PlaneGeometry(1500, 1500, 120, 120);
+  g.rotateX(-Math.PI/2);
+  const p = g.attributes.position;
+  for (let i=0;i<p.count;i++) p.setY(i, groundY(p.getX(i), p.getZ(i)));
+  g.computeVertexNormals();
+
+  // synthwave grid canvas texture
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#150829'; cx.fillRect(0,0,256,256);
+  cx.strokeStyle = 'rgba(255,45,149,0.85)'; cx.lineWidth = 3;
+  cx.strokeRect(1.5,1.5,253,253);
+  cx.strokeStyle = 'rgba(120,60,220,0.35)'; cx.lineWidth = 1;
+  cx.beginPath(); cx.moveTo(128,0); cx.lineTo(128,256); cx.moveTo(0,128); cx.lineTo(256,128); cx.stroke();
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(56, 56);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+
+  scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+    map:tex, color:0x7f6fd0, emissive:0x2a0a44, emissiveMap:tex,
+    emissiveIntensity:0.9, roughness:0.95, metalness:0.0 })));
+}
+
+/* ------------------------------------------------------------- far ridges */
+{
+  const mat = new THREE.MeshBasicMaterial({ color:0x120726, fog:false });
+  const rim = new THREE.MeshBasicMaterial({ color:0x2a1150, fog:false });
+  for (let i=0;i<16;i++){
+    const a = (i/16)*Math.PI*2 + 0.19;
+    const r = 620 + Math.sin(i*12.9)*90;
+    const h = 90 + Math.abs(Math.sin(i*7.3))*130;
+    const w = 130 + Math.abs(Math.sin(i*3.1))*160;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(w, h, 5, 1), (i%3===0)?rim:mat);
+    m.position.set(Math.cos(a)*r, h/2 - 24, Math.sin(a)*r);
+    m.rotation.y = Math.random()*Math.PI;
+    scene.add(m);
+  }
+}
+
+/* ------------------------------------------------------------------- track */
+const PTS = [
+  [   0,  6,    0],  // 0 station
+  [  26,  6,    3],
+  [  52,  8,    2],
+  [  78, 16,   -4],  // 3 lift start
+  [ 104, 30,  -14],
+  [ 124, 41,  -28],
+  [ 136, 46,  -46],  // 6 crest
+  [ 142, 34,  -72],
+  [ 138,  9, -102],  // 8 valley
+  [ 122, 22, -128],
+  [  98, 26, -145],  // 10 airtime hill
+  [  64, 18, -150],
+  [  32, 22, -140],  // 12 banked sweep
+  [  10, 16, -118],
+  [ -12,  8,  -98],  // 14 dive
+  [ -48,  6.5,-82],  // 15 tunnel start
+  [ -82,  7,  -62],  // 16 tunnel end
+  [-108, 12,  -34],
+  [-122, 22,    0],
+  [-118, 27,   34],  // 19 helix entry
+  [ -88, 24,   78],
+  [ -58, 21,   48],
+  [ -86, 17,   20],
+  [-114, 14,   46],
+  [ -88, 11,   72],
+  [ -64,  8.5, 48],
+  [ -86,  7,   28],
+  [ -62,  6.5, 10],  // 27 helix exit
+  [ -36, 10,   -4],  // 28 bunny hop
+  [ -18,  6.5,  2],  // 29 brake run
+].map(p => new THREE.Vector3(...p));
+
+const curve = new THREE.CatmullRomCurve3(PTS, true, 'centripetal', 0.5);
+const LAP = curve.getLength();
+
+/* precomputed arc-length frames (world-up based; track never goes vertical) */
+const NS = 2000;
+const F = { pos:[], tan:[], right:[], up:[], curv:new Float32Array(NS) };
+{
+  const UP = new THREE.Vector3(0,1,0);
+  for (let i=0;i<NS;i++){
+    const u = i/NS;
+    const pos = curve.getPointAt(u);
+    const tan = curve.getTangentAt(u).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, UP).normalize();
+    const up = new THREE.Vector3().crossVectors(right, tan).normalize();
+    F.pos.push(pos); F.tan.push(tan); F.right.push(right); F.up.push(up);
+  }
+  const ds = LAP/NS;
+  for (let i=0;i<NS;i++){
+    const t0 = F.tan[i], t1 = F.tan[(i+1)%NS];
+    F.curv[i] = (t1.x-t0.x)*F.right[i].x + (t1.y-t0.y)*F.right[i].y + (t1.z-t0.z)*F.right[i].z;
+    F.curv[i] /= ds; // signed lateral curvature, + = turning right
+  }
+  // light smoothing of curvature
+  const c2 = new Float32Array(NS);
+  for (let i=0;i<NS;i++){
+    let s=0; for (let k=-6;k<=6;k++) s += F.curv[(i+k+NS)%NS];
+    c2[i]=s/13;
+  }
+  F.curv.set(c2);
+}
+const idxAt = u => Math.floor(((u%1)+1)%1 * NS) % NS;
+function frameAt(u, out){
+  const f = (((u%1)+1)%1) * NS;
+  const i = Math.floor(f) % NS, j = (i+1)%NS, t = f - Math.floor(f);
+  out.pos.lerpVectors(F.pos[i], F.pos[j], t);
+  out.tan.lerpVectors(F.tan[i], F.tan[j], t).normalize();
+  out.right.lerpVectors(F.right[i], F.right[j], t).normalize();
+  out.up.lerpVectors(F.up[i], F.up[j], t).normalize();
+  out.curv = F.curv[i]*(1-t) + F.curv[j]*t;
+  return out;
+}
+const uNear = v => { // arc-u of the sample closest to a control point
+  let best=0, bd=1e9;
+  for (let i=0;i<NS;i++){ const d=F.pos[i].distanceToSquared(v); if(d<bd){bd=d;best=i;} }
+  return best/NS;
+};
+
+/* named track stations */
+const U_LIFT  = uNear(PTS[1]); // chain engages right out of the station
+let U_CREST = 0; { let by=-1; for(let i=0;i<NS;i++) if(F.pos[i].y>by){by=F.pos[i].y;U_CREST=i/NS;} }
+const U_TUN_A = uNear(PTS[15]), U_TUN_B = uNear(PTS[16]);
+const U_BRAKE = uNear(PTS[29]);
+const H_CREST = curve.getPointAt(U_CREST).y;
+
+/* ------------------------------------------------------------- rail meshes */
+const railMat = new THREE.MeshStandardMaterial({
+  color:0x0b2a33, emissive:0x00e5ff, emissiveIntensity:1.6, roughness:0.35, metalness:0.6 });
+const GAUGE = 1.6;
+{
+  const mk = side => {
+    const pts = [];
+    for (let i=0;i<NS;i+=2)
+      pts.push(F.pos[i].clone().addScaledVector(F.right[i], side*GAUGE/2));
+    const c = new THREE.CatmullRomCurve3(pts, true);
+    return new THREE.Mesh(new THREE.TubeGeometry(c, 1400, 0.10, 7, true), railMat);
+  };
+  scene.add(mk(1), mk(-1));
+  // center spine, slightly below
+  const spts = [];
+  for (let i=0;i<NS;i+=2) spts.push(F.pos[i].clone().addScaledVector(F.up[i], -0.34));
+  const sc = new THREE.CatmullRomCurve3(spts, true);
+  scene.add(new THREE.Mesh(new THREE.TubeGeometry(sc, 1000, 0.14, 6, true),
+    new THREE.MeshStandardMaterial({ color:0x1a0b30, emissive:0x3d1170,
+      emissiveIntensity:0.7, roughness:0.8 })));
+}
+
+/* ------------------------------------------------- ties + supports (inst.) */
+{
+  const step = 2.6, count = Math.floor(LAP/step);
+  const ties = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(GAUGE+0.7, 0.10, 0.42),
+    new THREE.MeshStandardMaterial({ color:0x241040, emissive:0xff2d95,
+      emissiveIntensity:0.35, roughness:0.8 }),
+    count);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), rot = new THREE.Matrix4();
+  const supTrans = [];
+  for (let i=0;i<count;i++){
+    const idx = idxAt(i*step/LAP);
+    const p = F.pos[idx].clone().addScaledVector(F.up[idx], -0.22);
+    rot.makeBasis(F.right[idx], F.up[idx], F.tan[idx]);
+    q.setFromRotationMatrix(rot);
+    m.compose(p, q, new THREE.Vector3(1,1,1));
+    ties.setMatrixAt(i, m);
+    if (i % 4 === 0){
+      const gy = groundY(p.x, p.z);
+      const h = p.y - 0.3 - gy;
+      if (h > 1.2) supTrans.push([p.x, gy + h/2, p.z, h]);
+    }
+  }
+  scene.add(ties);
+
+  const sup = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.16, 0.24, 1, 6),
+    new THREE.MeshStandardMaterial({ color:0x160a2c, emissive:0x27104a,
+      emissiveIntensity:0.5, roughness:0.9 }),
+    supTrans.length);
+  const I = new THREE.Quaternion();
+  supTrans.forEach((s,i)=>{
+    m.compose(new THREE.Vector3(s[0],s[1],s[2]), I, new THREE.Vector3(1,s[3],1));
+    sup.setMatrixAt(i,m);
+  });
+  scene.add(sup);
+}
+
+/* -------------------------------------------------- neon gates + tunnel */
+{
+  const geo = new THREE.TorusGeometry(4.6, 0.22, 10, 40);
+  const gateUs = [];
+  // ride-through tunnel of rings on the ground skim
+  const nT = 13;
+  for (let i=0;i<nT;i++) gateUs.push(THREE.MathUtils.lerp(U_TUN_A, U_TUN_B, i/(nT-1)));
+  // single accent gates at big moments
+  gateUs.push(uNear(PTS[8]), uNear(PTS[14]), uNear(PTS[27]), uNear(PTS[28]));
+  const mesh = new THREE.InstancedMesh(geo,
+    new THREE.MeshBasicMaterial({ color:0xffffff }), // basic so per-instance neon tint shows
+    gateUs.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), rot = new THREE.Matrix4();
+  const cA = new THREE.Color(0x00e5ff), cB = new THREE.Color(0xff2d95);
+  gateUs.forEach((u,i)=>{
+    const idx = idxAt(u);
+    const p = F.pos[idx].clone().addScaledVector(F.up[idx], 1.3);
+    rot.makeBasis(F.right[idx], F.up[idx], F.tan[idx]);
+    q.setFromRotationMatrix(rot);
+    m.compose(p, q, new THREE.Vector3(1,1,1));
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, i%2 ? cB : cA);
+  });
+  mesh.instanceColor.needsUpdate = true;
+  scene.add(mesh);
+}
+
+/* ------------------------------------------------------------------ audio */
+const soundBtn = $('soundBtn');
+let audio = null;
+soundBtn.addEventListener('click', () => {
+  if (!audio){
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const len = ctx.sampleRate * 2;
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<len;i++) d[i] = Math.random()*2-1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf; noise.loop = true;
+    const wind = ctx.createBiquadFilter(); wind.type='bandpass'; wind.Q.value=0.6;
+    const windGain = ctx.createGain(); windGain.gain.value = 0;
+    noise.connect(wind).connect(windGain).connect(ctx.destination);
+    const rumble = ctx.createOscillator(); rumble.type='sawtooth'; rumble.frequency.value=38;
+    const rLow = ctx.createBiquadFilter(); rLow.type='lowpass'; rLow.frequency.value=90;
+    const rGain = ctx.createGain(); rGain.gain.value=0;
+    rumble.connect(rLow).connect(rGain).connect(ctx.destination);
+    noise.start(); rumble.start();
+    audio = { ctx, wind, windGain, rGain, rumble, on:true };
+  } else {
+    audio.on = !audio.on;
+    if (audio.on) audio.ctx.resume();
+  }
+  soundBtn.textContent = audio.on ? 'SOUND ON' : 'SOUND OFF';
+  soundBtn.classList.toggle('on', audio.on);
+});
+function updateAudio(v, dt){
+  if (!audio || !audio.on){ if(audio){audio.windGain.gain.value*=0.9; audio.rGain.gain.value*=0.9;} return; }
+  const s = THREE.MathUtils.clamp(v/30, 0, 1);
+  const t = audio.ctx.currentTime;
+  audio.wind.frequency.setTargetAtTime(220 + s*s*1500, t, 0.1);
+  audio.windGain.gain.setTargetAtTime(0.004 + s*s*0.16, t, 0.15);
+  audio.rGain.gain.setTargetAtTime(0.002 + s*0.055, t, 0.15);
+  audio.rumble.frequency.setTargetAtTime(30 + s*44, t, 0.2);
+}
+
+/* ------------------------------------------------------------------- ride */
+const G = 9.8, DRAG = 0.00052;
+const LIFT_V = 6.0, BRAKE_V = 7.5, MIN_V = 2.6, MAX_V = 31;
+let u = 0.004, v = 6.0, roll = 0, lap = 1, prevU = u;
+let started = performance.now();
+
+const fr = { pos:new THREE.Vector3(), tan:new THREE.Vector3(),
+             right:new THREE.Vector3(), up:new THREE.Vector3(), curv:0 };
+const fr2 = { pos:new THREE.Vector3(), tan:new THREE.Vector3(),
+              right:new THREE.Vector3(), up:new THREE.Vector3(), curv:0 };
+const camUp = new THREE.Vector3(), eye = new THREE.Vector3(), look = new THREE.Vector3();
+const tmpQ = new THREE.Quaternion();
+
+const speedNum = $('speedNum'), meterFill = $('meterFill'), altEl = $('alt'),
+      lapEl = $('lap'), glow = $('speedglow'), hud = $('hud'),
+      corner = $('corner'), titleEl = $('title'), intro = $('intro');
+
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  const dt = THREE.MathUtils.clamp((now - last)/1000, 0, 0.05); // ponytail: dt clamp handles bg-tab jumps; lower bound kills the negative first-frame dt
+  last = now;
+
+  /* physics */
+  frameAt(u, fr);
+  let a = -G * fr.tan.y - DRAG * v * Math.abs(v);
+  v += a * dt;
+  const inLift = u > U_LIFT - 0.005 && u < U_CREST - 0.002;
+  const inBrake = u > U_BRAKE || u < 0.002;
+  if (inLift && v < LIFT_V) v += (LIFT_V - v) * Math.min(1, dt*3.0);
+  if (inBrake && v > BRAKE_V) v += (BRAKE_V - v) * Math.min(1, dt*2.6);
+  v = THREE.MathUtils.clamp(v, MIN_V, MAX_V);
+  prevU = u;
+  u = (u + (v*dt)/LAP) % 1;
+  if (u < prevU){ lap++; lapEl.textContent = 'LAP ' + String(lap).padStart(2,'0'); }
+
+  /* banking */
+  const bank = THREE.MathUtils.clamp(Math.atan2(v*v*fr.curv, G) * 0.85, -0.85, 0.85);
+  roll += (bank - roll) * Math.min(1, dt*2.6);
+
+  /* camera */
+  frameAt(u, fr);
+  frameAt(u + 14/LAP, fr2);
+  const sN = v/MAX_V;
+  const t = now/1000;
+  const shake = 0.018 + sN*sN*0.12;
+  const jx = (Math.sin(t*23.7)+Math.sin(t*41.3)*0.5) * shake * 0.5;
+  const jy = (Math.sin(t*29.1+1.7)+Math.sin(t*47.9)*0.5) * shake * 0.35;
+
+  camUp.copy(fr.up).applyQuaternion(tmpQ.setFromAxisAngle(fr.tan, roll));
+  eye.copy(fr.pos).addScaledVector(fr.up, 1.35)
+     .addScaledVector(fr.right, jx).addScaledVector(camUp, jy);
+  look.copy(fr2.pos).addScaledVector(fr2.up, 1.35);
+  camera.position.copy(eye);
+  camera.up.copy(camUp);
+  camera.lookAt(look);
+
+  const fovT = 72 + 17*sN*sN;
+  camera.fov += (fovT - camera.fov) * Math.min(1, dt*4);
+  camera.updateProjectionMatrix();
+
+  sky.position.copy(camera.position);
+  sky.material.uniforms.uTime.value = t;
+
+  /* HUD + fades */
+  const kmh = Math.round(v*3.6);
+  speedNum.firstChild.textContent = kmh;
+  meterFill.style.width = (sN*100).toFixed(1) + '%';
+  altEl.textContent = 'ALT ' + String(Math.max(0,Math.round(fr.pos.y))).padStart(3,'0') + ' M';
+  glow.style.opacity = Math.max(0, sN-0.55)*1.8;
+  const age = (now - started)/1000;
+  if (age > 3.2 && intro.style.opacity !== '0'){
+    intro.style.opacity = '0';
+    hud.style.opacity = corner.style.opacity = titleEl.style.opacity = '1';
+    setTimeout(()=>intro.remove(), 2000);
+  }
+
+  updateAudio(v, dt);
+  renderer.render(scene, camera);
+});
+
+}
+</script>
+</body>
+</html>
