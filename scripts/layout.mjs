@@ -81,7 +81,7 @@ export function galleryRelPath({ model, benchmarkId, promptLevel, date, runId, a
 export function assignPromptRevisions(cells) {
   const next = cells.map((cell) => ({
     ...cell,
-    promptSha256: cell.promptSha256 || cell.promptSha256 || cell.receipt?.promptSha256 || cell.receipt?.promptSha256 || '',
+    promptSha256: cell.promptSha256 || cell.receipt?.promptSha256 || '',
   }));
   const groups = new Map();
   for (const cell of next) {

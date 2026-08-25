@@ -97,7 +97,7 @@ function cellField(cell, ...keys) {
 }
 
 function publishStatus(status) {
-  if (status === 'complete' || status === 'complete') return 'complete';
+  if (status === 'complete') return 'complete';
   return status || 'missing';
 }
 
@@ -117,7 +117,7 @@ function indexPublishedCells(galleryDir, suite) {
     if (!statSync(modelDir).isDirectory()) continue;
     for (const promptV of readdirSync(modelDir)) {
       const parsed = parsePromptVersion(promptV);
-      const level = String(parsed.promptLevel || parsed.promptLevel || '').toUpperCase();
+      const level = String(parsed.promptLevel || '').toUpperCase();
       if (!levels.has(level)) continue;
       const pvDir = join(modelDir, promptV);
       if (!statSync(pvDir).isDirectory()) continue;
@@ -142,7 +142,7 @@ function indexPublishedCells(galleryDir, suite) {
         const experiment = receipt?.benchmarkId || parsed.benchmarkId || parsed.benchmarkId;
         if (titles.size && experiment && !titles.has(experiment)) continue;
         const attemptMatch = String(date).match(/-a(\d+)$/);
-        const promptSha = receipt?.promptSha256 || receipt?.promptSha256 || '';
+        const promptSha = receipt?.promptSha256 || '';
         cells.push({
           cellId:
             receipt?.cellId ||
@@ -150,14 +150,11 @@ function indexPublishedCells(galleryDir, suite) {
           model: receipt?.requestedModel || modelName,
           experiment,
           title: titles.get(experiment) || experiment,
-          level: String(
-            receipt?.promptLevel || parsed.promptLevel || parsed.promptLevel,
-          ).toUpperCase(),
+          level: String(receipt?.promptLevel || parsed.promptLevel).toUpperCase(),
           attempt: receipt?.attempt || (attemptMatch ? Number(attemptMatch[1]) : 1),
           status,
           date,
           runId: receipt?.runId || '',
-          promptSha256: promptSha,
           promptSha256: promptSha,
           src: isPlayable(hasHtml, status) ? `${rel}/index.html` : null,
           receiptSrc: receipt ? `${rel}/receipt.json` : null,
@@ -299,7 +296,7 @@ function publishRun(runDir) {
       promptLevel: level,
       date: m.date,
       runId: m.runId,
-      attempt: cell.attempt || cell.attempt || 1,
+      attempt: cell.attempt || 1,
     });
     if (!isPlayable(hasHtml, status) && !receipt) continue;
     const destDir = ensure(join(GALLERY, destRel));

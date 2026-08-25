@@ -64,9 +64,12 @@ describe('browser-autonomy suite', () => {
   });
 
   it('neutralizes unnecessary interaction and quality pressure in Raw prompts', () => {
-    const forbidden = /\b(polished|exceptional|exceptionally|creative|playful|playable|explorable)\b/i;
+    const forbidden =
+      /\b(polished|exceptional|exceptionally|creative|playful|playable|explorable)\b/i;
     const interactiveIds = suite.benchmarks
-      .filter((benchmark: { prompts: { A: string } }) => /\binteractive\b/i.test(benchmark.prompts.A))
+      .filter((benchmark: { prompts: { A: string } }) =>
+        /\binteractive\b/i.test(benchmark.prompts.A),
+      )
       .map((benchmark: { id: string }) => benchmark.id);
 
     for (const benchmark of suite.benchmarks) {

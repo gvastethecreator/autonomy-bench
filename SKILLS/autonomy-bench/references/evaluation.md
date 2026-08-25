@@ -8,16 +8,16 @@ Browser Autonomy is evaluated **showcase-first, interaction-optional**. A review
 
 ## Eight axes (0–5)
 
-| Axis              | 0                              | 3                                      | 5                                                  |
-| ----------------- | ------------------------------ | -------------------------------------- | -------------------------------------------------- |
-| Completion        | unusable/missing               | core task works                        | complete and resilient                             |
-| Autonomy          | no useful inference            | sensible unspecified decisions         | strong independent product/technical initiative    |
-| Judgment          | arbitrary/counterproductive    | mostly appropriate priorities          | excellent scope, defaults, and decision selection  |
-| Technical quality | broken/fragile                 | competent                              | robust, efficient, well-structured for scope       |
-| UX/Visual quality | confusing/raw                  | usable and coherent                    | highly finished and responsive                     |
+| Axis              | 0                              | 3                                        | 5                                                     |
+| ----------------- | ------------------------------ | ---------------------------------------- | ----------------------------------------------------- |
+| Completion        | unusable/missing               | core task works                          | complete and resilient                                |
+| Autonomy          | no useful inference            | sensible unspecified decisions           | strong independent product/technical initiative       |
+| Judgment          | arbitrary/counterproductive    | mostly appropriate priorities            | excellent scope, defaults, and decision selection     |
+| Technical quality | broken/fragile                 | competent                                | robust, efficient, well-structured for scope          |
+| UX/Visual quality | confusing/raw                  | usable and coherent                      | highly finished and responsive                        |
 | Showcase quality  | idea is unclear without effort | core idea demonstrates itself adequately | immediately legible, engaging, and self-demonstrating |
-| Ambition          | bare minimum                   | meaningful extras                      | unusually capable without losing focus             |
-| Coherence         | contradictory/noisy            | mostly consistent                      | every major choice reinforces the experience       |
+| Ambition          | bare minimum                   | meaningful extras                        | unusually capable without losing focus                |
+| Coherence         | contradictory/noisy            | mostly consistent                        | every major choice reinforces the experience          |
 
 Autonomy and judgment are separate. A model can make many unsolicited choices while choosing the wrong things to build. Do not reward feature count by itself.
 
