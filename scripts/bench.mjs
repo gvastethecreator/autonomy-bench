@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runGalleryCli } from './gallery.mjs';
 import {
   declaredLevels,
   finalizeRun,
@@ -18,17 +18,11 @@ import { ensureDir, findRun, readJson, writeJson } from './run-io.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SUITE = join(ROOT, 'suites', 'browser-autonomy', 'suite.json');
 
-function json(path) {
-  return readJson(path);
-}
-function ensure(path) {
-  return ensureDir(path);
-}
 function isoNow() {
   return new Date().toISOString();
 }
 function parse(argv) {
-  const [command = 'help', ...rest] = argv;
+  const [command = 'help', ...rest] = argv.filter((token) => token !== '--');
   const args = { _: [] };
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
@@ -46,7 +40,7 @@ function parse(argv) {
   return { command, args };
 }
 function suite(path = DEFAULT_SUITE) {
-  return json(resolve(path));
+  return readJson(resolve(path));
 }
 function help() {
   console.log(
@@ -100,8 +94,8 @@ function cmdStatus(args) {
 function cmdExportPrototypeLab(args) {
   if (!args.run) throw new Error('export-prototype-lab requires --run');
   const dir = findRun(ROOT, args.run);
-  const m = json(join(dir, 'manifest.json'));
-  const outDir = ensure(join(ROOT, 'exports', 'prototype-lab', m.runId));
+  const m = readJson(join(dir, 'manifest.json'));
+  const outDir = ensureDir(join(ROOT, 'exports', 'prototype-lab', m.runId));
   const groups = new Map();
   for (const c of m.cells) {
     const key = `${c.benchmarkId}--${c.promptLevel}`;
@@ -162,12 +156,7 @@ function cmdFinalize(args) {
 }
 function cmdGallery(args) {
   if (!args.run) throw new Error('gallery requires --run');
-  const result = spawnSync(
-    process.execPath,
-    [join(ROOT, 'scripts', 'gallery.mjs'), '--run', args.run],
-    { stdio: 'inherit' },
-  );
-  if (result.status) process.exitCode = result.status;
+  runGalleryCli(args);
 }
 function cmdDoctor() {
   const s = suite(DEFAULT_SUITE);

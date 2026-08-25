@@ -1,6 +1,4 @@
-import { parsePromptVersion, promptVersion, slug } from './layout.mjs';
-
-export { parsePromptVersion, promptVersion };
+import { slug } from './layout.mjs';
 
 export function attemptFromDateFolder(date) {
   const match = String(date || '').match(/-a(\d+)$/);

@@ -35,6 +35,7 @@ export function parseGalleryArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
+    if (token === '--') continue;
     if (!token.startsWith('--')) {
       args._.push(token);
       continue;
