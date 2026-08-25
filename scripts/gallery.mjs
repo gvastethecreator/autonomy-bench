@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   galleryCommand,
   liveBenchmarkIds,
@@ -43,7 +43,7 @@ function logStripped(retired, empty) {
   if (empty) console.log(`removed ${empty} gallery folders with no HTML`);
 }
 
-function finishGallery(extras, counts) {
+function finishGallery(extras = {}, counts = null) {
   const suite = loadSuite();
   const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
   const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
@@ -66,21 +66,25 @@ function finishGallery(extras, counts) {
   writeFileSync(join(GALLERY, '.nojekyll'), '');
   writeFileSync(join(GALLERY, 'serve.json'), JSON.stringify({ cleanUrls: false }, null, 2) + '\n');
   console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
-  console.log(
-    `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
-  );
+  if (counts) {
+    console.log(
+      `${counts.copiedHtml} HTML · ${counts.copiedReceipts} receipts · ${counts.copiedPrompts} prompts · ${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
+    );
+  } else {
+    console.log(
+      `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
+    );
+  }
   logStripped(droppedRetired, droppedEmpty);
   console.log(`viewer sha256 ${hash}`);
 }
 
-function cmdGallery(args) {
+function publishRuns(args) {
   const suite = loadSuite();
   const totals = { copiedHtml: 0, copiedReceipts: 0, copiedPrompts: 0 };
   const experimentOrder = [];
   const seenExp = new Set();
   let last = null;
-  stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
-  stripNoHtmlGalleryTakes(GALLERY);
   const runs =
     args.all || (!args.run && !args.viewer)
       ? listRuns()
@@ -115,29 +119,22 @@ function cmdGallery(args) {
   );
 }
 
-try {
-  const args = parseGalleryArgs(process.argv.slice(2));
-  const command = galleryCommand(args);
-  const suite = loadSuite();
-  if (command === 'viewer') {
-    const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
-    const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
-    const catalog = writeCatalogFile(GALLERY, suite);
-    const hash = writeGalleryViewer({
-      galleryDir: GALLERY,
-      scriptsDir: SCRIPTS,
-      animeBundle: ANIME_BUNDLE,
-    });
-    console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
-    console.log(
-      `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
-    );
-    logStripped(droppedRetired, droppedEmpty);
-    console.log(`viewer sha256 ${hash}`);
-  } else {
-    cmdGallery(args);
+export function runGalleryCli(args) {
+  if (galleryCommand(args) === 'viewer') finishGallery();
+  else publishRuns(args);
+}
+
+function isMainModule() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return pathToFileURL(resolve(entry)).href === import.meta.url;
+}
+
+if (isMainModule()) {
+  try {
+    runGalleryCli(parseGalleryArgs(process.argv.slice(2)));
+  } catch (err) {
+    console.error(`ERROR: ${err.message}`);
+    process.exitCode = 1;
   }
-} catch (err) {
-  console.error(`ERROR: ${err.message}`);
-  process.exitCode = 1;
 }
