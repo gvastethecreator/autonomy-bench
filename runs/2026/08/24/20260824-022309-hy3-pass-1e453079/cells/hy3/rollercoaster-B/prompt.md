@@ -1,1 +1,0 @@
-Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. Make design, pacing, composition, and implementation decisions yourself wherever details are unspecified, turning the idea into a coherent finished experience.

@@ -1,1 +1,0 @@
-Create a music sequencer in a single HTML file using the Web Audio API. Make design, pacing, composition, and implementation decisions yourself wherever details are unspecified, turning the idea into a coherent finished experience.
