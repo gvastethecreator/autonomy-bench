@@ -109,27 +109,30 @@ describe('publishRun', () => {
       join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413', 'index.html'),
       '<html></html>',
     );
-    writeJson(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413', 'receipt.json'), {
-      schemaVersion: 1,
-      runId: 'run-old',
-      cellId: 'rollercoaster--a--grok-4.6--a01',
-      benchmarkId: 'rollercoaster',
-      promptLevel: 'A',
-      attempt: 1,
-      requestedModel: 'grok-4.6',
-      promptSha256: 'aaa',
-      status: 'complete',
-      adapter: 'agent',
-      harness: 'cursor',
-      startedAt: 'not captured',
-      completedAt: 'not captured',
-      durationMs: 1200,
-      tokenUsage: 'not captured',
-      contributor: {
-        github: 'gvastethecreator',
-        avatarUrl: 'https://github.com/gvastethecreator.png',
+    writeJson(
+      join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-21-021413', 'receipt.json'),
+      {
+        schemaVersion: 1,
+        runId: 'run-old',
+        cellId: 'rollercoaster--a--grok-4.6--a01',
+        benchmarkId: 'rollercoaster',
+        promptLevel: 'A',
+        attempt: 1,
+        requestedModel: 'grok-4.6',
+        promptSha256: 'aaa',
+        status: 'complete',
+        adapter: 'agent',
+        harness: 'cursor',
+        startedAt: 'not captured',
+        completedAt: 'not captured',
+        durationMs: 1200,
+        tokenUsage: 'not captured',
+        contributor: {
+          github: 'gvastethecreator',
+          avatarUrl: 'https://github.com/gvastethecreator.png',
+        },
       },
-    });
+    );
     writeJson(join(galleryDir, 'catalog.json'), {
       runId: 'run-old',
       label: 'ox-alpha-free-rollercoaster-bc',
