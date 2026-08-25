@@ -186,6 +186,7 @@ export function indexPublishedCells(galleryDir, suite) {
           status,
           date,
           runId: receipt?.runId || '',
+          receipt,
           promptSha256: promptSha,
           src: isPlayable(hasHtml, status) ? `${rel}/index.html` : null,
           receiptSrc: receipt ? `${rel}/receipt.json` : null,
@@ -265,10 +266,12 @@ export function writeCatalogFile(galleryDir, suite, extras = {}) {
   const preferred = extras.experimentOrder || DEFAULT_EXPERIMENT_ORDER;
   const catalog = buildCatalogFromCells(indexPublishedCells(galleryDir, suite), {
     generatedAt: extras.generatedAt || new Date().toISOString(),
+    // prev fills in only when no run is being published (viewer rebuild);
+    // a published run's own metadata must not inherit an older run's label/harness.
     runId: extras.runId || prev.runId || '',
-    label: extras.label || prev.label || '',
-    harness: extras.harness || prev.harness || '',
-    adapter: extras.adapter || prev.adapter || '',
+    label: (extras.runId ? extras.label : extras.label || prev.label) || '',
+    harness: (extras.runId ? extras.harness : extras.harness || prev.harness) || '',
+    adapter: (extras.runId ? extras.adapter : extras.adapter || prev.adapter) || '',
     experimentOrder: DEFAULT_EXPERIMENT_ORDER.concat(
       preferred.filter((id) => !DEFAULT_EXPERIMENT_ORDER.includes(id)),
     ),

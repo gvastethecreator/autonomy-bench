@@ -123,14 +123,19 @@ export function buildCatalogFromCells(cells, extras = {}) {
   const runMap = new Map();
   for (const cell of keyed) {
     const runId = cell.runId || cell.receipt?.runId;
-    if (!runId || runMap.has(runId)) continue;
-    runMap.set(runId, {
+    if (!runId) continue;
+    const entry = runMap.get(runId) || {
       runId,
-      date: cell.date || '',
-      harness: cell.receipt?.harness || extras.harness || '',
-      adapter: cell.receipt?.adapter || extras.adapter || '',
-      label: extras.label || '',
-    });
+      date: '',
+      harness: '',
+      adapter: '',
+      // extras describe the run being published; other runs keep their own provenance.
+      label: runId === extras.runId ? extras.label || '' : '',
+    };
+    if (!entry.date && cell.date) entry.date = cell.date;
+    if (!entry.harness && cell.receipt?.harness) entry.harness = cell.receipt.harness;
+    if (!entry.adapter && cell.receipt?.adapter) entry.adapter = cell.receipt.adapter;
+    runMap.set(runId, entry);
   }
   const experimentIds = [];
   const seenExp = new Set();
