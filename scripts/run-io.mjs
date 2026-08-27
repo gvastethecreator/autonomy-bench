@@ -29,14 +29,27 @@ export function walkFiles(dir) {
   return out;
 }
 
-/** @param {string} root @param {string} id */
-export function findRun(root, id) {
-  const wanted = String(id || '');
+/** @param {string} root */
+export function listRuns(root) {
+  const seen = new Set();
+  const runs = [];
   for (const p of walkFiles(join(root, 'runs')).filter(
     (file) => basename(file) === 'manifest.json',
   )) {
     const manifest = readJson(p);
-    if (manifest.runId === wanted || dirname(p).endsWith(wanted)) return dirname(p);
+    if (!manifest.runId || seen.has(manifest.runId)) continue;
+    seen.add(manifest.runId);
+    runs.push({ dir: dirname(p), manifest });
+  }
+  runs.sort((a, b) => String(a.manifest.runId).localeCompare(String(b.manifest.runId)));
+  return runs;
+}
+
+/** @param {string} root @param {string} id */
+export function findRun(root, id) {
+  const wanted = String(id || '');
+  for (const run of listRuns(root)) {
+    if (run.manifest.runId === wanted || run.dir.endsWith(wanted)) return run.dir;
   }
   throw new Error(`Run not found: ${id}`);
 }
