@@ -64,6 +64,34 @@ export function yieldMain(ms = IFRAME_STAGGER_GAP_MS) {
   });
 }
 
+export function waitIframeSettled(iframe, options = {}) {
+  const isCurrent = options.isCurrent || (() => true);
+  const timeoutMs = options.timeoutMs == null ? IFRAME_LOAD_TIMEOUT_MS : options.timeoutMs;
+  const src = iframe.getAttribute('data-src');
+  if (!src) return Promise.resolve('skip');
+  return new Promise((resolve) => {
+    if (!isCurrent()) {
+      resolve('aborted');
+      return;
+    }
+    let settled = false;
+    const finish = (reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      iframe.removeEventListener('load', onDone);
+      iframe.removeEventListener('error', onDone);
+      resolve(reason);
+    };
+    const onDone = () => finish(isCurrent() ? 'load' : 'aborted');
+    const timer = setTimeout(() => finish(isCurrent() ? 'timeout' : 'aborted'), timeoutMs);
+    iframe.addEventListener('load', onDone);
+    iframe.addEventListener('error', onDone);
+    iframe.src = src;
+    iframe.removeAttribute('data-src');
+  });
+}
+
 export async function loadIframesStaggered(iframes, options = {}) {
   const items = [...iframes];
   const {

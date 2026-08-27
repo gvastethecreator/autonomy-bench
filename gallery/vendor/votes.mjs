@@ -65,6 +65,73 @@ export function countsFromRows(rows) {
   return counts;
 }
 
+export function catalogAllowsVote(catalog, promptId, modelId) {
+  const parsed = parseVotePromptId(promptId);
+  if (!parsed.experiment || !isVoteModelId(modelId)) return false;
+  return (catalog?.cells || []).some((cell) => {
+    if (!cell || !cell.src) return false;
+    if (String(cell.experiment || '') !== parsed.experiment) return false;
+    if (String(cell.level || '').toUpperCase() !== parsed.level) return false;
+    const model = String(cell.model || '');
+    const key = String(cell.modelKey || '');
+    return model === modelId || key === modelId;
+  });
+}
+
+export function createMemoryVoteStore() {
+  const rows = [];
+  return {
+    async counts(promptId) {
+      const map = {};
+      for (const row of rows) {
+        if (row.prompt_id !== promptId) continue;
+        map[row.model_id] = (map[row.model_id] || 0) + 1;
+      }
+      return countsFromRows(Object.entries(map).map(([model_id, n]) => ({ model_id, n })));
+    },
+    async mine(promptId, voterId) {
+      const row = rows.find((r) => r.prompt_id === promptId && r.voter_id === voterId);
+      const id = (row && row.model_id) || '';
+      return isVoteModelId(id) ? id : null;
+    },
+    async upsert({ voterId, promptId, modelId, now }) {
+      const existing = rows.find((r) => r.prompt_id === promptId && r.voter_id === voterId);
+      if (existing) {
+        existing.model_id = modelId;
+        existing.updated_at = now;
+        return;
+      }
+      rows.push({
+        voter_id: voterId,
+        prompt_id: promptId,
+        model_id: modelId,
+        created_at: now,
+        updated_at: now,
+      });
+    },
+    async remove({ voterId, promptId }) {
+      const i = rows.findIndex((r) => r.prompt_id === promptId && r.voter_id === voterId);
+      if (i >= 0) rows.splice(i, 1);
+    },
+  };
+}
+
+export async function snapshotVotes(store, promptId, voterId) {
+  const counts = await store.counts(promptId);
+  const mine = await store.mine(promptId, voterId);
+  return { promptId, counts, mine, leader: uniqueLeader(counts) };
+}
+
+export async function putVote(store, { voterId, promptId, modelId, now }) {
+  await store.upsert({ voterId, promptId, modelId, now });
+  return snapshotVotes(store, promptId, voterId);
+}
+
+export async function deleteVote(store, { voterId, promptId }) {
+  await store.remove({ voterId, promptId });
+  return snapshotVotes(store, promptId, voterId);
+}
+
 export function voteStateFromPayload(payload) {
   const counts =
     payload &&
