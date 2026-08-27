@@ -1,18 +1,9 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import {
-  galleryCommand,
-  liveBenchmarkIds,
-  parseGalleryArgs,
-  publishRun,
-  stripNoHtmlGalleryTakes,
-  stripRetiredGalleryBenchmarks,
-  writeCatalogFile,
-  writeGalleryViewer,
-} from './gallery-publish.mjs';
-import { findRun, readJson, walkFiles } from './run-io.mjs';
+import { finishGallery, galleryCommand, parseGalleryArgs, publishRun } from './gallery-publish.mjs';
+import { findRun, listRuns, readJson } from './run-io.mjs';
+import { loadSuite } from './suite.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GALLERY = join(ROOT, 'gallery');
@@ -20,51 +11,16 @@ const GALLERY_ARCHIVE = join(ROOT, '.scratch', 'archive', 'gallery');
 const ANIME_BUNDLE = join(ROOT, 'node_modules', 'animejs', 'dist', 'bundles', 'anime.esm.min.js');
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 
-function loadSuite() {
-  const path = join(ROOT, 'suites', 'browser-autonomy', 'suite.json');
-  return existsSync(path) ? readJson(path) : null;
+export function gallerySuitePath(root = ROOT) {
+  return join(root, 'suites', 'browser-autonomy', 'suite.json');
 }
 
-function listRuns() {
-  const seen = new Set();
-  const runs = [];
-  for (const p of walkFiles(join(ROOT, 'runs')).filter((x) => basename(x) === 'manifest.json')) {
-    const m = readJson(p);
-    if (!m.runId || seen.has(m.runId)) continue;
-    seen.add(m.runId);
-    runs.push({ dir: dirname(p), manifest: m });
-  }
-  runs.sort((a, b) => String(a.manifest.runId).localeCompare(String(b.manifest.runId)));
-  return runs;
+function loadLiveSuite() {
+  return loadSuite(gallerySuitePath());
 }
 
-function logStripped(retired, empty) {
-  if (retired) console.log(`archived ${retired} retired gallery folders`);
-  if (empty) console.log(`removed ${empty} gallery folders with no HTML`);
-}
-
-function finishGallery(extras = {}, counts = null) {
-  const suite = loadSuite();
-  const droppedRetired = stripRetiredGalleryBenchmarks(GALLERY, suite, GALLERY_ARCHIVE);
-  const droppedEmpty = stripNoHtmlGalleryTakes(GALLERY);
-  const known = liveBenchmarkIds(suite);
-  const experimentOrder = [...(extras.experimentOrder || [])].filter(
-    (id) => !known.size || known.has(id),
-  );
-  const seenExp = new Set(experimentOrder);
-  if (suite?.benchmarks) {
-    for (const benchmark of suite.benchmarks) {
-      if (!seenExp.has(benchmark.id)) experimentOrder.push(benchmark.id);
-    }
-  }
-  const catalog = writeCatalogFile(GALLERY, suite, { ...extras, experimentOrder });
-  const hash = writeGalleryViewer({
-    galleryDir: GALLERY,
-    scriptsDir: SCRIPTS,
-    animeBundle: ANIME_BUNDLE,
-  });
-  writeFileSync(join(GALLERY, '.nojekyll'), '');
-  writeFileSync(join(GALLERY, 'serve.json'), JSON.stringify({ cleanUrls: false }, null, 2) + '\n');
+function logFinished(result, counts = null) {
+  const catalog = result.catalog;
   console.log(relative(ROOT, GALLERY).replaceAll('\\', '/'));
   if (counts) {
     console.log(
@@ -75,24 +31,40 @@ function finishGallery(extras = {}, counts = null) {
       `${catalog.models.length} models · ${catalog.experiments.length} experiments · ${catalog.dates.length} dates · ${catalog.promptRevisions.length} prompt revisions`,
     );
   }
-  logStripped(droppedRetired, droppedEmpty);
-  console.log(`viewer sha256 ${hash}`);
+  if (result.droppedRetired)
+    console.log(`archived ${result.droppedRetired} retired gallery folders`);
+  if (result.droppedEmpty)
+    console.log(`removed ${result.droppedEmpty} gallery folders with no HTML`);
+  console.log(`viewer sha256 ${result.hash}`);
+}
+
+function rebuildGallery(extras = {}, counts = null) {
+  const result = finishGallery({
+    galleryDir: GALLERY,
+    scriptsDir: SCRIPTS,
+    animeBundle: ANIME_BUNDLE,
+    suite: loadLiveSuite(),
+    archiveDir: GALLERY_ARCHIVE,
+    extras,
+  });
+  logFinished(result, counts);
+  return result;
 }
 
 function publishRuns(args) {
-  const suite = loadSuite();
+  const suite = loadLiveSuite();
   const totals = { copiedHtml: 0, copiedReceipts: 0, copiedPrompts: 0 };
   const experimentOrder = [];
   const seenExp = new Set();
   let last = null;
   const runs =
     args.all || (!args.run && !args.viewer)
-      ? listRuns()
+      ? listRuns(ROOT)
       : [
-          {
-            dir: findRun(ROOT, args.run),
-            manifest: readJson(join(findRun(ROOT, args.run), 'manifest.json')),
-          },
+          (() => {
+            const dir = findRun(ROOT, args.run);
+            return { dir, manifest: readJson(join(dir, 'manifest.json')) };
+          })(),
         ];
   if (!runs.length) throw new Error('gallery requires --run <run-id> or existing runs');
   for (const run of runs) {
@@ -107,7 +79,7 @@ function publishRuns(args) {
       experimentOrder.push(id);
     }
   }
-  finishGallery(
+  rebuildGallery(
     {
       runId: last?.runId || '',
       label: last?.label || '',
@@ -120,7 +92,7 @@ function publishRuns(args) {
 }
 
 export function runGalleryCli(args) {
-  if (galleryCommand(args) === 'viewer') finishGallery();
+  if (galleryCommand(args) === 'viewer') rebuildGallery();
   else publishRuns(args);
 }
 

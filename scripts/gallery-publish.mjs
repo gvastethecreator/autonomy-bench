@@ -16,6 +16,8 @@ import { fallbackGithubForReceipt, stampContributor } from './contributor.mjs';
 import { galleryRelPath, parsePromptVersion } from './layout.mjs';
 import { outputSizeFromHtml } from './output-tokens.mjs';
 import { isPlayable, publishStatus } from './receipt.mjs';
+import { parseArgs } from './cli-args.mjs';
+import { buildAgentPack } from './agent-pack.mjs';
 import { ensureDir, readJson, writeJson } from './run-io.mjs';
 
 export const DEFAULT_EXPERIMENT_ORDER = ['rollercoaster'];
@@ -27,27 +29,14 @@ export const GALLERY_SKIP = new Set([
   'index.html',
   'catalog.json',
   'serve.json',
+  'agent.json',
+  'llms.txt',
   '.nojekyll',
   '.git',
 ]);
 
 export function parseGalleryArgs(argv) {
-  const args = { _: [] };
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (token === '--') continue;
-    if (!token.startsWith('--')) {
-      args._.push(token);
-      continue;
-    }
-    const key = token.slice(2);
-    const next = argv[i + 1];
-    if (next && !next.startsWith('--')) {
-      args[key] = next;
-      i++;
-    } else args[key] = true;
-  }
-  return args;
+  return parseArgs(argv);
 }
 
 export function galleryCommand(args) {
@@ -296,6 +285,7 @@ export const VIEWER_MODULES = [
   'stack-panels.mjs',
   'iframe-queue.mjs',
   'receipt.mjs',
+  'gallery-query.mjs',
 ];
 
 export function writeGalleryViewer({ galleryDir, scriptsDir, animeBundle }) {
@@ -310,4 +300,49 @@ export function writeGalleryViewer({ galleryDir, scriptsDir, animeBundle }) {
   const template = readFileSync(join(scriptsDir, 'gallery-viewer.html'), 'utf8');
   writeFileSync(join(galleryDir, 'index.html'), template);
   return createHash('sha256').update(template).digest('hex').slice(0, 12);
+}
+
+export function finishGallery({
+  galleryDir,
+  scriptsDir,
+  animeBundle,
+  suite,
+  archiveDir = '',
+  extras = {},
+}) {
+  const droppedRetired = stripRetiredGalleryBenchmarks(galleryDir, suite, archiveDir);
+  const droppedEmpty = stripNoHtmlGalleryTakes(galleryDir);
+  const known = liveBenchmarkIds(suite);
+  const experimentOrder = [...(extras.experimentOrder || [])].filter(
+    (id) => !known.size || known.has(id),
+  );
+  const seenExp = new Set(experimentOrder);
+  if (suite?.benchmarks) {
+    for (const benchmark of suite.benchmarks) {
+      if (!seenExp.has(benchmark.id)) experimentOrder.push(benchmark.id);
+    }
+  }
+  const catalog = writeCatalogFile(galleryDir, suite, { ...extras, experimentOrder });
+  const hash = writeGalleryViewer({
+    galleryDir,
+    scriptsDir,
+    animeBundle,
+  });
+  writeFileSync(join(galleryDir, '.nojekyll'), '');
+  writeFileSync(
+    join(galleryDir, 'serve.json'),
+    JSON.stringify({ cleanUrls: false }, null, 2) + '\n',
+  );
+  writeAgentPack(galleryDir, suite);
+  return { catalog, hash, droppedRetired, droppedEmpty, experimentOrder };
+}
+
+export function writeAgentPack(galleryDir, suite) {
+  const pack = buildAgentPack(suite);
+  writeJson(join(galleryDir, 'agent.json'), pack.json);
+  writeFileSync(
+    join(galleryDir, 'llms.txt'),
+    pack.llms.endsWith('\n') ? pack.llms : pack.llms + '\n',
+  );
+  return pack;
 }

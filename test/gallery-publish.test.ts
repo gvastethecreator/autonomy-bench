@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vite-plus/test';
 import {
+  finishGallery,
   galleryCommand,
   indexPublishedCells,
   parseGalleryArgs,
@@ -268,5 +270,35 @@ describe('publishRun', () => {
       ),
     ).toBe(true);
     expect(existsSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A'))).toBe(false);
+  });
+
+  it('writes .nojekyll and serve.json when finishing a gallery', () => {
+    const galleryDir = tempDir();
+    const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
+    const animeBundle = join(galleryDir, 'anime.esm.min.js');
+    writeFileSync(animeBundle, 'export const animate = {};\n');
+    mkdirSync(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000', 'index.html'),
+      '<html></html>',
+    );
+    const result = finishGallery({
+      galleryDir,
+      scriptsDir,
+      animeBundle,
+      suite,
+    });
+    expect(existsSync(join(galleryDir, '.nojekyll'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(galleryDir, 'serve.json'), 'utf8'))).toEqual({
+      cleanUrls: false,
+    });
+    expect(result.catalog.experiments.map((row: { id: string }) => row.id)).toContain(
+      'rollercoaster',
+    );
+    expect(existsSync(join(galleryDir, 'vendor', 'gallery-query.mjs'))).toBe(true);
+    expect(existsSync(join(galleryDir, 'agent.json'))).toBe(true);
+    expect(existsSync(join(galleryDir, 'llms.txt'))).toBe(true);
   });
 });

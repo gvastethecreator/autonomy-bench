@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Autonomy Bench</title>
   <meta name="description" content="Same prompt. Different models. Live HTML takes from frozen Autonomy Bench runs.">
+  <link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
+  <link rel="alternate" type="application/json" href="agent.json" title="agent.json">
   <link rel="preload" href="fonts/DepartureMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <style>
     @font-face {
@@ -1773,46 +1775,39 @@
       loadIframesStaggered,
       loaderIdentity,
       loaderProgressLabel,
+      waitIframeSettled,
       yieldMain
     } from './vendor/iframe-queue.mjs';
+    import { readQuery, writeQuery } from './vendor/gallery-query.mjs';
     import { datesInMonth, formatMonth, formatRunInMonth, monthKey, monthsFromDates } from './vendor/run-month.mjs';
     import { votePromptId, voteStateFromPayload } from './vendor/votes.mjs';
     import { staffPickModel } from './vendor/staff-picks.mjs';
     import { findCell, maxPromptRevision } from './vendor/catalog.mjs';
     import { formatDateStamp } from './vendor/layout.mjs';
     import { DEFAULT_CONTRIBUTOR_GITHUB, resolveContributor } from './vendor/contributor.mjs';
-    import { formatTokenUsage } from './vendor/model-meta.mjs';
+    import { formatTokenCount, formatTokenUsage } from './vendor/model-meta.mjs';
     let CATALOG = { models: [], experiments: [], cells: [], promptRevisions: [], dates: [] };
-    const q = new URLSearchParams(location.search);
     const sourceCache = new Map();
     const copiedTimers = new WeakMap();
+    const filmDefault = () => window.matchMedia('(max-width: 900px)').matches;
+    const parsedQuery = readQuery(location.search, { filmDefault: filmDefault() });
     const state = {
-      model: '',
-      experiment: '',
-      level: (q.get('level') || 'A').toUpperCase(),
-      mode: ['single', 'models', 'ladder', 'table'].includes(q.get('mode')) ? q.get('mode') : 'single',
-      arrange: q.get('arrange') || '',
-      scale: q.get('scale') || '',
-      promptRevision: Number(q.get('prompt') || 0) || 0,
-      date: q.get('date') || '',
-      month: q.get('month') || '',
+      model: parsedQuery.model,
+      experiment: parsedQuery.experiment,
+      level: parsedQuery.level,
+      mode: parsedQuery.mode,
+      arrange: parsedQuery.arrange,
+      scale: parsedQuery.scale,
+      promptRevision: parsedQuery.promptRevision,
+      date: parsedQuery.date,
+      month: parsedQuery.month,
       sourceOpen: false,
       receiptOpen: false,
       lastDrawer: '',
       htmlOpen: [],
       receiptOpenKeys: [],
-      filmCompact: (() => {
-        const filmQ = (q.get('film') || '').toLowerCase();
-        if (filmQ === 'compact') return true;
-        if (filmQ === 'open') return false;
-        return window.matchMedia('(max-width: 900px)').matches;
-      })(),
-      hiddenModels: new Set(
-        String(q.get('hide') || '')
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean)
-      )
+      filmCompact: parsedQuery.filmCompact,
+      hiddenModels: parsedQuery.hiddenModels
     };
     const voteCache = new Map();
     const voteLoads = new Set();
@@ -2049,29 +2044,10 @@
         done();
       }, () => { done(); });
     }
-    function waitIframeSettled(iframe, token, timeoutMs) {
-      const src = iframe.getAttribute('data-src');
-      if (!src) return Promise.resolve('skip');
-      return new Promise(resolve => {
-        if (token !== stageToken) {
-          resolve('aborted');
-          return;
-        }
-        let settled = false;
-        const finish = reason => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          iframe.removeEventListener('load', onDone);
-          iframe.removeEventListener('error', onDone);
-          resolve(reason);
-        };
-        const onDone = () => finish(token === stageToken ? 'load' : 'aborted');
-        const timer = setTimeout(() => finish(token === stageToken ? 'timeout' : 'aborted'), timeoutMs);
-        iframe.addEventListener('load', onDone);
-        iframe.addEventListener('error', onDone);
-        iframe.src = src;
-        iframe.removeAttribute('data-src');
+    function settleFrame(iframe, token) {
+      return waitIframeSettled(iframe, {
+        isCurrent: () => token === stageToken,
+        timeoutMs: IFRAME_LOAD_TIMEOUT_MS
       });
     }
     function iframePlaySrc(iframe) {
@@ -2637,18 +2613,13 @@
       const s = Math.round((ms % 60000) / 1000);
       return m + 'm ' + String(s).padStart(2, '0') + 's';
     }
-    function fmtCount(n) {
-      if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
-      if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-      return String(Math.round(n));
-    }
     function fmtTokens(usage) {
       return formatTokenUsage(usage) || '—';
     }
     function fmtOutputTokens(cell) {
       const n = cell && cell.outputTokensApprox;
       if (cell && cell.src && typeof n === 'number' && Number.isFinite(n) && n >= 0) {
-        return { text: '≈' + fmtCount(n), tip: '≈ output tokens from HTML (chars ÷ 4)' };
+        return { text: '≈' + formatTokenCount(n), tip: '≈ output tokens from HTML (chars ÷ 4)' };
       }
       return { text: '—', tip: 'Tokens' };
     }
@@ -2878,7 +2849,7 @@
       if (loader) loader.hidden = false;
       iframe.removeAttribute('src');
       iframe.setAttribute('data-src', src);
-      waitIframeSettled(iframe, token, IFRAME_LOAD_TIMEOUT_MS).then(reason => {
+      settleFrame(iframe, token).then(reason => {
         if (reason === 'aborted' || token !== stageToken) return;
         markFrameReady(iframe);
       });
@@ -3025,7 +2996,7 @@
         row('Isolation', iso.adapter || iso.capability),
         row('Output hash', shortHash(hash)),
         row('Output ≈', cell.src && Number.isFinite(Number(cell.outputTokensApprox))
-          ? '≈' + fmtCount(Number(cell.outputTokensApprox)) + ' tokens (HTML chars ÷ 4)'
+          ? '≈' + formatTokenCount(Number(cell.outputTokensApprox)) + ' tokens (HTML chars ÷ 4)'
           : '—'),
         row('Harness tokens', fmtTokens(receipt.tokenUsage))
       ].join('');
@@ -3566,24 +3537,7 @@
       renderStacks();
     }
     function syncUrl() {
-      const params = new URLSearchParams();
-      if (state.experiment) params.set('experiment', state.experiment);
-      if (state.level) params.set('level', state.level);
-      if (state.model) params.set('model', state.model);
-      if (state.mode && state.mode !== 'single') params.set('mode', state.mode);
-      if (state.mode !== 'single') params.set('arrange', state.arrange);
-      if (state.scale) params.set('scale', state.scale);
-      if (state.promptRevision) params.set('prompt', String(state.promptRevision));
-      if (state.month) params.set('month', state.month);
-      if (state.date) params.set('date', state.date);
-      if (state.mode === 'models' && state.hiddenModels.size) {
-        params.set('hide', [...state.hiddenModels].join(','));
-      }
-      const filmDefault = window.matchMedia('(max-width: 900px)').matches;
-      if (state.filmCompact !== filmDefault) {
-        params.set('film', state.filmCompact ? 'compact' : 'open');
-      }
-      const qs = params.toString();
+      const qs = writeQuery(state, { filmDefault: filmDefault() });
       history.replaceState(null, '', qs ? '?' + qs : location.pathname);
     }
     function renderNav() {
@@ -3794,7 +3748,7 @@
               model: frame && frame.getAttribute('data-model')
             });
           }
-          const reason = await waitIframeSettled(iframe, token, IFRAME_LOAD_TIMEOUT_MS);
+          const reason = await settleFrame(iframe, token);
           if (reason === 'aborted' || token !== stageToken) return;
           markFrameReady(iframe);
         },
@@ -4112,9 +4066,9 @@
         syncUrl();
       }
     });
-    applyModeDefaults(state.mode, !q.get('arrange') && !q.get('scale'));
-    if (q.get('arrange')) state.arrange = q.get('arrange');
-    if (q.get('scale')) state.scale = q.get('scale');
+    applyModeDefaults(state.mode, !parsedQuery.arrange && !parsedQuery.scale);
+    if (parsedQuery.arrange) state.arrange = parsedQuery.arrange;
+    if (parsedQuery.scale) state.scale = parsedQuery.scale;
     fetch('catalog.json')
       .then(res => {
         if (!res.ok) throw new Error(String(res.status));
@@ -4123,11 +4077,11 @@
       .then(data => {
         CATALOG = data;
         const liveIds = (CATALOG.experiments || []).map(e => e.id).filter(Boolean);
-        state.experiment = q.get('experiment') || liveIds[0] || '';
+        state.experiment = parsedQuery.experiment || liveIds[0] || '';
         if (state.experiment && liveIds.length && !liveIds.includes(state.experiment)) {
           state.experiment = liveIds[0];
         }
-        state.model = q.get('model') || (CATALOG.models.find(m => m.playable || m.playable) || CATALOG.models[0] || {}).id || '';
+        state.model = parsedQuery.model || (CATALOG.models.find(m => m.playable || m.playable) || CATALOG.models[0] || {}).id || '';
         if (!state.promptRevision) state.promptRevision = maxRevision(state.experiment, state.level);
         snapFilters();
         render();
