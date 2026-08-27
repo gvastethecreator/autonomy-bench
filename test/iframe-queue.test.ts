@@ -8,6 +8,7 @@ import {
   loaderIdentity,
   loaderProgressLabel,
   pickLiveIframes,
+  waitIframeSettled,
 } from '../scripts/iframe-queue.mjs';
 
 describe('loaderProgressLabel', () => {
@@ -161,5 +162,59 @@ describe('loadIframesStaggered', () => {
       },
     });
     expect(result).toEqual({ loaded: 0, aborted: false, total: 0 });
+  });
+});
+
+function fakeIframe(dataSrc: string | null) {
+  const listeners: Record<string, () => void> = {};
+  const attrs: Record<string, string> = {};
+  if (dataSrc) attrs['data-src'] = dataSrc;
+  return {
+    src: '',
+    getAttribute(name: string) {
+      return attrs[name] || '';
+    },
+    setAttribute(name: string, value: string) {
+      attrs[name] = value;
+    },
+    removeAttribute(name: string) {
+      delete attrs[name];
+    },
+    addEventListener(name: string, fn: () => void) {
+      listeners[name] = fn;
+    },
+    removeEventListener(name: string) {
+      delete listeners[name];
+    },
+    emit(name: string) {
+      if (listeners[name]) listeners[name]();
+    },
+  };
+}
+
+describe('waitIframeSettled', () => {
+  it('skips when data-src is missing', async () => {
+    expect(await waitIframeSettled(fakeIframe(null))).toBe('skip');
+  });
+
+  it('returns load when the iframe fires load', async () => {
+    const iframe = fakeIframe('take/index.html');
+    const pending = waitIframeSettled(iframe, { timeoutMs: 200 });
+    iframe.emit('load');
+    expect(await pending).toBe('load');
+    expect(iframe.src).toBe('take/index.html');
+    expect(iframe.getAttribute('data-src')).toBe('');
+  });
+
+  it('returns timeout when load never fires', async () => {
+    const iframe = fakeIframe('take/index.html');
+    expect(await waitIframeSettled(iframe, { timeoutMs: 15 })).toBe('timeout');
+  });
+
+  it('returns aborted when isCurrent is false', async () => {
+    const iframe = fakeIframe('take/index.html');
+    expect(await waitIframeSettled(iframe, { isCurrent: () => false, timeoutMs: 200 })).toBe(
+      'aborted',
+    );
   });
 });
