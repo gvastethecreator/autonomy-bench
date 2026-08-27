@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vite-plus/test';
 import {
   applyModelThinking,
   catalogModelKey,
+  formatTokenCount,
   formatTokenUsage,
   parseModelThinking,
   thinkingFromNames,
@@ -96,6 +100,21 @@ describe('applyModelThinking', () => {
 describe('thinkingFromNames', () => {
   it('prefers the effective model over the requested id', () => {
     expect(thinkingFromNames('grok-4.6', 'cursor-grok-4.6-high', 'not captured')).toBe('high');
+  });
+});
+
+describe('formatTokenCount', () => {
+  it('formats 10500 as 11k', () => {
+    expect(formatTokenCount(10500)).toBe('11k');
+  });
+
+  it('is the only compact count formatter in the viewer template', () => {
+    const html = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'gallery-viewer.html'),
+      'utf8',
+    );
+    expect(html).toContain('formatTokenCount');
+    expect(html.includes('function fmtCount')).toBe(false);
   });
 });
 
