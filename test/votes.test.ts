@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vite-plus/test';
 import {
+  catalogAllowsVote,
   countsFromRows,
+  createMemoryVoteStore,
+  deleteVote,
   isVoteModelId,
   parseVotePromptId,
+  putVote,
+  snapshotVotes,
   uniqueLeader,
   votePromptId,
   voteStateFromPayload,
@@ -82,5 +87,77 @@ describe('voteStateFromPayload', () => {
   it('clears a forged mine value', () => {
     expect(isVoteModelId('not a model')).toBe(false);
     expect(voteStateFromPayload({ mine: 'not a model', counts: {} }).mine).toBeNull();
+  });
+});
+
+describe('catalogAllowsVote', () => {
+  const catalog = {
+    cells: [
+      {
+        experiment: 'rollercoaster',
+        level: 'A',
+        model: 'grok-4.6',
+        src: 'grok-4.6/rollercoaster-A/2026-08-24/index.html',
+      },
+      {
+        experiment: 'rollercoaster',
+        level: 'B',
+        model: 'requested-id',
+        modelKey: 'glm-5.3-max',
+        src: 'glm-5.3-max/rollercoaster-B/2026-08-24/index.html',
+      },
+      {
+        experiment: 'rollercoaster',
+        level: 'C',
+        model: 'composer-2.5',
+        src: '',
+      },
+    ],
+  };
+
+  it('allows a playable cell', () => {
+    expect(catalogAllowsVote(catalog, 'rollercoaster-A', 'grok-4.6')).toBe(true);
+  });
+
+  it('rejects a missing src', () => {
+    expect(catalogAllowsVote(catalog, 'rollercoaster-C', 'composer-2.5')).toBe(false);
+  });
+
+  it('matches modelKey', () => {
+    expect(catalogAllowsVote(catalog, 'rollercoaster-B', 'glm-5.3-max')).toBe(true);
+  });
+});
+
+describe('memory vote store', () => {
+  it('puts, replaces, and deletes a vote', async () => {
+    const store = createMemoryVoteStore();
+    const first = await putVote(store, {
+      voterId: '11111111-1111-4111-8111-111111111111',
+      promptId: 'rollercoaster-A',
+      modelId: 'grok-4.6',
+      now: '2026-08-27T00:00:00.000Z',
+    });
+    expect(first.mine).toBe('grok-4.6');
+    expect(first.leader).toBe('grok-4.6');
+    const replaced = await putVote(store, {
+      voterId: '11111111-1111-4111-8111-111111111111',
+      promptId: 'rollercoaster-A',
+      modelId: 'composer-2.5',
+      now: '2026-08-27T00:00:01.000Z',
+    });
+    expect(replaced.mine).toBe('composer-2.5');
+    expect(replaced.counts).toEqual({ 'composer-2.5': 1 });
+    const cleared = await deleteVote(store, {
+      voterId: '11111111-1111-4111-8111-111111111111',
+      promptId: 'rollercoaster-A',
+    });
+    expect(cleared.mine).toBeNull();
+    expect(cleared.counts).toEqual({});
+    const empty = await snapshotVotes(
+      store,
+      'rollercoaster-A',
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(empty.leader).toBeNull();
   });
 });

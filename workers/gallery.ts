@@ -1,9 +1,12 @@
 import {
+  catalogAllowsVote,
   countsFromRows,
+  deleteVote,
   isVoteModelId,
   isVoterId,
   parseVotePromptId,
-  uniqueLeader,
+  putVote,
+  snapshotVotes,
 } from '../scripts/votes.mjs';
 
 const COOKIE = 'ab_voter';
@@ -77,50 +80,70 @@ function promptFrom(value: unknown): string {
   return `${parsed.experiment}-${parsed.level}`;
 }
 
+function d1VoteStore(db: D1Database) {
+  return {
+    async counts(promptId: string) {
+      const tallies = await db
+        .prepare('SELECT model_id, COUNT(*) AS n FROM votes WHERE prompt_id = ? GROUP BY model_id')
+        .bind(promptId)
+        .all();
+      return countsFromRows((tallies.results || []) as VoteRow[]);
+    },
+    async mine(promptId: string, voterId: string) {
+      const row = await db
+        .prepare('SELECT model_id FROM votes WHERE voter_id = ? AND prompt_id = ?')
+        .bind(voterId, promptId)
+        .first<MineRow>();
+      const mineRaw = row?.model_id || '';
+      return isVoteModelId(mineRaw) ? mineRaw : null;
+    },
+    async upsert(record: {
+      voterId: string;
+      promptId: string;
+      modelId: string;
+      now: string;
+    }) {
+      await db
+        .prepare(
+          `INSERT INTO votes (voter_id, prompt_id, model_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(voter_id, prompt_id) DO UPDATE SET
+         model_id = excluded.model_id,
+         updated_at = excluded.updated_at`,
+        )
+        .bind(record.voterId, record.promptId, record.modelId, record.now, record.now)
+        .run();
+    },
+    async remove(record: { voterId: string; promptId: string }) {
+      await db
+        .prepare('DELETE FROM votes WHERE voter_id = ? AND prompt_id = ?')
+        .bind(record.voterId, record.promptId)
+        .run();
+    },
+  };
+}
+
 async function catalogAllows(
   env: Env,
   request: Request,
   promptId: string,
   modelId: string,
 ): Promise<boolean> {
-  const parsed = parseVotePromptId(promptId);
-  if (!parsed.experiment || !isVoteModelId(modelId)) return false;
   const asset = await env.ASSETS.fetch(new URL('/catalog.json', request.url));
   if (!asset.ok) return false;
   const catalog = (await asset.json()) as Catalog;
-  return (catalog.cells || []).some((cell) => {
-    if (!cell || !cell.src) return false;
-    if (String(cell.experiment || '') !== parsed.experiment) return false;
-    if (String(cell.level || '').toUpperCase() !== parsed.level) return false;
-    const model = String(cell.model || cell.modelKey || '');
-    return model === modelId;
-  });
-}
-
-async function snapshot(env: Env, promptId: string, voterId: string) {
-  const [tallies, mineRow] = await env.DB.batch([
-    env.DB.prepare(
-      'SELECT model_id, COUNT(*) AS n FROM votes WHERE prompt_id = ? GROUP BY model_id',
-    ).bind(promptId),
-    env.DB.prepare('SELECT model_id FROM votes WHERE voter_id = ? AND prompt_id = ?').bind(
-      voterId,
-      promptId,
-    ),
-  ]);
-  const counts = countsFromRows((tallies.results || []) as VoteRow[]);
-  const mineRaw = (mineRow.results?.[0] as MineRow | undefined)?.model_id || '';
-  const mine = isVoteModelId(mineRaw) ? mineRaw : null;
-  return { promptId, counts, mine, leader: uniqueLeader(counts) };
+  return catalogAllowsVote(catalog, promptId, modelId);
 }
 
 async function handleVotes(request: Request, env: Env, url: URL): Promise<Response> {
   const voter = voterFrom(request);
   const cookie = voter.fresh ? cookieHeader(request, voter.id) : '';
+  const store = d1VoteStore(env.DB);
 
   if (request.method === 'GET') {
     const promptId = promptFrom(url.searchParams.get('prompt'));
     if (!promptId) return json({ error: 'Unknown prompt' }, 400, cookie);
-    return json(await snapshot(env, promptId, voter.id), 200, cookie);
+    return json(await snapshotVotes(store, promptId, voter.id), 200, cookie);
   }
 
   if (!sameOrigin(request)) return json({ error: 'Cross-origin vote blocked' }, 403, cookie);
@@ -139,16 +162,11 @@ async function handleVotes(request: Request, env: Env, url: URL): Promise<Respon
       return json({ error: 'Unknown take' }, 404, cookie);
     }
     const now = new Date().toISOString();
-    await env.DB.prepare(
-      `INSERT INTO votes (voter_id, prompt_id, model_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(voter_id, prompt_id) DO UPDATE SET
-         model_id = excluded.model_id,
-         updated_at = excluded.updated_at`,
-    )
-      .bind(voter.id, promptId, modelId, now, now)
-      .run();
-    return json(await snapshot(env, promptId, voter.id), 200, cookieHeader(request, voter.id));
+    return json(
+      await putVote(store, { voterId: voter.id, promptId, modelId, now }),
+      200,
+      cookieHeader(request, voter.id),
+    );
   }
 
   if (request.method === 'DELETE') {
@@ -160,10 +178,11 @@ async function handleVotes(request: Request, env: Env, url: URL): Promise<Respon
     }
     const promptId = promptFrom(body.promptId ?? url.searchParams.get('prompt'));
     if (!promptId) return json({ error: 'Unknown prompt' }, 400, cookie);
-    await env.DB.prepare('DELETE FROM votes WHERE voter_id = ? AND prompt_id = ?')
-      .bind(voter.id, promptId)
-      .run();
-    return json(await snapshot(env, promptId, voter.id), 200, cookieHeader(request, voter.id));
+    return json(
+      await deleteVote(store, { voterId: voter.id, promptId }),
+      200,
+      cookieHeader(request, voter.id),
+    );
   }
 
   return json({ error: 'Method not allowed' }, 405, cookie);
