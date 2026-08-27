@@ -1,12 +1,11 @@
-import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vite-plus/test';
+import { doctorSuite, loadSuite } from '../scripts/suite.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const suite = JSON.parse(
-  readFileSync(join(root, 'suites', 'browser-autonomy', 'suite.json'), 'utf8'),
-);
+const suite = loadSuite(join(root, 'suites', 'browser-autonomy', 'suite.json'));
+if (!suite) throw new Error('missing live suite');
 
 const SHELVED_V2_IDS = [
   'solar-system',
@@ -51,6 +50,7 @@ function wordCount(value: string) {
 
 describe('browser-autonomy suite', () => {
   it('has unique ids and a complete frozen A/B/C ladder', () => {
+    expect(doctorSuite(suite)).toEqual([]);
     const ids = new Set<string>();
     expect(suite.id).toBe('browser-autonomy-v2');
     expect(suite.version).toBe('2.1.0');
@@ -72,6 +72,18 @@ describe('browser-autonomy suite', () => {
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
       'terrain-explorer',
     );
+  });
+
+  it('reports duplicate ids through doctorSuite', () => {
+    expect(
+      doctorSuite({
+        promptLevels: { A: { name: 'Raw' } },
+        benchmarks: [
+          { id: 'rollercoaster', prompts: { A: 'one' } },
+          { id: 'rollercoaster', prompts: { A: 'two' } },
+        ],
+      }),
+    ).toEqual(['duplicate id rollercoaster']);
   });
 
   it('uses the same exact +20 / +20 suffix ladder for every live benchmark', () => {
