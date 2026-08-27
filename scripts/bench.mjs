@@ -1,46 +1,19 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseCommandArgs } from './cli-args.mjs';
 import { runGalleryCli } from './gallery.mjs';
-import {
-  declaredLevels,
-  finalizeRun,
-  frozenLevels,
-  getBenchmark,
-  hasPrompt,
-  planRun,
-  statusRun,
-} from './plan.mjs';
-import { slug } from './layout.mjs';
-import { ensureDir, findRun, readJson, writeJson } from './run-io.mjs';
+import { finalizeRun, planRun, statusRun } from './plan.mjs';
+import { exportPrototypeLab } from './prototype-lab.mjs';
+import { declaredLevels, doctorReport, getBenchmark, hasPrompt, loadSuite } from './suite.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_SUITE = join(ROOT, 'suites', 'browser-autonomy', 'suite.json');
 
-function isoNow() {
-  return new Date().toISOString();
-}
-function parse(argv) {
-  const [command = 'help', ...rest] = argv.filter((token) => token !== '--');
-  const args = { _: [] };
-  for (let i = 0; i < rest.length; i++) {
-    const token = rest[i];
-    if (!token.startsWith('--')) {
-      args._.push(token);
-      continue;
-    }
-    const key = token.slice(2);
-    const next = rest[i + 1];
-    if (next && !next.startsWith('--')) {
-      args[key] = next;
-      i++;
-    } else args[key] = true;
-  }
-  return { command, args };
-}
 function suite(path = DEFAULT_SUITE) {
-  return readJson(resolve(path));
+  const loaded = loadSuite(path);
+  if (!loaded) throw new Error(`Suite not found: ${path}`);
+  return loaded;
 }
 function help() {
   console.log(
@@ -92,63 +65,9 @@ function cmdStatus(args) {
   console.log(JSON.stringify(statusRun({ root: ROOT, runId: args.run }), null, 2));
 }
 function cmdExportPrototypeLab(args) {
-  if (!args.run) throw new Error('export-prototype-lab requires --run');
-  const dir = findRun(ROOT, args.run);
-  const m = readJson(join(dir, 'manifest.json'));
-  const outDir = ensureDir(join(ROOT, 'exports', 'prototype-lab', m.runId));
-  const groups = new Map();
-  for (const c of m.cells) {
-    const key = `${c.benchmarkId}--${c.promptLevel}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(c);
-  }
-  const index = [];
-  for (const [key, cells] of groups) {
-    const first = cells[0];
-    const prompt = readFileSync(join(dir, first.promptPath), 'utf8').trimEnd();
-    const spec = {
-      schemaVersion: 1,
-      id: slug(`${m.runId}-${key}`),
-      title: `${first.benchmarkTitle} — ${first.promptLevel}`,
-      intent: 'benchmark',
-      question: `How do the selected models respond to ${first.benchmarkTitle} at prompt level ${first.promptLevel}?`,
-      sharedBrief: prompt,
-      fixedOutcomes: ['Produce the requested experience as a runnable single HTML file.'],
-      openDecisions: [
-        'implementation architecture',
-        'interaction details',
-        'visual direction',
-        'content/detail level',
-        'performance strategy',
-        'optional polish',
-      ],
-      assetPolicy: { mode: 'worker-choice' },
-      layoutPolicy: 'open',
-      targetViewports: ['1200x820', '390x844'],
-      variants: cells.map((c) => ({
-        id: slug(c.cellId),
-        model: c.requestedModel,
-        condition: 'baseline',
-        skills: [],
-        workUnit: c.benchmarkId,
-      })),
-    };
-    const file = `${key}.json`;
-    writeFileSync(join(outDir, file), JSON.stringify(spec, null, 2) + '\n');
-    index.push({
-      benchmarkId: first.benchmarkId,
-      promptLevel: first.promptLevel,
-      spec: file,
-      cells: cells.map((c) => c.cellId),
-    });
-  }
-  writeJson(join(outDir, 'mapping.json'), {
-    runId: m.runId,
-    generatedAt: isoNow(),
-    specs: index,
-  });
-  console.log(relative(ROOT, outDir).replaceAll('\\', '/'));
-  console.log(`${index.length} Prototype Lab specs exported`);
+  const exported = exportPrototypeLab({ root: ROOT, runId: args.run });
+  console.log(exported.relative);
+  console.log(`${exported.specs.length} Prototype Lab specs exported`);
 }
 function cmdFinalize(args) {
   const completion = finalizeRun({ root: ROOT, runId: args.run });
@@ -159,29 +78,16 @@ function cmdGallery(args) {
   runGalleryCli(args);
 }
 function cmdDoctor() {
-  const s = suite(DEFAULT_SUITE);
-  const errors = [];
-  const ids = new Set();
-  for (const b of s.benchmarks) {
-    if (ids.has(b.id)) errors.push(`duplicate id ${b.id}`);
-    ids.add(b.id);
-    if (!hasPrompt(b, 'A')) errors.push(`${b.id} missing A`);
-    for (const l of frozenLevels(s)) if (!hasPrompt(b, l)) errors.push(`${b.id} missing ${l}`);
-  }
-  if (errors.length) {
-    console.error(errors.join('\n'));
+  const report = doctorReport(suite(DEFAULT_SUITE));
+  if (!report.ok) {
+    console.error(report.errors.join('\n'));
     process.exitCode = 1;
-  } else {
-    const frozen = frozenLevels(s);
-    const reserved = declaredLevels(s).filter((l) => !frozen.includes(l));
-    const reservedNote = reserved.length ? ` (${reserved.join(', ')} reserved)` : '';
-    console.log(
-      `OK — ${s.id} ${s.version}: ${s.benchmarks.length} benchmarks × ${declaredLevels(s).length} prompt level${reservedNote}`,
-    );
+    return;
   }
+  console.log(report.line);
 }
 
-const { command, args } = parse(process.argv.slice(2));
+const { command, args } = parseCommandArgs(process.argv.slice(2));
 try {
   if (command === 'help') help();
   else if (command === 'list') cmdList(args);
