@@ -4,6 +4,7 @@
 
 - Share CLI argv, suite doctor, run listing, Prototype Lab export, vote allow/store, viewer query, compact token counts, iframe settle, and gallery finish behind named modules.
 - Publish frozen live-suite prompts for coding agents at `llms.txt` and `agent.json`. The gallery UI does not show those files.
+- Register WebMCP tools on `document.modelContext` so a browser agent can list benches, read frozen prompts, list takes, show a take, and load a receipt. A small polyfill installs the API when the browser does not ship it yet.
 
 ## 0.7.4 — 2026-08-24
 

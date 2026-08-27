@@ -55,6 +55,7 @@ export function buildAgentPack(suite) {
     `Suite: ${json.suiteId} ${json.suiteVersion}`,
     `Site: ${SITE}`,
     `Machine pack: ${SITE}/agent.json`,
+    'WebMCP: the live gallery registers tools on document.modelContext (list-benches, get-bench-prompt, list-takes, show-take, get-gallery-state, get-receipt).',
     '',
     '## Rules',
     '',
