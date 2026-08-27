@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5 — 2026-08-27
+
+- Share CLI argv, suite doctor, run listing, Prototype Lab export, vote allow/store, viewer query, compact token counts, iframe settle, and gallery finish behind named modules.
+- Publish frozen live-suite prompts for coding agents at `llms.txt` and `agent.json`. The gallery UI does not show those files.
+
 ## 0.7.4 — 2026-08-24
 
 - Single view fills the stage: no outer gap around the take. The toolbar spans the top edge. A receipt status bar sits on the bottom edge in Single and on compact Models cards (duration, ≈ tokens, contributor, harness). On a wide take those fields are labeled inline.
