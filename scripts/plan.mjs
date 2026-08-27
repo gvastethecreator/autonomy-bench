@@ -6,27 +6,15 @@ import { cellId } from './cell-id.mjs';
 import { cellRelPath, slug } from './layout.mjs';
 import { LEDGER_STATUSES, assertReceipt, receiptTemplate } from './receipt.mjs';
 import { ensureDir, findRun, readJson, walkFiles, writeJson } from './run-io.mjs';
+import { declaredLevels, frozenLevels, getBenchmark, hasPrompt } from './suite.mjs';
+
+export { declaredLevels, frozenLevels, getBenchmark, hasPrompt };
 
 function sha256(data) {
   return createHash('sha256').update(data).digest('hex');
 }
 function fileHash(path) {
   return sha256(readFileSync(path));
-}
-
-export function hasPrompt(benchmark, level) {
-  return Boolean(String(benchmark?.prompts?.[level] || '').trim());
-}
-
-export function declaredLevels(suite) {
-  const keys = Object.keys(suite.promptLevels || { A: true });
-  return keys.length ? keys : ['A'];
-}
-
-export function frozenLevels(suite) {
-  return declaredLevels(suite).filter((level) =>
-    suite.benchmarks.every((b) => hasPrompt(b, level)),
-  );
 }
 
 export function csv(value, fallback = []) {
@@ -36,12 +24,6 @@ export function csv(value, fallback = []) {
         .map((x) => x.trim())
         .filter(Boolean)
     : fallback;
-}
-
-export function getBenchmark(suite, id) {
-  const benchmark = suite.benchmarks.find((row) => row.id === id);
-  if (!benchmark) throw new Error(`Unknown benchmark: ${id}`);
-  return benchmark;
 }
 
 export function localParts(date = new Date()) {
