@@ -286,6 +286,7 @@ export const VIEWER_MODULES = [
   'iframe-queue.mjs',
   'receipt.mjs',
   'gallery-query.mjs',
+  'webmcp.mjs',
 ];
 
 export function writeGalleryViewer({ galleryDir, scriptsDir, animeBundle }) {

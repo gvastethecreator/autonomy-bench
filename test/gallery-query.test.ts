@@ -69,5 +69,6 @@ describe('gallery query', () => {
     expect(html).toContain('href="agent.json"');
     expect(html).toContain('rel="alternate"');
     expect(html.includes('>Agent pack<')).toBe(false);
+    expect(html).toContain('registerGalleryWebMcp');
   });
 });

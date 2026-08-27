@@ -298,6 +298,7 @@ describe('publishRun', () => {
       'rollercoaster',
     );
     expect(existsSync(join(galleryDir, 'vendor', 'gallery-query.mjs'))).toBe(true);
+    expect(existsSync(join(galleryDir, 'vendor', 'webmcp.mjs'))).toBe(true);
     expect(existsSync(join(galleryDir, 'agent.json'))).toBe(true);
     expect(existsSync(join(galleryDir, 'llms.txt'))).toBe(true);
   });

@@ -1779,6 +1779,7 @@
       yieldMain
     } from './vendor/iframe-queue.mjs';
     import { readQuery, writeQuery } from './vendor/gallery-query.mjs';
+    import { registerGalleryWebMcp } from './vendor/webmcp.mjs';
     import { datesInMonth, formatMonth, formatRunInMonth, monthKey, monthsFromDates } from './vendor/run-month.mjs';
     import { votePromptId, voteStateFromPayload } from './vendor/votes.mjs';
     import { staffPickModel } from './vendor/staff-picks.mjs';
@@ -4069,12 +4070,64 @@
     applyModeDefaults(state.mode, !parsedQuery.arrange && !parsedQuery.scale);
     if (parsedQuery.arrange) state.arrange = parsedQuery.arrange;
     if (parsedQuery.scale) state.scale = parsedQuery.scale;
+    let AGENT_PACK = null;
+    function webmcpHost() {
+      return {
+        getPack: () => AGENT_PACK || { benchmarks: [], rules: [], levels: {} },
+        getCatalog: () => CATALOG,
+        getState: () => ({
+          experiment: state.experiment,
+          level: state.level,
+          model: state.model,
+          mode: state.mode,
+          promptRevision: state.promptRevision,
+          month: state.month,
+          date: state.date
+        }),
+        showTake({ experiment, level, model, mode }) {
+          state.experiment = experiment;
+          state.level = level;
+          state.model = model;
+          state.mode = mode || 'single';
+          state.promptRevision = maxRevision(state.experiment, state.level);
+          state.date = '';
+          applyModeDefaults(state.mode, true);
+          render();
+          const cell = currentCell();
+          return {
+            experiment: state.experiment,
+            level: state.level,
+            model: state.model,
+            mode: state.mode,
+            src: (cell && cell.src) || ''
+          };
+        },
+        async loadReceipt(input) {
+          let cell = currentCell();
+          if (input && (input.experiment || input.model || input.level)) {
+            cell = findCell(CATALOG.cells, {
+              model: input.model || state.model,
+              experiment: input.experiment || state.experiment,
+              level: String(input.level || state.level || 'A').toUpperCase(),
+              promptRevision: state.promptRevision,
+              date: state.date,
+              month: state.month
+            });
+          }
+          if (cell && cell.receipt) return cell.receipt;
+          if (!cell || !cell.receiptSrc) return null;
+          const res = await fetch(cell.receiptSrc);
+          if (!res.ok) return null;
+          return res.json();
+        }
+      };
+    }
     fetch('catalog.json')
       .then(res => {
         if (!res.ok) throw new Error(String(res.status));
         return res.json();
       })
-      .then(data => {
+      .then(async data => {
         CATALOG = data;
         const liveIds = (CATALOG.experiments || []).map(e => e.id).filter(Boolean);
         state.experiment = parsedQuery.experiment || liveIds[0] || '';
@@ -4085,6 +4138,17 @@
         if (!state.promptRevision) state.promptRevision = maxRevision(state.experiment, state.level);
         snapFilters();
         render();
+        try {
+          const packRes = await fetch('agent.json');
+          if (packRes.ok) AGENT_PACK = await packRes.json();
+        } catch {
+          AGENT_PACK = null;
+        }
+        try {
+          await registerGalleryWebMcp(webmcpHost());
+        } catch {
+          /* native or polyfill registration is optional */
+        }
       })
       .catch((err) => {
         if ((CATALOG.cells || []).length) {

@@ -34,6 +34,8 @@ describe('agent pack', () => {
     expect(pack.json.rules).toEqual(AGENT_RULES);
     expect(pack.llms).toContain(suite.benchmarks[0].prompts.B);
     expect(pack.llms).toContain('/agent.json');
+    expect(pack.llms).toContain('document.modelContext');
+    expect(pack.llms).toContain('get-bench-prompt');
     const dir = mkdtempSync(join(tmpdir(), 'ab-agent-'));
     writeAgentPack(dir, suite);
     const written = JSON.parse(readFileSync(join(dir, 'agent.json'), 'utf8'));
