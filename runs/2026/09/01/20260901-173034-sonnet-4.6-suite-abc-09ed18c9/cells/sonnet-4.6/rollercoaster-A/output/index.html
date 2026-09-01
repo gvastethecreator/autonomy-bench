@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Rollercoaster</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: sans-serif;
+            pointer-events: none;
+            text-shadow: 1px 1px 2px black;
+            font-size: 24px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">First-Person Rollercoaster</div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+        dirLight.position.set(100, 200, 50);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.top = 200;
+        dirLight.shadow.camera.bottom = -200;
+        dirLight.shadow.camera.left = -200;
+        dirLight.shadow.camera.right = 200;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // Ground
+        const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+        const groundMat = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Track generation
+        const points = [];
+        // Create a looping track
+        for (let i = 0; i <= 20; i++) {
+            const t = i / 20;
+            const angle = t * Math.PI * 2;
+            
+            const x = Math.sin(angle * 2) * 100;
+            const z = Math.cos(angle) * 150;
+            
+            // Add some hills and drops
+            const y = 30 + Math.sin(angle * 4) * 20 + Math.cos(angle * 2) * 10;
+            
+            points.push(new THREE.Vector3(x, y, z));
+        }
+
+        const curve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', 0.5);
+
+        // Track geometry
+        const tubeGeometry = new THREE.TubeGeometry(curve, 300, 1.5, 8, true);
+        const tubeMaterial = new THREE.MeshLambertMaterial({ 
+            color: 0x888888, 
+            wireframe: false 
+        });
+        const track = new THREE.Mesh(tubeGeometry, tubeMaterial);
+        track.castShadow = true;
+        scene.add(track);
+
+        // Inner track (rails)
+        const railOffset = 1;
+        const leftRailGeo = new THREE.TubeGeometry(curve, 300, 0.4, 8, true);
+        const rightRailGeo = new THREE.TubeGeometry(curve, 300, 0.4, 8, true);
+        const railMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
+
+        // Build frames to offset rails
+        const frames = curve.computeFrenetFrames(300, true);
+        
+        // Track supports
+        const supportMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+        const supportGeo = new THREE.CylinderGeometry(0.8, 0.8, 1, 8);
+        supportGeo.translate(0, 0.5, 0); // Origin at bottom
+
+        const pointsOnCurve = curve.getSpacedPoints(150);
+        pointsOnCurve.forEach((p, i) => {
+            if (i % 2 === 0) { // Add support every other point
+                const support = new THREE.Mesh(supportGeo, supportMat);
+                support.position.copy(p);
+                support.position.y = 0;
+                support.scale.y = p.y; // Scale up to the track
+                support.castShadow = true;
+                scene.add(support);
+            }
+        });
+
+        // Add some scenery (trees)
+        const treeGeo = new THREE.ConeGeometry(5, 15, 8);
+        const treeMat = new THREE.MeshLambertMaterial({ color: 0x006400 });
+        const trunkGeo = new THREE.CylinderGeometry(1, 1, 5, 8);
+        const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+
+        for (let i = 0; i < 300; i++) {
+            const x = (Math.random() - 0.5) * 1000;
+            const z = (Math.random() - 0.5) * 1000;
+            
+            // Keep away from the center a bit so they don't block the track
+            if (Math.abs(x) < 120 && Math.abs(z) < 170) {
+                if (Math.random() > 0.1) continue;
+            }
+
+            const tree = new THREE.Group();
+            
+            const leaves = new THREE.Mesh(treeGeo, treeMat);
+            leaves.position.y = 7.5;
+            leaves.castShadow = true;
+            leaves.receiveShadow = true;
+            
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.position.y = 2.5;
+            trunk.castShadow = true;
+            trunk.receiveShadow = true;
+            
+            tree.add(leaves);
+            tree.add(trunk);
+            
+            tree.position.set(x, 0, z);
+            // Random scaling
+            const scale = 0.5 + Math.random() * 1.5;
+            tree.scale.set(scale, scale, scale);
+            
+            scene.add(tree);
+        }
+
+        // Animation variables
+        const clock = new THREE.Clock();
+        let positionAlongTrack = 0; // 0 to 1
+
+        const binormal = new THREE.Vector3();
+        const normal = new THREE.Vector3();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            
+            // Adjust speed based on height (physics simulation: faster at bottom, slower at top)
+            const currentPoint = curve.getPointAt(positionAlongTrack);
+            const heightFactor = Math.max(0.1, 1.0 - (currentPoint.y / 60)); 
+            const speed = 0.05 + heightFactor * 0.15; // Base speed + gravity boost
+            
+            positionAlongTrack += speed * delta;
+            if (positionAlongTrack > 1) {
+                positionAlongTrack -= 1;
+            }
+
+            // Get point and tangent at current position
+            const newPoint = curve.getPointAt(positionAlongTrack);
+            const tangent = curve.getTangentAt(positionAlongTrack);
+
+            // Get point slightly ahead to look at
+            const lookAtPosition = (positionAlongTrack + 0.01) % 1;
+            const lookAtPoint = curve.getPointAt(lookAtPosition);
+
+            // Calculate normals for banking
+            const curveFrames = curve.computeFrenetFrames(300, true);
+            const index = Math.floor(positionAlongTrack * 300);
+            
+            if (curveFrames.normals[index] && curveFrames.binormals[index]) {
+                normal.copy(curveFrames.normals[index]);
+                binormal.copy(curveFrames.binormals[index]);
+            }
+
+            // Position camera slightly above the track
+            camera.position.copy(newPoint);
+            camera.position.addScaledVector(normal, 2.5); // Offset upwards relative to track normal
+
+            // Create a target matrix to orient the camera
+            // Add some roll based on tangent change (banking)
+            camera.up.copy(normal);
+            camera.lookAt(lookAtPoint.clone().addScaledVector(normal, 2.5));
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>

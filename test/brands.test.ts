@@ -27,6 +27,10 @@ describe('modelBrand', () => {
     expect(modelBrand('kimi-k3-max')).toBe('kimi');
     expect(modelBrand('muse-spark-1.2-free')).toBe('meta');
     expect(modelBrand('qwen-3.8-27b')).toBe('qwen');
+    expect(modelBrand('claude-opus-5-high')).toBe('claude');
+    expect(modelBrand('opus-4.6')).toBe('claude');
+    expect(modelBrand('sonnet-4.6')).toBe('claude');
+    expect(modelBrand('ox-alpha-free')).toBe('opencode');
     expect(modelBrand('ornith-1.5-35b')).toBe('brain');
   });
 });
@@ -37,6 +41,7 @@ describe('harnessBrand', () => {
     expect(harnessBrand('antigravity')).toBe('antigravity');
     expect(harnessBrand('grok')).toBe('grok');
     expect(harnessBrand('codex-app')).toBe('openai');
+    expect(harnessBrand('claude-code')).toBe('claude');
     expect(harnessBrand('opencode')).toBe('opencode');
     expect(harnessBrand('zcode')).toBe('zai');
     expect(harnessBrand('not captured')).toBe('');

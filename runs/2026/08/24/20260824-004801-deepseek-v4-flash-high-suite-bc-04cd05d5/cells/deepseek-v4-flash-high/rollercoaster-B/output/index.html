@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Wildfire Run — First-Person Rollercoaster</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#0b0e14;height:100%;}
+  #app{position:fixed;inset:0;}
+  canvas{display:block;}
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:5;
+    background:radial-gradient(ellipse at 50% 42%, rgba(0,0,0,0) 52%, rgba(8,10,18,0.5) 100%);}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:6;font-family:"Segoe UI",system-ui,-apple-system,sans-serif;color:#fff;}
+  #title{position:absolute;top:26px;left:34px;text-shadow:0 2px 14px rgba(0,0,0,.55);}
+  #title h1{margin:0;font-size:clamp(20px,3vw,34px);font-weight:700;letter-spacing:.34em;text-transform:uppercase;color:#fff;}
+  #title p{margin:6px 0 0;font-size:11px;letter-spacing:.22em;text-transform:uppercase;opacity:.78;}
+  #speed{position:absolute;left:34px;bottom:30px;text-shadow:0 2px 12px rgba(0,0,0,.6);}
+  #speed .num{font-size:clamp(40px,7vw,72px);font-weight:200;line-height:1;font-variant-numeric:tabular-nums;}
+  #speed .unit{display:block;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.75;margin-top:2px;}
+  #lap{position:absolute;right:34px;bottom:30px;text-align:right;font-size:12px;letter-spacing:.26em;text-transform:uppercase;opacity:.82;text-shadow:0 2px 10px rgba(0,0,0,.6);}
+  #lap b{display:block;font-size:30px;font-weight:300;letter-spacing:.14em;}
+  #hint{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);font-size:11px;letter-spacing:.18em;text-transform:uppercase;opacity:.66;text-shadow:0 1px 8px rgba(0,0,0,.7);transition:opacity .6s;}
+  #tag{position:absolute;right:34px;top:30px;font-size:10px;letter-spacing:.24em;text-transform:uppercase;opacity:.55;text-align:right;line-height:1.9;}
+  #err{display:none;position:fixed;inset:0;z-index:9;background:#10131a;color:#dfe6ee;font-family:system-ui,sans-serif;
+    align-items:center;justify-content:center;text-align:center;padding:40px;font-size:15px;line-height:1.6;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="vig"></div>
+<div id="hud">
+  <div id="title"><h1>Wildfire Run</h1><p>first-person rollercoaster · continuous playback</p></div>
+  <div id="speed"><span class="num" id="spd">0</span><span class="unit">km/h</span></div>
+  <div id="lap">LAP<b id="lapv">1</b></div>
+  <div id="hint">click for ride audio</div>
+  <div id="tag">three.js · procedural track<br/>physics pacing · terrain &amp; sky</div>
+</div>
+<div id="err">Could not start WebGL or load Three.js.<br/>Please open this file in a modern browser (Chrome, Edge, Firefox, Safari) with an internet connection.</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  if (typeof THREE === "undefined") {
+    document.getElementById("err").style.display = "flex";
+    return;
+  }
+
+  /* ============================================================
+     Renderer / scene / camera
+     ============================================================ */
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+  } catch (e) {
+    document.getElementById("err").style.display = "flex";
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.06;
+  document.getElementById("app").appendChild(renderer.domElement);
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfe8ff);
+  scene.fog = new THREE.Fog(0xcfe8ff, 260, 1650);
+
+  var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 6000);
+
+  /* ============================================================
+     Lights
+     ============================================================ */
+  var hemi = new THREE.HemisphereLight(0xbdd6ff, 0x4f7a44, 0.85);
+  scene.add(hemi);
+
+  var SUN_DIR = new THREE.Vector3(0.32, 0.82, -0.42).normalize();
+  var sun = new THREE.DirectionalLight(0xfff1d6, 1.15);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -300;
+  sun.shadow.camera.right = 300;
+  sun.shadow.camera.top = 300;
+  sun.shadow.camera.bottom = -300;
+  sun.shadow.camera.near = 40;
+  sun.shadow.camera.far = 1400;
+  sun.shadow.bias = -0.0004;
+  scene.add(sun);
+  scene.add(sun.target);
+
+  /* ============================================================
+     Sky dome (gradient + sun disc)
+     ============================================================ */
+  var skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop: new THREE.Uniform(new THREE.Color(0x2e6fd8)),
+      uHorizon: new THREE.Uniform(new THREE.Color(0xcfe8ff)),
+      uGround: new THREE.Uniform(new THREE.Color(0x6d7f86)),
+      uSunDir: new THREE.Uniform(SUN_DIR.clone())
+    },
+    vertexShader: [
+      "varying vec3 vWorld;",
+      "void main(){",
+      "  vWorld = (modelMatrix * vec4(position, 1.0)).xyz;",
+      "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);",
+      "}"
+    ].join("\n"),
+    fragmentShader: [
+      "uniform vec3 uTop; uniform vec3 uHorizon; uniform vec3 uGround; uniform vec3 uSunDir;",
+      "varying vec3 vWorld;",
+      "void main(){",
+      "  vec3 d = normalize(vWorld);",
+      "  float h = d.y;",
+      "  vec3 col = (h >= 0.0)",
+      "    ? mix(uHorizon, uTop, pow(clamp(h, 0.0, 1.0), 0.55))",
+      "    : mix(uHorizon, uGround, clamp(-h * 6.0, 0.0, 1.0));",
+      "  float sd = max(dot(d, uSunDir), 0.0);",
+      "  col += vec3(1.0, 0.95, 0.86) * pow(sd, 900.0) * 2.0;",
+      "  col += vec3(1.0, 0.85, 0.62) * pow(sd, 10.0) * 0.5;",
+      "  col = pow(col, vec3(0.4545));",
+      "  gl_FragColor = vec4(col, 1.0);",
+      "}"
+    ].join("\n")
+  });
+  var sky = new THREE.Mesh(new THREE.SphereGeometry(2600, 40, 20), skyMat);
+  sky.frustumCulled = false;
+  scene.add(sky);
+
+  /* ============================================================
+     Track: closed loop via centripetal Catmull-Rom spline
+     ============================================================ */
+  var PTS = [
+    // lift hill + launch drop
+    [0, 4, 140], [10, 26, 138], [18, 50, 132], [24, 40, 110], [28, 6, 88],
+    [30, 22, 66], [26, 8, 44], [18, 2, 22],
+    // vertical loop
+    [30, 6, 8], [42, 14, 6], [52, 30, 6], [56, 46, 4], [52, 58, 0],
+    [40, 62, -4], [26, 52, -8], [16, 36, -8], [12, 20, -6], [14, 6, -2],
+    // sweeping western hills
+    [20, 2, -22], [12, 24, -44], [0, 8, -60], [-16, 30, -70], [-34, 10, -74],
+    [-52, 34, -68], [-68, 12, -56], [-82, 30, -40], [-90, 8, -20], [-96, 26, 0],
+    [-104, 6, 24], [-96, 34, 48], [-86, 8, 70], [-70, 40, 88], [-56, 10, 104],
+    [-40, 36, 118], [-24, 8, 130], [-10, 30, 138]
+  ];
+
+  var trackPts = PTS.map(function (p) { return new THREE.Vector3(p[0], p[1], p[2]); });
+  var curve = new THREE.CatmullRomCurve3(trackPts, true, "centripetal", 0.5);
+  var SAMPLES = 3000;
+  var pts = curve.getPoints(SAMPLES);
+  var n = pts.length;
+
+  var dists = new Float64Array(n);
+  for (var i = 1; i < n; i++) dists[i] = dists[i - 1] + pts[i].distanceTo(pts[i - 1]);
+  var total = dists[n - 1] + pts[n - 1].distanceTo(pts[0]);
+
+  /* ---- smoothed Frenet frames + stable rider-up/banking signals ---- */
+  function computeFrames() {
+    var T = [], rawN = [], N = [], B = [], U = [], kapLat = [];
+    var up = new THREE.Vector3(0, 1, 0);
+    var i, k;
+    for (i = 0; i < n; i++) {
+      var a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+      T.push(new THREE.Vector3().subVectors(b, a).normalize());
+    }
+    for (i = 0; i < n; i++) {
+      var t1 = T[(i + 1) % n], t0 = T[(i - 1 + n) % n];
+      var d = new THREE.Vector3().subVectors(t1, t0);
+      var nn;
+      if (d.lengthSq() > 1e-8) {
+        nn = d.normalize();
+      } else {
+        nn = up.clone().addScaledVector(t0, -up.dot(t0));
+        if (nn.lengthSq() < 1e-8) nn.set(1, 0, 0);
+        nn.normalize();
+      }
+      rawN.push(nn);
+    }
+    var R = 12;
+    var prevN = null;
+    var prevU = up.clone();
+    for (i = 0; i < n; i++) {
+      var acc = new THREE.Vector3();
+      for (k = -R; k <= R; k++) acc.add(rawN[(i + k + n * 2) % n]);
+      var nn2 = acc;
+      if (prevN && nn2.dot(prevN) < 0) nn2.negate();
+      nn2.addScaledVector(T[i], -nn2.dot(T[i]));
+      if (nn2.lengthSq() < 1e-8) nn2.copy(prevN || up);
+      nn2.normalize();
+      N.push(nn2.clone());
+      B.push(new THREE.Vector3().crossVectors(T[i], nn2).normalize());
+      prevN = nn2;
+
+      /* rider-up: world-up projected onto the plane normal to T,
+         with transport fallback where the track runs vertical. */
+      var u = up.clone().addScaledVector(T[i], -up.dot(T[i]));
+      if (u.lengthSq() < 1e-6) {
+        u.copy(prevU).addScaledVector(T[i], -prevU.dot(T[i]));
+        if (u.lengthSq() < 1e-6) u.set(1, 0, 0);
+      }
+      if (u.dot(prevU) < 0) u.negate();
+      u.normalize();
+      U.push(u.clone());
+      prevU = u;
+
+      /* lateral (steering) curvature signal used for banking */
+      var lft = new THREE.Vector3().crossVectors(u, T[i]);
+      if (lft.lengthSq() < 1e-6) lft.crossVectors(up, T[i]);
+      lft.normalize();
+      kapLat.push(nn2.dot(lft));
+    }
+    return { T: T, N: N, B: B, U: U, kapLat: kapLat };
+  }
+  var frames = computeFrames();
+
+  /* ---- arc-length lookups ---- */
+  function indexAt(s) {
+    s = ((s % total) + total) % total;
+    var lo = 0, hi = n - 1;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (dists[mid] <= s) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+  function frameAt(s) {
+    s = ((s % total) + total) % total;
+    var i = indexAt(s), j = (i + 1) % n;
+    var seg = dists[j] - dists[i];
+    if (seg < 0) seg = total - dists[i] + dists[j];
+    var t = seg > 1e-9 ? (s - dists[i]) / seg : 0;
+    var p = new THREE.Vector3().lerpVectors(pts[i], pts[j], t);
+    var T = new THREE.Vector3().lerpVectors(frames.T[i], frames.T[j], t).normalize();
+    var N = new THREE.Vector3().lerpVectors(frames.N[i], frames.N[j], t).normalize();
+    var B = new THREE.Vector3().crossVectors(T, N).normalize();
+    var U = new THREE.Vector3().lerpVectors(frames.U[i], frames.U[j], t).normalize();
+    var kLat = frames.kapLat[i] + (frames.kapLat[j] - frames.kapLat[i]) * t;
+    return { p: p, T: T, N: N, B: B, U: U, kLat: kLat };
+  }
+  function heightAt(s) {
+    s = ((s % total) + total) % total;
+    var i = indexAt(s), j = (i + 1) % n;
+    var seg = dists[j] - dists[i];
+    if (seg < 0) seg = total - dists[i] + dists[j];
+    var t = seg > 1e-9 ? (s - dists[i]) / seg : 0;
+    return pts[i].y + (pts[j].y - pts[i].y) * t;
+  }
+
+  /* ---- helpers ---- */
+  function Tube(path, segments, radius, radial, closed) {
+    var Klass = THREE.TubeGeometry || THREE.TubeBufferGeometry;
+    return new Klass(path, segments, radius, radial, closed);
+  }
+
+  function addInstanced(geo, mat, count) {
+    var m = new THREE.InstancedMesh(geo, mat, count);
+    m.castShadow = true;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return m;
+  }
+
+  /* ============================================================
+     Track visuals: spine + rails + ties
+     ============================================================ */
+  var trackGroup = new THREE.Group();
+
+  var spineMat = new THREE.MeshStandardMaterial({ color: 0x565c68, metalness: 0.75, roughness: 0.42 });
+  var spineCurve = new THREE.CatmullRomCurve3(pts, true, "centripetal", 0.5);
+  var spine = new THREE.Mesh(Tube(spineCurve, 900, 0.5, 10, true), spineMat);
+  spine.castShadow = true;
+  trackGroup.add(spine);
+
+  var railMat = new THREE.MeshStandardMaterial({ color: 0xdde2ea, metalness: 0.92, roughness: 0.28 });
+  var off = 1.7;
+  var L = [], R = [];
+  for (var i = 0; i < n; i++) {
+    L.push(pts[i].clone().addScaledVector(frames.B[i], off).addScaledVector(frames.N[i], 0.35));
+    R.push(pts[i].clone().addScaledVector(frames.B[i], -off).addScaledVector(frames.N[i], 0.35));
+  }
+  var railL = new THREE.Mesh(Tube(new THREE.CatmullRomCurve3(L, true, "centripetal", 0.5), 900, 0.15, 8, true), railMat);
+  var railR = new THREE.Mesh(Tube(new THREE.CatmullRomCurve3(R, true, "centripetal", 0.5), 900, 0.15, 8, true), railMat);
+  railL.castShadow = true;
+  railR.castShadow = true;
+  trackGroup.add(railL);
+  trackGroup.add(railR);
+
+  /* ties */
+  var tieGeo = new THREE.BoxGeometry(3.9, 0.16, 0.4);
+  var tieMat = new THREE.MeshStandardMaterial({ color: 0x494f59, metalness: 0.55, roughness: 0.6 });
+  var tieStep = Math.max(1, Math.round(1.4 / (total / n)));
+  var tieCount = Math.floor(n / tieStep);
+  var ties = addInstanced(tieGeo, tieMat, tieCount);
+  var mtx = new THREE.Matrix4(), posV = new THREE.Vector3();
+  var tieIdx = 0;
+  for (i = 0; i < n; i += tieStep, tieIdx++) {
+    mtx.makeBasis(frames.B[i], frames.N[i], frames.T[i]);
+    posV.copy(pts[i]).addScaledVector(frames.N[i], 0.08);
+    mtx.setPosition(posV);
+    ties.setMatrixAt(tieIdx, mtx);
+  }
+  ties.instanceMatrix.needsUpdate = true;
+  trackGroup.add(ties);
+  scene.add(trackGroup);
+
+  /* ============================================================
+     Supports (two legs + crossbeam per tower)
+     ============================================================ */
+  var legGeo = new THREE.CylinderGeometry(0.14, 0.2, 1, 6);
+  var legMat = new THREE.MeshStandardMaterial({ color: 0x8d95a3, metalness: 0.65, roughness: 0.5 });
+  var beamGeo = new THREE.BoxGeometry(3.8, 0.22, 0.22);
+
+  var supStep = Math.max(1, Math.round(6.5 / (total / n)));
+  var supCount = 0;
+  for (i = 0; i < n; i += supStep) if (pts[i].y > 6.5) supCount++;
+
+  var legs = addInstanced(legGeo, legMat, supCount * 2);
+  var beams = addInstanced(beamGeo, legMat, supCount);
+  var upV = new THREE.Vector3(0, 1, 0);
+  var q = new THREE.Quaternion(), scl = new THREE.Vector3(), dir = new THREE.Vector3();
+  var foot = new THREE.Vector3(), top = new THREE.Vector3();
+  var li = 0, bi = 0;
+  for (i = 0; i < n; i += supStep) {
+    var p = pts[i];
+    if (p.y <= 6.5) continue;
+    var bn = frames.B[i], nn = frames.N[i], tn = frames.T[i];
+    /* crossbeam */
+    mtx.makeBasis(bn, nn, tn);
+    posV.copy(p).addScaledVector(nn, -1.15);
+    mtx.setPosition(posV);
+    beams.setMatrixAt(bi++, mtx);
+    /* two legs */
+    for (var s2 = -1; s2 <= 1; s2 += 2) {
+      foot.copy(p).addScaledVector(bn, s2 * 2.1);
+      foot.y = 0;
+      top.copy(p).addScaledVector(bn, s2 * 0.9).addScaledVector(nn, -0.75);
+      dir.subVectors(top, foot);
+      var len = dir.length();
+      dir.normalize();
+      q.setFromUnitVectors(upV, dir);
+      posV.copy(foot).addScaledVector(dir, len * 0.5);
+      scl.set(1, len, 1);
+      mtx.compose(posV, q, scl);
+      legs.setMatrixAt(li++, mtx);
+    }
+  }
+  legs.instanceMatrix.needsUpdate = true;
+  beams.instanceMatrix.needsUpdate = true;
+  scene.add(legs);
+  scene.add(beams);
+
+  /* ============================================================
+     Ground
+     ============================================================ */
+  var canvas2d = document.createElement("canvas");
+  canvas2d.width = canvas2d.height = 256;
+  var g2 = canvas2d.getContext("2d");
+  g2.fillStyle = "#77a055";
+  g2.fillRect(0, 0, 256, 256);
+  for (var gi = 0; gi < 3000; gi++) {
+    var gx = Math.random() * 256, gy = Math.random() * 256, gr = Math.random() * 3.2 + 0.6;
+    var gs = 0.7 + Math.random() * 0.6;
+    g2.fillStyle = "rgba(" + Math.floor(60 * gs) + "," + Math.floor(140 * gs) + "," + Math.floor(55 * gs) + ",0.45)";
+    g2.beginPath();
+    g2.arc(gx, gy, gr, 0, 6.283);
+    g2.fill();
+  }
+  var grassTex = new THREE.CanvasTexture(canvas2d);
+  grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
+  grassTex.repeat.set(420, 420);
+  grassTex.anisotropy = 8;
+  var ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(3600, 3600),
+    new THREE.MeshStandardMaterial({ map: grassTex, roughness: 1, metalness: 0 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  /* ============================================================
+     Trees (kept clear of the track)
+     ============================================================ */
+  var prox = [];
+  for (i = 0; i < n; i += 8) prox.push(pts[i]);
+
+  function clearOfTrack(x, z) {
+    for (var k = 0; k < prox.length; k++) {
+      var dx = prox[k].x - x, dz = prox[k].z - z;
+      if (dx * dx + dz * dz < 26 * 26) return false;
+    }
+    return true;
+  }
+
+  var trunkGeo = new THREE.CylinderGeometry(0.32, 0.5, 3.2, 6);
+  var folGeo = new THREE.ConeGeometry(2.3, 6.2, 7);
+  var trunkMat = new THREE.MeshStandardMaterial({ color: 0x6d4b2c, roughness: 0.95 });
+  var folMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+  var TREE_N = 230;
+  var trunks = addInstanced(trunkGeo, trunkMat, TREE_N);
+  var fols = addInstanced(folGeo, folMat, TREE_N);
+  var qy = new THREE.Quaternion(), sv = new THREE.Vector3(), col = new THREE.Color();
+  var placed = 0, attempts = 0;
+  while (placed < TREE_N && attempts < TREE_N * 30) {
+    attempts++;
+    var ang2 = Math.random() * Math.PI * 2;
+    var r2 = 26 + Math.pow(Math.random(), 0.85) * 660;
+    var tx = Math.cos(ang2) * r2, tz = Math.sin(ang2) * r2;
+    if (!clearOfTrack(tx, tz)) continue;
+    var sc = 0.7 + Math.random() * 1.6;
+    var rot = Math.random() * Math.PI;
+    qy.setFromAxisAngle(upV, rot);
+    sv.set(sc, sc * (0.9 + Math.random() * 0.4), sc);
+    posV.set(tx, 0, tz);
+    mtx.compose(posV, qy, sv);
+    trunks.setMatrixAt(placed, mtx);
+    posV.y = 3.2 * sc;
+    mtx.compose(posV, qy, sv);
+    fols.setMatrixAt(placed, mtx);
+    var tone = 0.35 + Math.random() * 0.4;
+    col.setRGB(0.25 * tone, 0.85 * tone, 0.28 * tone);
+    fols.setColorAt(placed, col);
+    placed++;
+  }
+  trunks.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+  trunks.instanceMatrix.needsUpdate = true;
+  fols.instanceMatrix.needsUpdate = true;
+  if (fols.instanceColor) fols.instanceColor.needsUpdate = true;
+  scene.add(trunks);
+  scene.add(fols);
+
+  /* ============================================================
+     Mountains
+     ============================================================ */
+  var mtnGeo = new THREE.ConeGeometry(1, 1, 5);
+  var mtnMat = new THREE.MeshStandardMaterial({ color: 0x8fa3b5, roughness: 1, flatShading: true });
+  var MTN_N = 30;
+  var mtns = addInstanced(mtnGeo, mtnMat, MTN_N);
+  for (i = 0; i < MTN_N; i++) {
+    var mang = (i / MTN_N) * Math.PI * 2 + Math.random() * 0.5;
+    var mr = 800 + Math.random() * 520;
+    var mw = 140 + Math.random() * 180, mh = 200 + Math.random() * 220;
+    qy.setFromAxisAngle(upV, Math.random() * Math.PI);
+    sv.set(mw, mh, mw);
+    posV.set(Math.cos(mang) * mr, 0, Math.sin(mang) * mr);
+    mtx.compose(posV, qy, sv);
+    mtns.setMatrixAt(i, mtx);
+    col.setHSL(0.57, 0.12, 0.5 + Math.random() * 0.22);
+    mtns.setColorAt(i, col);
+  }
+  mtns.instanceMatrix.needsUpdate = true;
+  if (mtns.instanceColor) mtns.instanceColor.needsUpdate = true;
+  scene.add(mtns);
+
+  /* ============================================================
+     Clouds
+     ============================================================ */
+  var cloudGeo = new THREE.SphereGeometry(1, 8, 6);
+  var cloudMat = new THREE.MeshLambertMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.92, depthWrite: false
+  });
+  var CLOUD_GROUPS = 26;
+  var CLOUD_N = CLOUD_GROUPS * 4;
+  var clouds = addInstanced(cloudGeo, cloudMat, CLOUD_N);
+  var ci = 0;
+  for (i = 0; i < CLOUD_GROUPS; i++) {
+    var ccx = (Math.random() - 0.5) * 2400;
+    var ccy = 170 + Math.random() * 130;
+    var ccz = (Math.random() - 0.5) * 2400;
+    var cn = 3 + Math.floor(Math.random() * 3);
+    for (var cj = 0; cj < cn && ci < CLOUD_N; cj++, ci++) {
+      posV.set(ccx + (Math.random() - 0.5) * 40, ccy + (Math.random() - 0.5) * 8, ccz + (Math.random() - 0.5) * 24);
+      sv.set(9 + Math.random() * 10, 2.4 + Math.random() * 2.6, 6 + Math.random() * 7);
+      q.setFromEuler(new THREE.Euler(0, Math.random() * Math.PI, 0));
+      mtx.compose(posV, q, sv);
+      clouds.setMatrixAt(ci, mtx);
+    }
+  }
+  clouds.instanceMatrix.needsUpdate = true;
+  clouds.userData.vx = 2.5 + Math.random() * 1.5;
+  scene.add(clouds);
+
+  /* ============================================================
+     Station
+     ============================================================ */
+  var station = new THREE.Group();
+  var woodMat = new THREE.MeshStandardMaterial({ color: 0x8a5a33, roughness: 0.9 });
+  var roofMat = new THREE.MeshStandardMaterial({ color: 0x9c4433, roughness: 0.8 });
+  var deck = new THREE.Mesh(new THREE.BoxGeometry(30, 1, 12), woodMat);
+  deck.position.set(0, 5.6, 152);
+  deck.receiveShadow = true;
+  station.add(deck);
+  for (i = 0; i < 4; i++) {
+    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 4.6, 8), woodMat);
+    post.position.set(i % 2 ? 14.5 : -14.5, 8.3, 152 + (i < 2 ? 5 : -5));
+    post.castShadow = true;
+    station.add(post);
+  }
+  var roof = new THREE.Mesh(new THREE.BoxGeometry(33, 0.5, 15), roofMat);
+  roof.position.set(0, 10.6, 152);
+  roof.castShadow = true;
+  station.add(roof);
+  scene.add(station);
+
+  /* ============================================================
+     Rider rig (lap bar + grips fixed to the camera)
+     ============================================================ */
+  var rig = new THREE.Group();
+  var barMat = new THREE.MeshStandardMaterial({ color: 0xb0302a, metalness: 0.4, roughness: 0.55 });
+  var lapBar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 0.35), barMat);
+  lapBar.position.set(0, -0.52, -0.85);
+  rig.add(lapBar);
+  var gripMat = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.5, metalness: 0.6 });
+  for (var sg = -1; sg <= 1; sg += 2) {
+    var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.55, 10), gripMat);
+    grip.position.set(sg * 0.32, -0.3, -0.8);
+    grip.rotation.x = 0.22;
+    rig.add(grip);
+  }
+  camera.add(rig);
+  scene.add(camera);
+
+  /* ============================================================
+     Physics pacing (energy-conservation model + launch-grade lift motor)
+     ============================================================ */
+  var G = 9.8;
+  var minSpeed = 7.5;
+  var maxSpeed = 36;
+  var MOTOR = 130;    // J/kg/s injected on the lift, so drops stay exciting
+  var FRICTION = 0.055;
+
+  var liftIdx = 0;
+  for (i = 0; i < n; i++) { if (pts[i].y > 45) { liftIdx = i; break; } }
+  var liftDist = dists[liftIdx];
+
+  /* ---- vertical loop: the only fully inverting element ----
+     locate the loop apex (global max height) and its y=20 shoulders,
+     then build a smooth pi-roll ramp over that arc. */
+  var apexIdx = 0;
+  for (i = 1; i < n; i++) { if (pts[i].y > pts[apexIdx].y) apexIdx = i; }
+  var apexS = dists[apexIdx];
+  var iA = apexIdx, iB = apexIdx;
+  while (iA > 0 && pts[iA].y > 20) iA--;
+  while (iB < n - 1 && pts[iB].y > 20) iB++;
+  var LOOP_A = dists[iA], LOOP_B = dists[iB];
+  function smooth01(x) { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); }
+  function loopRollAt(s) {
+    if (s < LOOP_A || s > LOOP_B) return 0;
+    var roll;
+    if (s < apexS) roll = smooth01((s - LOOP_A) / (apexS - LOOP_A));
+    else roll = 1 - smooth01((s - apexS) / (LOOP_B - apexS));
+    return roll * Math.PI;
+  }
+
+  var s = 0;
+  var v = 16;
+  var lap = 1;
+  var energy = 0.5 * v * v + G * pts[0].y;
+
+  var clock = new THREE.Clock();
+  var time = 0;
+  var accum = 0;
+  var STEP = 1 / 60;
+
+  var speedEl = document.getElementById("spd");
+  var lapEl = document.getElementById("lapv");
+
+  /* ============================================================
+     Audio (synthesized rumble + wind, starts on first interaction)
+     ============================================================ */
+  var audio = null;
+  var masterGain = null;
+  var audioStarted = false;
+  var hintEl = document.getElementById("hint");
+
+  function initAudio() {
+    if (audio) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      var ctx = new AC();
+      masterGain = ctx.createGain();
+      masterGain.gain.value = 1;
+      masterGain.connect(ctx.destination);
+
+      var lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 110;
+      lp.Q.value = 0.7;
+      var o1 = ctx.createOscillator(); o1.type = "sawtooth"; o1.frequency.value = 34;
+      var o2 = ctx.createOscillator(); o2.type = "sawtooth"; o2.frequency.value = 44;
+      var o3 = ctx.createOscillator(); o3.type = "triangle"; o3.frequency.value = 23;
+      var rumble = ctx.createGain(); rumble.gain.value = 0;
+      o1.connect(lp); o2.connect(lp); o3.connect(lp);
+      lp.connect(rumble); rumble.connect(masterGain);
+      o1.start(); o2.start(); o3.start();
+
+      var len = ctx.sampleRate * 2;
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var a2 = 0; a2 < len; a2++) d[a2] = Math.random() * 2 - 1;
+      var noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      noise.loop = true;
+      var bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 650;
+      bp.Q.value = 0.45;
+      var wind = ctx.createGain(); wind.gain.value = 0;
+      noise.connect(bp); bp.connect(wind); wind.connect(masterGain);
+      noise.start();
+
+      audio = { ctx: ctx, rumble: rumble, wind: wind, lp: lp, bp: bp, muted: false };
+    } catch (e) {
+      audio = null;
+    }
+  }
+
+  function updateAudio() {
+    if (!audio) return;
+    var spd = v / maxSpeed;
+    audio.rumble.gain.value += (0.016 + spd * 0.085 - audio.rumble.gain.value) * 0.1;
+    audio.wind.gain.value += (spd * spd * 0.10 - audio.wind.gain.value) * 0.1;
+    audio.lp.frequency.value = 90 + spd * 300;
+    audio.bp.frequency.value = 380 + spd * 1100;
+  }
+
+  function onFirstInteraction() {
+    if (!audio) initAudio();
+    if (!audio) return;
+    if (audio.ctx.state === "suspended") audio.ctx.resume();
+    if (!audioStarted) {
+      /* first interaction: start sound ON */
+      audioStarted = true;
+      masterGain.gain.value = 1;
+      hintEl.textContent = "sound on — click to mute";
+    } else {
+      audio.muted = !audio.muted;
+      masterGain.gain.value = audio.muted ? 0 : 1;
+      hintEl.textContent = audio.muted ? "sound off — click to unmute" : "sound on — click to mute";
+    }
+    hintEl.style.opacity = 0.85;
+  }
+  window.addEventListener("pointerdown", onFirstInteraction);
+  window.addEventListener("keydown", onFirstInteraction);
+
+  /* ============================================================
+     Main loop
+     ============================================================ */
+  var lookTarget = new THREE.Vector3();
+  var rotQ = new THREE.Quaternion();
+
+  function physicsStep(dt) {
+    /* energy-conservation pacing; keeps ride real-time at any frame rate */
+    energy -= v * FRICTION * dt;
+    if (s < liftDist) energy += MOTOR * dt;
+    var h = heightAt(s);
+    var v2 = 2 * (energy - G * h);
+    v = v2 > 0 ? Math.sqrt(Math.min(v2, maxSpeed * maxSpeed)) : minSpeed;
+    if (v < minSpeed) v = minSpeed;
+    s += v * dt;
+    if (s >= total) { s -= total; lap++; }
+    time += dt;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    var dt = Math.min(clock.getDelta(), 0.5);
+    accum += dt;
+    var guard = 0;
+    while (accum >= STEP && guard < 120) {
+      physicsStep(STEP);
+      accum -= STEP;
+      guard++;
+    }
+
+    /* camera on rails */
+    var fr = frameAt(s);
+    var spd = v / maxSpeed;
+    var amp = 0.05 + spd * 0.055;
+    var bob = Math.sin(time * 2.2) * amp;
+    var sway = Math.sin(time * 1.6 + 1.3) * amp * 0.65;
+    camera.position.copy(fr.p)
+      .addScaledVector(fr.N, 1.35 + bob)
+      .addScaledVector(fr.B, sway);
+
+    /* rider orientation: projected-up base + speed-dependent natural
+       banking + a designed inversion roll through the vertical loop. */
+    var bank = Math.atan2(v * v * fr.kLat, G);
+    if (bank > 0.9) bank = 0.9; else if (bank < -0.9) bank = -0.9;
+    var totalRoll = bank + loopRollAt(s);
+    rotQ.setFromAxisAngle(fr.T, totalRoll);
+    camera.up.copy(fr.U).applyQuaternion(rotQ);
+
+    lookTarget.copy(fr.p).addScaledVector(fr.T, 14);
+    camera.lookAt(lookTarget);
+    camera.rotateZ(Math.sin(time * 0.83) * 0.0035 + Math.sin(time * 2.9) * spd * 0.0045);
+    camera.fov += (72 + spd * 24 - camera.fov) * 0.07;
+    camera.updateProjectionMatrix();
+
+    /* sun + shadows follow the camera */
+    sun.position.copy(camera.position).addScaledVector(SUN_DIR, 900);
+    sun.target.position.copy(camera.position);
+
+    /* cloud drift */
+    clouds.position.x -= clouds.userData.vx * dt;
+    if (clouds.position.x < -1300) clouds.position.x += 2600;
+
+    /* audio + hud */
+    if (audio) updateAudio();
+    speedEl.textContent = Math.round(v * 3.6);
+    lapEl.textContent = lap;
+
+    renderer.render(scene, camera);
+  }
+
+  function onResize() {
+    var w = window.innerWidth, hh = window.innerHeight;
+    camera.aspect = w / hh;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, hh);
+  }
+  window.addEventListener("resize", onResize);
+
+  animate();
+})();
+</script>
+</body>
+</html>

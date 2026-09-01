@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum Rail - First Person Rollercoaster</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #010008; 
+            font-family: 'Consolas', 'Courier New', monospace; 
+            user-select: none;
+        }
+        #canvas-container { 
+            width: 100vw; 
+            height: 100vh; 
+            position: absolute; 
+            top: 0; left: 0; 
+            z-index: 1; 
+        }
+        #ui-layer {
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100vw; height: 100vh;
+            pointer-events: none; 
+            z-index: 10;
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center;
+        }
+        .hud {
+            position: absolute; 
+            top: 30px; left: 30px; 
+            color: rgba(0, 255, 255, 0.8);
+            font-size: 13px; 
+            font-weight: bold; 
+            letter-spacing: 3px;
+            text-shadow: 0 0 8px rgba(0,255,255,0.6);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .hud-right {
+            position: absolute; 
+            top: 30px; right: 30px; 
+            text-align: right; 
+            color: rgba(255, 0, 255, 0.8);
+            font-size: 13px; 
+            font-weight: bold; 
+            letter-spacing: 3px;
+            text-shadow: 0 0 8px rgba(255,0,255,0.6);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .hud-value {
+            font-size: 18px;
+            color: #fff;
+        }
+        #title-container {
+            text-align: center;
+        }
+        #title {
+            color: #fff; 
+            font-size: 64px; 
+            font-weight: 900; 
+            letter-spacing: 15px;
+            margin: 0;
+            text-shadow: 0 0 20px #0ff, 0 0 40px #0ff, 0 0 80px #0ff;
+            opacity: 1; 
+            transition: opacity 2s ease-out, transform 2.5s cubic-bezier(0.19, 1, 0.22, 1);
+            transform: scale(1);
+        }
+        #subtitle {
+            color: rgba(255, 255, 255, 0.8); 
+            font-size: 14px; 
+            letter-spacing: 8px; 
+            margin-top: 15px;
+            opacity: 1; 
+            transition: opacity 1s ease-out;
+        }
+        .fade-out { 
+            opacity: 0 !important; 
+            transform: scale(1.2) !important; 
+        }
+        .crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px; height: 40px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 50%;
+            z-index: 10;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(0, 255, 255, 0.5);
+        }
+        .crosshair::before { top: 19px; left: 10px; width: 20px; height: 1px; }
+        .crosshair::after { top: 10px; left: 19px; width: 1px; height: 20px; }
+        
+        .scanlines {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px;
+            z-index: 5; pointer-events: none;
+            opacity: 0.6;
+        }
+        .vignette {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: radial-gradient(circle, rgba(0,0,0,0) 40%, rgba(0,0,0,0.9) 100%);
+            z-index: 6; pointer-events: none;
+        }
+        .flash {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #fff;
+            z-index: 20; pointer-events: none;
+            opacity: 0; transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="hud">
+            <div>SYS.VELOCITY</div>
+            <div class="hud-value" id="speed-indicator">000.00 v/s</div>
+        </div>
+        <div class="hud-right">
+            <div>SYS.ALTITUDE</div>
+            <div class="hud-value" id="alt-indicator">0000.0 m</div>
+        </div>
+        <div id="title-container">
+            <h1 id="title">QUANTUM RAIL</h1>
+            <p id="subtitle">INITIALIZING SEQUENCE...</p>
+        </div>
+        <div class="crosshair"></div>
+    </div>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+    <div class="flash" id="warp-flash"></div>
+    <div id="canvas-container"></div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Setup Scene
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x010008, 0.0018);
+        
+        // Setup Camera
+        const camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.1, 3000);
+        
+        // Setup Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // --- Path Generation ---
+        const points = [];
+        const numPoints = 60;
+        for (let i = 0; i < numPoints; i++) {
+            const t = i / numPoints;
+            const angle = t * Math.PI * 2;
+            
+            // Complex parametric curve for an erratic, thrilling rollercoaster
+            const x = Math.sin(angle * 3) * 400 + Math.cos(angle * 2) * 150;
+            const y = Math.cos(angle * 4) * 200 + Math.sin(angle * 2) * 100 + 200;
+            const z = Math.sin(angle * 2) * 500 + Math.cos(angle * 5) * 150;
+            
+            points.push(new THREE.Vector3(x, y, z));
+        }
+        
+        const curve = new THREE.CatmullRomCurve3(points);
+        curve.closed = true;
+        curve.tension = 0.6; // smooth out tight turns
+
+        // --- Geometry & Materials ---
+        const segments = 3000;
+        const tubeRadius = 3;
+        
+        // Main Track Tube
+        const tubeGeometry = new THREE.TubeGeometry(curve, segments, tubeRadius, 8, true);
+        const trackMaterial = new THREE.MeshBasicMaterial({
+            color: 0x0088ff,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.15,
+            blending: THREE.AdditiveBlending,
+            side: THREE.BackSide
+        });
+        const trackMesh = new THREE.Mesh(tubeGeometry, trackMaterial);
+        scene.add(trackMesh);
+
+        // Inner Energy Core
+        const coreGeometry = new THREE.TubeGeometry(curve, segments, 0.3, 5, true);
+        const coreMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xff0088,
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending
+        });
+        const coreMesh = new THREE.Mesh(coreGeometry, coreMaterial);
+        scene.add(coreMesh);
+        
+        // Acceleration Rings
+        const ringGeo = new THREE.TorusGeometry(tubeRadius + 1.5, 0.1, 5, 16);
+        const ringMatBlue = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending });
+        const ringMatPink = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending });
+        
+        const ringCount = 300;
+        const instancedRingsBlue = new THREE.InstancedMesh(ringGeo, ringMatBlue, ringCount/2);
+        const instancedRingsPink = new THREE.InstancedMesh(ringGeo, ringMatPink, ringCount/2);
+        
+        const dummy = new THREE.Object3D();
+        const frames = curve.computeFrenetFrames(segments, true);
+        
+        for(let i = 0; i < ringCount; i++) {
+            const t = i / ringCount;
+            const pt = curve.getPointAt(t);
+            const tan = curve.getTangentAt(t);
+            
+            dummy.position.copy(pt);
+            const lookPos = pt.clone().add(tan);
+            dummy.lookAt(lookPos);
+            dummy.updateMatrix();
+            
+            if(i % 2 === 0) {
+                instancedRingsBlue.setMatrixAt(Math.floor(i/2), dummy.matrix);
+            } else {
+                instancedRingsPink.setMatrixAt(Math.floor(i/2), dummy.matrix);
+            }
+        }
+        scene.add(instancedRingsBlue);
+        scene.add(instancedRingsPink);
+
+        // --- Environment & Atmosphere ---
+        
+        // Hyperspace Particles
+        const pGeo = new THREE.BufferGeometry();
+        const pCount = 8000;
+        const pPos = new Float32Array(pCount * 3);
+        const pColor = new Float32Array(pCount * 3);
+        
+        for(let i = 0; i < pCount * 3; i+=3) {
+            pPos[i] = (Math.random() - 0.5) * 1500;
+            pPos[i+1] = (Math.random() - 0.5) * 1500;
+            pPos[i+2] = (Math.random() - 0.5) * 1500;
+            
+            const mix = Math.random();
+            if(mix > 0.6) {
+                pColor[i] = 0; pColor[i+1] = 1; pColor[i+2] = 1; // cyan
+            } else if (mix > 0.2) {
+                pColor[i] = 1; pColor[i+1] = 0; pColor[i+2] = 1; // pink
+            } else {
+                pColor[i] = 0.5; pColor[i+1] = 0; pColor[i+2] = 1; // blue
+            }
+        }
+        
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        pGeo.setAttribute('color', new THREE.BufferAttribute(pColor, 3));
+        
+        const pMat = new THREE.PointsMaterial({
+            size: 2.5,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const particleSystem = new THREE.Points(pGeo, pMat);
+        scene.add(particleSystem);
+        
+        // Abstract Monoliths
+        const buildGeo = new THREE.BoxGeometry(1, 1, 1);
+        const buildMat = new THREE.MeshBasicMaterial({ 
+            color: 0x050510, 
+            wireframe: true,
+            transparent: true,
+            opacity: 0.3
+        });
+        const buildings = new THREE.InstancedMesh(buildGeo, buildMat, 400);
+        for(let i=0; i<400; i++) {
+            dummy.position.set(
+                (Math.random() - 0.5) * 2000,
+                (Math.random() - 0.5) * 2000,
+                (Math.random() - 0.5) * 2000
+            );
+            // Push away from origin so path is clear
+            if(dummy.position.length() < 400) {
+                dummy.position.normalize().multiplyScalar(400 + Math.random()*300);
+            }
+            
+            const scaleY = 50 + Math.random() * 400;
+            const scaleXZ = 20 + Math.random() * 80;
+            dummy.scale.set(scaleXZ, scaleY, scaleXZ);
+            dummy.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+            dummy.updateMatrix();
+            buildings.setMatrixAt(i, dummy.matrix);
+        }
+        scene.add(buildings);
+
+        // --- Sequence Logic ---
+        let isStarted = false;
+        let launchMultiplier = 0;
+        
+        const titleEl = document.getElementById('title');
+        const subtitleEl = document.getElementById('subtitle');
+        const flashEl = document.getElementById('warp-flash');
+        
+        // Intro Sequence Timing
+        setTimeout(() => {
+            subtitleEl.innerText = "ENGAGING WARP DRIVE";
+            subtitleEl.style.color = "#0ff";
+            subtitleEl.style.textShadow = "0 0 10px #0ff";
+            
+            setTimeout(() => {
+                titleEl.classList.add('fade-out');
+                subtitleEl.classList.add('fade-out');
+                
+                setTimeout(() => {
+                    flashEl.style.opacity = '1';
+                    isStarted = true;
+                    
+                    setTimeout(() => {
+                        flashEl.style.opacity = '0';
+                        document.getElementById('title-container').style.display = 'none';
+                    }, 500);
+                }, 800);
+            }, 1500);
+        }, 2000);
+
+        // --- Animation Loop ---
+        let progress = 0;
+        const clock = new THREE.Clock();
+        const baseSpeed = 0.0006; 
+        
+        const speedUI = document.getElementById('speed-indicator');
+        const altUI = document.getElementById('alt-indicator');
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const delta = Math.min(clock.getDelta(), 0.1); // cap delta for lag spikes
+            const time = clock.getElapsedTime();
+            
+            // Calculate dynamic physics-based speed
+            const currentPosForPhysics = curve.getPointAt(progress);
+            // Normalize altitude (y ranges approx from 0 to 400)
+            const heightFactor = Math.max(0, (400 - currentPosForPhysics.y) / 400); 
+            // Faster at bottom, slower at top
+            const gravitySpeed = 0.8 + (heightFactor * 1.8);
+            
+            // Apply launch acceleration
+            if(isStarted) {
+                launchMultiplier += delta * 0.4;
+                if(launchMultiplier > 1) launchMultiplier = 1;
+            }
+            
+            const currentSpeedMult = isStarted ? (gravitySpeed * launchMultiplier) : 0.05;
+            const frameSpeed = baseSpeed * currentSpeedMult * (delta * 60);
+            
+            progress += frameSpeed;
+            if (progress >= 1) progress -= 1;
+            
+            // --- Camera Positioning (Frenet Frames) ---
+            const p = progress;
+            const pLook = (progress + 0.005) % 1; // Look slightly ahead
+            
+            const pos = curve.getPointAt(p);
+            const posLook = curve.getPointAt(pLook);
+            
+            // Smoothly interpolate normals for fluid banking
+            const fIndex = p * segments;
+            const i1 = Math.floor(fIndex);
+            const i2 = (i1 + 1) % segments;
+            const weight = fIndex - i1;
+            
+            const n1 = frames.normals[i1];
+            const n2 = frames.normals[i2];
+            const normal = new THREE.Vector3().copy(n1).lerp(n2, weight).normalize();
+            
+            // Set camera inside tube, slightly above the mathematical center for better perspective
+            const cameraOffset = normal.clone().multiplyScalar(tubeRadius * -0.2); 
+            camera.position.copy(pos).add(cameraOffset);
+            
+            // Set target
+            const lookNormalIndex = Math.floor(pLook * segments);
+            const lookNormal = frames.normals[lookNormalIndex];
+            const targetOffset = lookNormal.clone().multiplyScalar(tubeRadius * -0.2);
+            const target = posLook.clone().add(targetOffset);
+            
+            // Orient Camera
+            camera.lookAt(target);
+            // Inverting the normal creates the classic rollercoaster outside-loop flip!
+            camera.up.copy(normal.clone().negate());
+            
+            // Camera Shake based on velocity
+            if(isStarted) {
+                const shakeAmt = currentSpeedMult * 0.03;
+                camera.position.x += (Math.random() - 0.5) * shakeAmt;
+                camera.position.y += (Math.random() - 0.5) * shakeAmt;
+                camera.position.z += (Math.random() - 0.5) * shakeAmt;
+                
+                // Dynamic FOV based on speed (warp effect)
+                const targetFOV = 80 + (currentSpeedMult * 15);
+                camera.fov += (targetFOV - camera.fov) * 0.05;
+                camera.updateProjectionMatrix();
+            }
+
+            // --- Scene Animation ---
+            
+            // Pulsing core
+            const hue = (time * 0.15) % 1;
+            coreMaterial.color.setHSL(hue, 1, 0.6 + Math.sin(time * 8) * 0.2);
+            
+            // Rotating environment
+            particleSystem.rotation.y = time * 0.01;
+            particleSystem.rotation.z = time * 0.005;
+            
+            buildings.rotation.y = time * 0.002;
+
+            // --- UI Updates ---
+            if(Math.floor(time * 15) % 3 === 0) {
+                const displayVel = (frameSpeed * 150000).toFixed(0).padStart(3, '0');
+                const displayAlt = pos.y.toFixed(1).padStart(6, '0');
+                speedUI.innerText = `${displayVel}.00 v/s`;
+                altUI.innerText = `${displayAlt} m`;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start Loop
+        animate();
+    </script>
+</body>
+</html>

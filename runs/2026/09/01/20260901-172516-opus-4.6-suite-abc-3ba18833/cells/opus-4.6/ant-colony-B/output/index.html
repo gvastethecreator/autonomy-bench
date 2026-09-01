@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ant Colony Simulation</title>
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        background-color: #2c3e50;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        color: white;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    canvas {
+        background-color: #ecf0f1;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        border-radius: 8px;
+    }
+    #ui {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        background: rgba(0,0,0,0.7);
+        padding: 15px 25px;
+        border-radius: 8px;
+        pointer-events: none;
+    }
+    h2 {
+        margin: 0 0 10px 0;
+        font-size: 1.2rem;
+    }
+    p {
+        margin: 0;
+        font-size: 1rem;
+    }
+    #score {
+        font-weight: bold;
+        color: #f1c40f;
+    }
+</style>
+</head>
+<body>
+    <div id="ui">
+        <h2>Ant Colony</h2>
+        <p>Food Collected: <span id="score">0</span></p>
+    </div>
+    <canvas id="simCanvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+
+const width = canvas.width;
+const height = canvas.height;
+
+let foodCollected = 0;
+
+// Config
+const numAnts = 200;
+const antSpeed = 1.5;
+const nestRadius = 30;
+const nest = { x: width / 2, y: height / 2 };
+
+// Pheromones grid
+const cols = 80;
+const rows = 60;
+const cellW = width / cols;
+const cellH = height / rows;
+
+let homePheromones = new Float32Array(cols * rows);
+let foodPheromones = new Float32Array(cols * rows);
+
+let foods = [];
+function spawnFood() {
+    for (let i = 0; i < 4; i++) {
+        foods.push({
+            x: Math.random() * (width - 100) + 50,
+            y: Math.random() * (height - 100) + 50,
+            radius: 20,
+            amount: 1000
+        });
+    }
+}
+spawnFood();
+
+class Ant {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.angle = Math.random() * Math.PI * 2;
+        this.hasFood = false;
+        this.wanderAngle = 0;
+    }
+
+    update() {
+        // Drop pheromone
+        const col = Math.floor(this.x / cellW);
+        const row = Math.floor(this.y / cellH);
+        if (col >= 0 && col < cols && row >= 0 && row < rows) {
+            const idx = row * cols + col;
+            if (this.hasFood) {
+                foodPheromones[idx] = Math.min(foodPheromones[idx] + 0.15, 1);
+            } else {
+                homePheromones[idx] = Math.min(homePheromones[idx] + 0.15, 1);
+            }
+        }
+
+        // Sense environment
+        let steerAngle = this.angle;
+        
+        if (this.hasFood) {
+            // Head home directly if close enough, else follow home pheromones
+            const dx = nest.x - this.x;
+            const dy = nest.y - this.y;
+            const distSq = dx*dx + dy*dy;
+            if (distSq < 15000) {
+                steerAngle = Math.atan2(dy, dx);
+            } else {
+                steerAngle = this.sense(homePheromones);
+            }
+        } else {
+            // Check for food
+            let foundFood = false;
+            for (let f of foods) {
+                if (f.amount <= 0) continue;
+                const dx = f.x - this.x;
+                const dy = f.y - this.y;
+                if (dx*dx + dy*dy < f.radius * f.radius) {
+                    this.hasFood = true;
+                    f.amount--;
+                    this.angle += Math.PI; // Turn around
+                    foundFood = true;
+                    break;
+                } else if (dx*dx + dy*dy < 15000) {
+                    steerAngle = Math.atan2(dy, dx);
+                    foundFood = true;
+                }
+            }
+            if (!foundFood) {
+                steerAngle = this.sense(foodPheromones);
+            }
+        }
+
+        // Add some wandering
+        this.wanderAngle += (Math.random() - 0.5) * 0.5;
+        this.angle += (steerAngle - this.angle) * 0.15 + this.wanderAngle * 0.2;
+
+        // Move
+        this.x += Math.cos(this.angle) * antSpeed;
+        this.y += Math.sin(this.angle) * antSpeed;
+
+        // Bounce off walls
+        if (this.x < 0 || this.x > width) {
+            this.angle = Math.PI - this.angle;
+            this.x = Math.max(0, Math.min(width, this.x));
+        }
+        if (this.y < 0 || this.y > height) {
+            this.angle = -this.angle;
+            this.y = Math.max(0, Math.min(height, this.y));
+        }
+
+        // Drop food at home
+        if (this.hasFood) {
+            const dx = nest.x - this.x;
+            const dy = nest.y - this.y;
+            if (dx*dx + dy*dy < nestRadius * nestRadius) {
+                this.hasFood = false;
+                this.angle += Math.PI; // Turn around
+                foodCollected++;
+                scoreEl.innerText = foodCollected;
+            }
+        }
+    }
+
+    sense(pheromoneMap) {
+        const senseDist = 25;
+        const senseAngle = Math.PI / 4;
+        
+        const getPheromone = (ang) => {
+            const sx = this.x + Math.cos(ang) * senseDist;
+            const sy = this.y + Math.sin(ang) * senseDist;
+            const col = Math.floor(sx / cellW);
+            const row = Math.floor(sy / cellH);
+            if (col >= 0 && col < cols && row >= 0 && row < rows) {
+                return pheromoneMap[row * cols + col];
+            }
+            return 0;
+        };
+
+        const left = getPheromone(this.angle - senseAngle);
+        const center = getPheromone(this.angle);
+        const right = getPheromone(this.angle + senseAngle);
+
+        if (center > left && center > right) {
+            return this.angle;
+        } else if (left > right) {
+            return this.angle - senseAngle;
+        } else if (right > left) {
+            return this.angle + senseAngle;
+        }
+        return this.angle;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        
+        // Draw ant body
+        ctx.fillStyle = '#2c3e50';
+        ctx.beginPath();
+        ctx.arc(-2, 0, 2, 0, Math.PI * 2);
+        ctx.arc(2, 0, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw food payload if any
+        if (this.hasFood) {
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(4, 0, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    }
+}
+
+let ants = [];
+for (let i = 0; i < numAnts; i++) {
+    ants.push(new Ant(nest.x, nest.y));
+}
+
+function loop() {
+    // Fade pheromones
+    for (let i = 0; i < homePheromones.length; i++) {
+        homePheromones[i] *= 0.995;
+        foodPheromones[i] *= 0.995;
+    }
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Optional: Draw Pheromones
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            let idx = r * cols + c;
+            if (foodPheromones[idx] > 0.05) {
+                ctx.fillStyle = `rgba(46, 204, 113, ${foodPheromones[idx] * 0.3})`;
+                ctx.fillRect(c * cellW, r * cellH, cellW, cellH);
+            }
+        }
+    }
+
+    // Draw Nest
+    ctx.fillStyle = '#8e44ad';
+    ctx.beginPath();
+    ctx.arc(nest.x, nest.y, nestRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Draw Food
+    ctx.fillStyle = '#f1c40f';
+    for (let i = foods.length - 1; i >= 0; i--) {
+        let f = foods[i];
+        if (f.amount > 0) {
+            ctx.beginPath();
+            ctx.arc(f.x, f.y, Math.max(5, f.radius * Math.sqrt(f.amount / 1000)), 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            foods.splice(i, 1);
+        }
+    }
+    
+    if (foods.length === 0) {
+        spawnFood();
+    }
+
+    for (let ant of ants) {
+        ant.update();
+        ant.draw();
+    }
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>

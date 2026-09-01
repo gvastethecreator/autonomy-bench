@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ant Colony Simulation</title>
+<style>
+    body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
+    canvas { display: block; }
+    #ui { position: absolute; top: 10px; left: 10px; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; font-family: sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+    h3 { margin-top: 0; margin-bottom: 10px; }
+    p { margin: 5px 0; }
+</style>
+</head>
+<body>
+<div id="ui">
+    <h3>Ant Colony Simulation</h3>
+    <p>Food Collected: <span id="score" style="font-weight: bold; color: green;">0</span></p>
+    <p style="font-size: 0.9em; color: #555;">Click anywhere to add food</p>
+</div>
+<canvas id="simCanvas"></canvas>
+<script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElement = document.getElementById('score');
+
+    let width, height;
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Ensure colony stays near middle on resize if possible, or just start it there
+        if (!colony.x) {
+            colony.x = width / 2;
+            colony.y = height / 2;
+        }
+    }
+
+    const colony = { x: 0, y: 0 };
+    
+    window.addEventListener('resize', resize);
+    resize(); // sets initial colony pos
+
+    const config = {
+        antCount: 200,
+        antSpeed: 2,
+        wiggle: 0.3,
+        pheromoneEvaporation: 0.99, // 1% loss per frame
+        pheromoneRadius: 25,
+        foodRadius: 15,
+        colonyRadius: 30,
+        sensorAngle: Math.PI / 4,
+    };
+
+    let score = 0;
+
+    let foods = [];
+    
+    // Add initial food clusters
+    foods.push({ x: width * 0.8, y: height * 0.2, amount: 1000 });
+    foods.push({ x: width * 0.2, y: height * 0.8, amount: 1000 });
+
+    canvas.addEventListener('click', (e) => {
+        foods.push({ x: e.clientX, y: e.clientY, amount: 500 });
+    });
+
+    const ants = [];
+    for (let i = 0; i < config.antCount; i++) {
+        ants.push({
+            x: colony.x,
+            y: colony.y,
+            angle: Math.random() * Math.PI * 2,
+            hasFood: false
+        });
+    }
+
+    const pheromones = []; // Array of {x, y, type: 'food'/'home', strength: 1.0}
+
+    function update() {
+        ctx.clearRect(0, 0, width, height);
+        
+        // Evaporate and draw pheromones
+        for (let i = pheromones.length - 1; i >= 0; i--) {
+            let p = pheromones[i];
+            p.strength *= config.pheromoneEvaporation;
+            if (p.strength < 0.05) {
+                pheromones.splice(i, 1);
+                continue;
+            }
+            
+            // Draw pheromone
+            ctx.fillStyle = p.type === 'food' 
+                ? `rgba(255, 0, 0, ${p.strength * 0.4})` 
+                : `rgba(0, 0, 255, ${p.strength * 0.1})`; // Home pheromones are less visible
+            ctx.fillRect(p.x, p.y, 3, 3);
+        }
+
+        // Draw foods
+        for (let i = foods.length - 1; i >= 0; i--) {
+            const f = foods[i];
+            ctx.fillStyle = '#4CAF50';
+            ctx.beginPath();
+            const radius = Math.max(5, config.foodRadius * (f.amount / 500 + 0.2));
+            ctx.arc(f.x, f.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            if (f.amount <= 0) foods.splice(i, 1);
+        }
+
+        // Draw colony
+        ctx.fillStyle = '#8D6E63';
+        ctx.beginPath();
+        ctx.arc(colony.x, colony.y, config.colonyRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Update and draw ants
+        for (let i = 0; i < ants.length; i++) {
+            const ant = ants[i];
+
+            // Pheromone dropping
+            if (Math.random() < 0.2) { // 20% chance per frame to drop pheromone
+                pheromones.push({
+                    x: ant.x,
+                    y: ant.y,
+                    type: ant.hasFood ? 'food' : 'home',
+                    strength: 1.0
+                });
+            }
+
+            // Sensing
+            let targetAngle = ant.angle;
+            let maxPheromone = 0;
+            const targetType = ant.hasFood ? 'home' : 'food';
+
+            // Find best pheromone in front
+            for (const p of pheromones) {
+                if (p.type === targetType) {
+                    const d = Math.hypot(p.x - ant.x, p.y - ant.y);
+                    if (d < config.pheromoneRadius) {
+                        const angleToPheromone = Math.atan2(p.y - ant.y, p.x - ant.x);
+                        let angleDiff = angleToPheromone - ant.angle;
+                        
+                        // Normalize angle diff to [-PI, PI]
+                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                        if (Math.abs(angleDiff) < config.sensorAngle) {
+                            if (p.strength > maxPheromone) {
+                                maxPheromone = p.strength;
+                                targetAngle = ant.angle + angleDiff * 0.5; // Steer towards
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add random wiggle
+            ant.angle = targetAngle + (Math.random() - 0.5) * config.wiggle;
+            
+            // Goal oriented logic
+            if (ant.hasFood) {
+                const dToHome = Math.hypot(colony.x - ant.x, colony.y - ant.y);
+                
+                // Strong pull to home when nearby
+                if (dToHome < 150) {
+                     const angleToHome = Math.atan2(colony.y - ant.y, colony.x - ant.x);
+                     let diff = angleToHome - ant.angle;
+                     while (diff > Math.PI) diff -= Math.PI * 2;
+                     while (diff < -Math.PI) diff += Math.PI * 2;
+                     ant.angle += diff * 0.1;
+                }
+
+                if (dToHome < config.colonyRadius) {
+                    ant.hasFood = false;
+                    ant.angle += Math.PI; // Turn around
+                    score++;
+                    scoreElement.innerText = score;
+                }
+            } else {
+                for (const f of foods) {
+                    const radius = Math.max(5, config.foodRadius * (f.amount / 500 + 0.2));
+                    const dToFood = Math.hypot(f.x - ant.x, f.y - ant.y);
+                    
+                    if (dToFood < radius * 2) {
+                        // Strong pull to food when nearby
+                        const angleToFood = Math.atan2(f.y - ant.y, f.x - ant.x);
+                        let diff = angleToFood - ant.angle;
+                        while (diff > Math.PI) diff -= Math.PI * 2;
+                        while (diff < -Math.PI) diff += Math.PI * 2;
+                        ant.angle += diff * 0.2;
+                    }
+
+                    if (dToFood < radius) {
+                        ant.hasFood = true;
+                        ant.angle += Math.PI; // Turn around
+                        f.amount--;
+                        break;
+                    }
+                }
+            }
+
+            // Move
+            ant.x += Math.cos(ant.angle) * config.antSpeed;
+            ant.y += Math.sin(ant.angle) * config.antSpeed;
+
+            // Bounds checking
+            if (ant.x < 0 || ant.x > width || ant.y < 0 || ant.y > height) {
+                ant.angle += Math.PI; // bounce
+                ant.x = Math.max(0, Math.min(width, ant.x));
+                ant.y = Math.max(0, Math.min(height, ant.y));
+            }
+
+            // Draw ant
+            ctx.save();
+            ctx.translate(ant.x, ant.y);
+            ctx.rotate(ant.angle);
+            ctx.fillStyle = ant.hasFood ? '#FF9800' : '#212121';
+            // Draw ant body
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 4, 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Draw carried food
+            if (ant.hasFood) {
+                ctx.fillStyle = '#4CAF50';
+                ctx.beginPath();
+                ctx.arc(4, 0, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        requestAnimationFrame(update);
+    }
+
+    update();
+</script>
+</body>
+</html>
