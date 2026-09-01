@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Formica — Ant Colony</title>
+<style>
+  :root {
+    --bg-deep: #0c0a08;
+    --bg-panel: rgba(18, 14, 10, 0.82);
+    --bg-panel-solid: #16110d;
+    --border: rgba(232, 196, 140, 0.14);
+    --border-strong: rgba(232, 196, 140, 0.28);
+    --text: #f3e6d0;
+    --text-dim: #a89072;
+    --text-mute: #6e5a45;
+    --accent: #e8a045;
+    --accent-soft: rgba(232, 160, 69, 0.18);
+    --food: #7ecf8a;
+    --food-dim: rgba(126, 207, 138, 0.25);
+    --danger: #d46a5a;
+    --nest: #c9a06a;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+    --radius: 16px;
+    --font: "Segoe UI", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 35%, #1a140e 0%, transparent 55%),
+      radial-gradient(ellipse 50% 40% at 80% 80%, #12100c 0%, transparent 45%),
+      linear-gradient(165deg, #0e0b08 0%, #080705 100%);
+  }
+
+  .stage {
+    position: relative;
+    width: min(1120px, calc(100vw - 28px));
+    height: min(720px, calc(100vh - 28px));
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow:
+      var(--shadow),
+      0 0 0 1px rgba(232, 196, 140, 0.08),
+      inset 0 1px 0 rgba(255, 240, 210, 0.06);
+    background: #1a1510;
+    animation: stage-in 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes stage-in {
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+
+  canvas#world {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    background: #1a1510;
+  }
+
+  .chrome {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .chrome > * { pointer-events: auto; }
+
+  .topbar {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    pointer-events: none;
+  }
+
+  .topbar > * { pointer-events: auto; }
+
+  .brand {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 16px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    max-width: 280px;
+  }
+
+  .brand h1 {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .brand h1 .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.85); }
+  }
+
+  .brand p {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-dim);
+  }
+
+  .stats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .stat {
+    min-width: 88px;
+    padding: 10px 12px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+  }
+
+  .stat .label {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-mute);
+    margin-bottom: 4px;
+  }
+
+  .stat .value {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat .value.food { color: var(--food); }
+  .stat .value.accent { color: var(--accent); }
+
+  .panel {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .controls {
+    flex: 1 1 420px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 14px;
+    padding: 14px 16px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px) saturate(1.15);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+  }
+
+  .control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .control label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .control label span.val {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(232, 196, 140, 0.15);
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #f0c078, #d4893a);
+    border: 2px solid #1a120c;
+    box-shadow: 0 0 0 1px rgba(232, 160, 69, 0.35), 0 2px 8px rgba(0,0,0,0.4);
+    cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #f0c078, #d4893a);
+    border: 2px solid #1a120c;
+    cursor: pointer;
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+  }
+
+  button {
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text);
+    background: rgba(232, 196, 140, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;
+    white-space: nowrap;
+  }
+
+  button:hover {
+    background: var(--accent-soft);
+    border-color: var(--border-strong);
+  }
+
+  button:active { transform: scale(0.97); }
+
+  button.primary {
+    background: linear-gradient(145deg, rgba(232,160,69,0.35), rgba(180,110,40,0.28));
+    border-color: rgba(232, 160, 69, 0.45);
+    box-shadow: 0 0 20px rgba(232, 160, 69, 0.12);
+  }
+
+  button.primary:hover {
+    background: linear-gradient(145deg, rgba(232,160,69,0.48), rgba(180,110,40,0.38));
+  }
+
+  button:focus-visible,
+  input[type="range"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 14px 20px;
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.45s ease, transform 0.45s ease;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+
+  .hint.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) translateY(0);
+  }
+
+  .hint strong { color: var(--accent); font-weight: 650; }
+
+  .toast {
+    position: absolute;
+    top: 92px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-8px);
+    padding: 8px 14px;
+    background: rgba(20, 16, 12, 0.9);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--text);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    background:
+      radial-gradient(ellipse 70% 65% at 50% 45%, transparent 40%, rgba(8, 6, 4, 0.55) 100%);
+    mix-blend-mode: multiply;
+  }
+
+  .frame {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    border-radius: 22px;
+    box-shadow: inset 0 0 0 1px rgba(255, 230, 190, 0.05);
+  }
+
+  @media (max-width: 720px) {
+    .stage {
+      width: calc(100vw - 12px);
+      height: calc(100vh - 12px);
+      border-radius: 14px;
+    }
+    .brand { max-width: 160px; padding: 10px 12px; }
+    .brand p { display: none; }
+    .stats { gap: 6px; }
+    .stat { min-width: 70px; padding: 8px 10px; }
+    .stat .value { font-size: 14px; }
+    .controls {
+      grid-template-columns: 1fr 1fr;
+      flex: 1 1 100%;
+    }
+    .actions { width: 100%; justify-content: stretch; }
+    .actions button { flex: 1; }
+    .panel { bottom: 10px; left: 10px; right: 10px; }
+    .topbar { top: 10px; left: 10px; right: 10px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage, .brand h1 .dot, .hint, .toast, button {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <canvas id="world" aria-label="Ant colony simulation"></canvas>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="frame" aria-hidden="true"></div>
+    <div class="chrome">
+      <div class="topbar">
+        <div class="brand">
+          <h1><span class="dot" aria-hidden="true"></span> Formica</h1>
+          <p>A living colony. Click the ground to drop food. Watch trails form and fade.</p>
+        </div>
+        <div class="stats" aria-live="polite">
+          <div class="stat">
+            <div class="label">Ants</div>
+            <div class="value" id="statAnts">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Carrying</div>
+            <div class="value food" id="statCarrying">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Stored</div>
+            <div class="value accent" id="statStored">0</div>
+          </div>
+          <div class="stat">
+            <div class="label">Food</div>
+            <div class="value" id="statFood">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint" id="hint">
+        <strong>Click</strong> to place food · trails strengthen with traffic
+      </div>
+      <div class="toast" id="toast" role="status"></div>
+
+      <div class="panel">
+        <div class="controls">
+          <div class="control">
+            <label for="speed">Speed <span class="val" id="speedVal">1.0×</span></label>
+            <input type="range" id="speed" min="0.25" max="3" step="0.25" value="1" />
+          </div>
+          <div class="control">
+            <label for="ants">Colony <span class="val" id="antsVal">120</span></label>
+            <input type="range" id="ants" min="20" max="280" step="10" value="120" />
+          </div>
+          <div class="control">
+            <label for="decay">Trail fade <span class="val" id="decayVal">med</span></label>
+            <input type="range" id="decay" min="0" max="2" step="1" value="1" />
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" class="primary" id="btnPause" aria-pressed="false">Pause</button>
+          <button type="button" id="btnScatter">Scatter food</button>
+          <button type="button" id="btnReset">Reset</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("world");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const stage = document.getElementById("stage");
+
+  const el = {
+    ants: document.getElementById("statAnts"),
+    carrying: document.getElementById("statCarrying"),
+    stored: document.getElementById("statStored"),
+    food: document.getElementById("statFood"),
+    speed: document.getElementById("speed"),
+    antsRange: document.getElementById("ants"),
+    decay: document.getElementById("decay"),
+    speedVal: document.getElementById("speedVal"),
+    antsVal: document.getElementById("antsVal"),
+    decayVal: document.getElementById("decayVal"),
+    btnPause: document.getElementById("btnPause"),
+    btnScatter: document.getElementById("btnScatter"),
+    btnReset: document.getElementById("btnReset"),
+    hint: document.getElementById("hint"),
+    toast: document.getElementById("toast"),
+  };
+
+  const DECAY_LABELS = ["slow", "med", "fast"];
+  const DECAY_RATES = [0.992, 0.985, 0.972];
+
+  const state = {
+    w: 0,
+    h: 0,
+    dpr: 1,
+    running: true,
+    speed: 1,
+    targetAntCount: 120,
+    decayIdx: 1,
+    stored: 0,
+    time: 0,
+    nest: { x: 0, y: 0, r: 38 },
+    ants: [],
+    foods: [],
+    particles: [],
+    motes: [],
+    homeTrail: null,
+    foodTrail: null,
+    trailW: 0,
+    trailH: 0,
+    cell: 4,
+    reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+    hintShown: false,
+    toastTimer: 0,
+    lastStat: 0,
+    ground: null,
+  };
+
+  const TAU = Math.PI * 2;
+  const rand = (a = 0, b = 1) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const dist2 = (ax, ay, bx, by) => {
+    const dx = ax - bx, dy = ay - by;
+    return dx * dx + dy * dy;
+  };
+
+  function resize() {
+    const rect = stage.getBoundingClientRect();
+    state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    state.w = Math.max(1, Math.floor(rect.width));
+    state.h = Math.max(1, Math.floor(rect.height));
+    canvas.width = Math.floor(state.w * state.dpr);
+    canvas.height = Math.floor(state.h * state.dpr);
+    canvas.style.width = state.w + "px";
+    canvas.style.height = state.h + "px";
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+
+    const nestWas = { ...state.nest };
+    state.nest.x = state.w * 0.5;
+    state.nest.y = state.h * 0.52;
+    state.nest.r = Math.max(32, Math.min(state.w, state.h) * 0.055);
+
+    initTrails();
+    bakeGround();
+
+    if (nestWas.x) {
+      const dx = state.nest.x - nestWas.x;
+      const dy = state.nest.y - nestWas.y;
+      for (const a of state.ants) {
+        a.x += dx;
+        a.y += dy;
+      }
+      for (const f of state.foods) {
+        f.x += dx;
+        f.y += dy;
+      }
+    }
+  }
+
+  function initTrails() {
+    state.trailW = Math.ceil(state.w / state.cell);
+    state.trailH = Math.ceil(state.h / state.cell);
+    const n = state.trailW * state.trailH;
+    state.homeTrail = new Float32Array(n);
+    state.foodTrail = new Float32Array(n);
+  }
+
+  function trailIndex(x, y) {
+    const cx = clamp(Math.floor(x / state.cell), 0, state.trailW - 1);
+    const cy = clamp(Math.floor(y / state.cell), 0, state.trailH - 1);
+    return cy * state.trailW + cx;
+  }
+
+  function deposit(trail, x, y, amount) {
+    const r = 1;
+    const cx = Math.floor(x / state.cell);
+    const cy = Math.floor(y / state.cell);
+    for (let oy = -r; oy <= r; oy++) {
+      for (let ox = -r; ox <= r; ox++) {
+        const tx = cx + ox;
+        const ty = cy + oy;
+        if (tx < 0 || ty < 0 || tx >= state.trailW || ty >= state.trailH) continue;
+        const w = 1 - (Math.abs(ox) + Math.abs(oy)) * 0.28;
+        const i = ty * state.trailW + tx;
+        trail[i] = Math.min(255, trail[i] + amount * w);
+      }
+    }
+  }
+
+  function sampleTrail(trail, x, y) {
+    const i = trailIndex(x, y);
+    return trail[i];
+  }
+
+  function sense(trail, x, y, angle, distance) {
+    const left = angle - 0.55;
+    const right = angle + 0.55;
+    const ahead = angle;
+    const lx = x + Math.cos(left) * distance;
+    const ly = y + Math.sin(left) * distance;
+    const rx = x + Math.cos(right) * distance;
+    const ry = y + Math.sin(right) * distance;
+    const ax = x + Math.cos(ahead) * distance;
+    const ay = y + Math.sin(ahead) * distance;
+    return {
+      left: sampleTrail(trail, lx, ly),
+      ahead: sampleTrail(trail, ax, ay),
+      right: sampleTrail(trail, rx, ry),
+    };
+  }
+
+  function bakeGround() {
+    const g = document.createElement("canvas");
+    g.width = canvas.width;
+    g.height = canvas.height;
+    const gctx = g.getContext("2d");
+    gctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+
+    const grd = gctx.createRadialGradient(
+      state.w * 0.5, state.h * 0.42, 20,
+      state.w * 0.5, state.h * 0.5, Math.max(state.w, state.h) * 0.72
+    );
+    grd.addColorStop(0, "#2a2218");
+    grd.addColorStop(0.45, "#1e1812");
+    grd.addColorStop(1, "#12100c");
+    gctx.fillStyle = grd;
+    gctx.fillRect(0, 0, state.w, state.h);
+
+    // Soil texture
+    const count = Math.floor((state.w * state.h) / 90);
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * state.w;
+      const y = Math.random() * state.h;
+      const s = Math.random();
+      const a = 0.015 + s * 0.045;
+      gctx.fillStyle = s > 0.55
+        ? `rgba(90, 70, 45, ${a})`
+        : `rgba(30, 24, 16, ${a * 1.4})`;
+      gctx.beginPath();
+      gctx.ellipse(x, y, 1 + s * 2.5, 0.6 + s * 1.4, Math.random() * TAU, 0, TAU);
+      gctx.fill();
+    }
+
+    // Soft leaf litter patches
+    for (let i = 0; i < 18; i++) {
+      const x = Math.random() * state.w;
+      const y = Math.random() * state.h;
+      const r = 18 + Math.random() * 40;
+      const leaf = gctx.createRadialGradient(x, y, 0, x, y, r);
+      leaf.addColorStop(0, `rgba(55, 70, 40, ${0.04 + Math.random() * 0.05})`);
+      leaf.addColorStop(1, "rgba(55, 70, 40, 0)");
+      gctx.fillStyle = leaf;
+      gctx.beginPath();
+      gctx.arc(x, y, r, 0, TAU);
+      gctx.fill();
+    }
+
+    // Subtle rings around nest area
+    gctx.strokeStyle = "rgba(180, 140, 90, 0.05)";
+    gctx.lineWidth = 1;
+    for (let i = 1; i <= 4; i++) {
+      gctx.beginPath();
+      gctx.arc(state.nest.x, state.nest.y, state.nest.r + i * 28, 0, TAU);
+      gctx.stroke();
+    }
+
+    state.ground = g;
+  }
+
+  function makeAnt(nearNest = true) {
+    const a = nearNest
+      ? rand(0, TAU)
+      : rand(0, TAU);
+    const r = nearNest ? rand(0, state.nest.r * 0.7) : rand(40, Math.min(state.w, state.h) * 0.4);
+    return {
+      x: state.nest.x + Math.cos(a) * r,
+      y: state.nest.y + Math.sin(a) * r,
+      angle: rand(0, TAU),
+      speed: rand(0.85, 1.25),
+      carrying: false,
+      wobble: rand(0, TAU),
+      life: rand(0, 100),
+      size: rand(0.85, 1.15),
+      turnCooldown: 0,
+    };
+  }
+
+  function spawnFood(x, y, amount = null) {
+    const a = amount ?? rand(28, 55);
+    state.foods.push({
+      x, y,
+      amount: a,
+      max: a,
+      pulse: rand(0, TAU),
+      birth: state.time,
+    });
+  }
+
+  function scatterFood(n = 4) {
+    const margin = 70;
+    for (let i = 0; i < n; i++) {
+      let x, y, tries = 0;
+      do {
+        x = rand(margin, state.w - margin);
+        y = rand(margin, state.h - margin);
+        tries++;
+      } while (dist2(x, y, state.nest.x, state.nest.y) < (state.nest.r + 90) ** 2 && tries < 40);
+      spawnFood(x, y, rand(35, 70));
+    }
+    showToast("Food scattered across the clearing");
+  }
+
+  function burst(x, y, color, n = 10) {
+    for (let i = 0; i < n; i++) {
+      const ang = rand(0, TAU);
+      const sp = rand(0.4, 2.2);
+      state.particles.push({
+        x, y,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp,
+        life: 1,
+        decay: rand(0.012, 0.028),
+        size: rand(1.2, 3.2),
+        color,
+      });
+    }
+  }
+
+  function initMotes() {
+    state.motes = [];
+    const n = state.reducedMotion ? 12 : 36;
+    for (let i = 0; i < n; i++) {
+      state.motes.push({
+        x: rand(0, state.w),
+        y: rand(0, state.h),
+        r: rand(0.6, 1.8),
+        sp: rand(0.08, 0.28),
+        phase: rand(0, TAU),
+        a: rand(0.08, 0.22),
+      });
+    }
+  }
+
+  function resetWorld() {
+    state.ants = [];
+    state.foods = [];
+    state.particles = [];
+    state.stored = 0;
+    state.time = 0;
+    if (state.homeTrail) state.homeTrail.fill(0);
+    if (state.foodTrail) state.foodTrail.fill(0);
+    for (let i = 0; i < state.targetAntCount; i++) state.ants.push(makeAnt(true));
+    scatterFood(5);
+    initMotes();
+    showToast("Colony reborn");
+  }
+
+  function syncAntCount() {
+    while (state.ants.length < state.targetAntCount) state.ants.push(makeAnt(true));
+    while (state.ants.length > state.targetAntCount) state.ants.pop();
+  }
+
+  function nearestFood(x, y, maxDist) {
+    let best = null;
+    let bestD = maxDist * maxDist;
+    for (const f of state.foods) {
+      if (f.amount <= 0) continue;
+      const d = dist2(x, y, f.x, f.y);
+      if (d < bestD) {
+        bestD = d;
+        best = f;
+      }
+    }
+    return best;
+  }
+
+  function updateAnt(ant, dt) {
+    ant.life += dt;
+    ant.wobble += dt * 3.2;
+    ant.turnCooldown = Math.max(0, ant.turnCooldown - dt);
+
+    const nestDist = Math.hypot(ant.x - state.nest.x, ant.y - state.nest.y);
+
+    if (ant.carrying) {
+      if (nestDist < state.nest.r * 0.75) {
+        ant.carrying = false;
+        state.stored += 1;
+        burst(ant.x, ant.y, "rgba(232,160,69,0.9)", 6);
+        ant.angle += Math.PI + rand(-0.4, 0.4);
+      } else {
+        deposit(state.homeTrail, ant.x, ant.y, 6.5 * dt);
+        const senseHome = sense(state.homeTrail, ant.x, ant.y, ant.angle, 16);
+        steerBySense(ant, senseHome, true);
+        // Bias toward nest
+        const toNest = Math.atan2(state.nest.y - ant.y, state.nest.x - ant.x);
+        ant.angle = lerpAngle(ant.angle, toNest, 0.04 * dt);
+      }
+    } else {
+      deposit(state.foodTrail, ant.x, ant.y, 3.2 * dt);
+
+      const food = nearestFood(ant.x, ant.y, 18);
+      if (food) {
+        food.amount -= 0.55 * dt;
+        if (food.amount <= 0) {
+          burst(food.x, food.y, "rgba(126,207,138,0.85)", 14);
+        }
+        ant.carrying = true;
+        ant.angle += Math.PI + rand(-0.3, 0.3);
+        burst(ant.x, ant.y, "rgba(126,207,138,0.7)", 4);
+      } else {
+        const senseFood = sense(state.foodTrail, ant.x, ant.y, ant.angle, 18);
+        // Prefer food trail when looking for food — invert: follow home? No:
+        // Outbound ants follow food pheromone left by returning ants (home trail of carriers... )
+        // Classic: seeking ants follow "to food" trail deposited by carriers on way home.
+        // Carriers deposit home-bound trail; seekers deposit food-seeking trail.
+        // Seekers should follow homeTrail? Wait - carriers deposit on way home = "food this way" for seekers.
+        // So seekers follow homeTrail (left by returning laden ants).
+        const senseToFood = sense(state.homeTrail, ant.x, ant.y, ant.angle, 18);
+        const combined = {
+          left: senseToFood.left * 1.4 + senseFood.left * 0.3,
+          ahead: senseToFood.ahead * 1.4 + senseFood.ahead * 0.3,
+          right: senseToFood.right * 1.4 + senseFood.right * 0.3,
+        };
+        steerBySense(ant, combined, false);
+
+        // Occasional random explore
+        if (ant.turnCooldown <= 0 && Math.random() < 0.02 * dt) {
+          ant.angle += rand(-0.8, 0.8);
+          ant.turnCooldown = rand(8, 20);
+        }
+      }
+    }
+
+    // Wander noise
+    ant.angle += Math.sin(ant.wobble) * 0.035 * dt;
+
+    const spd = ant.speed * (ant.carrying ? 0.82 : 1) * 1.55 * dt;
+    ant.x += Math.cos(ant.angle) * spd;
+    ant.y += Math.sin(ant.angle) * spd;
+
+    // Soft walls
+    const m = 8;
+    if (ant.x < m) { ant.x = m; ant.angle = Math.PI - ant.angle + rand(-0.2, 0.2); }
+    if (ant.x > state.w - m) { ant.x = state.w - m; ant.angle = Math.PI - ant.angle + rand(-0.2, 0.2); }
+    if (ant.y < m) { ant.y = m; ant.angle = -ant.angle + rand(-0.2, 0.2); }
+    if (ant.y > state.h - m) { ant.y = state.h - m; ant.angle = -ant.angle + rand(-0.2, 0.2); }
+
+    // Avoid deep nest when seeking (push out gently)
+    if (!ant.carrying && nestDist < state.nest.r * 0.55) {
+      const out = Math.atan2(ant.y - state.nest.y, ant.x - state.nest.x);
+      ant.angle = lerpAngle(ant.angle, out, 0.15);
+    }
+  }
+
+  function steerBySense(ant, s, returning) {
+    const total = s.left + s.ahead + s.right;
+    if (total < 0.8) {
+      ant.angle += rand(-0.12, 0.12);
+      return;
+    }
+    if (s.ahead >= s.left && s.ahead >= s.right) {
+      ant.angle += rand(-0.05, 0.05);
+    } else if (s.left > s.right) {
+      ant.angle -= 0.18 + (returning ? 0.06 : 0);
+    } else {
+      ant.angle += 0.18 + (returning ? 0.06 : 0);
+    }
+  }
+
+  function lerpAngle(a, b, t) {
+    let diff = ((b - a + Math.PI) % TAU) - Math.PI;
+    if (diff < -Math.PI) diff += TAU;
+    return a + diff * t;
+  }
+
+  function decayTrails() {
+    const rate = DECAY_RATES[state.decayIdx];
+    const home = state.homeTrail;
+    const food = state.foodTrail;
+    for (let i = 0; i < home.length; i++) {
+      home[i] *= rate;
+      food[i] *= rate;
+      if (home[i] < 0.02) home[i] = 0;
+      if (food[i] < 0.02) food[i] = 0;
+    }
+  }
+
+  function updateParticles(dt) {
+    for (let i = state.particles.length - 1; i >= 0; i--) {
+      const p = state.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx *= 0.96;
+      p.vy *= 0.96;
+      p.life -= p.decay * dt;
+      if (p.life <= 0) state.particles.splice(i, 1);
+    }
+  }
+
+  function updateMotes(dt) {
+    for (const m of state.motes) {
+      m.phase += dt * 0.4;
+      m.x += Math.cos(m.phase) * m.sp * 0.4 * dt;
+      m.y += m.sp * dt * 0.55;
+      if (m.y > state.h + 4) { m.y = -4; m.x = rand(0, state.w); }
+      if (m.x < -4) m.x = state.w + 4;
+      if (m.x > state.w + 4) m.x = -4;
+    }
+  }
+
+  function maybeRespawnFood() {
+    state.foods = state.foods.filter(f => f.amount > 0.2);
+    if (state.foods.length < 2 && Math.random() < 0.008) {
+      const margin = 80;
+      let x, y, tries = 0;
+      do {
+        x = rand(margin, state.w - margin);
+        y = rand(margin, state.h - margin);
+        tries++;
+      } while (dist2(x, y, state.nest.x, state.nest.y) < (state.nest.r + 100) ** 2 && tries < 30);
+      spawnFood(x, y);
+      showToast("A new cache appears");
+    }
+  }
+
+  function drawTrails() {
+    const img = ctx.createImageData(state.trailW, state.trailH);
+    const data = img.data;
+    const home = state.homeTrail;
+    const food = state.foodTrail;
+    for (let i = 0; i < home.length; i++) {
+      const h = home[i];
+      const f = food[i];
+      if (h < 0.5 && f < 0.5) continue;
+      const o = i * 4;
+      // Food-direction (home deposits from carriers): warm amber
+      // Seeking deposits: cool green-brown
+      const hr = Math.min(255, h * 1.8);
+      const fr = Math.min(255, f * 1.2);
+      data[o] = Math.min(255, 40 + hr * 0.85 + fr * 0.15);
+      data[o + 1] = Math.min(255, 28 + hr * 0.45 + fr * 0.55);
+      data[o + 2] = Math.min(255, 12 + hr * 0.12 + fr * 0.2);
+      data[o + 3] = Math.min(160, hr * 0.55 + fr * 0.35);
+    }
+
+    const tmp = document.createElement("canvas");
+    tmp.width = state.trailW;
+    tmp.height = state.trailH;
+    tmp.getContext("2d").putImageData(img, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(tmp, 0, 0, state.w, state.h);
+    ctx.restore();
+  }
+
+  function drawNest() {
+    const { x, y, r } = state.nest;
+    const t = state.time;
+
+    // Soft glow
+    const glow = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 3.2);
+    glow.addColorStop(0, "rgba(232, 170, 90, 0.22)");
+    glow.addColorStop(0.35, "rgba(180, 120, 60, 0.08)");
+    glow.addColorStop(1, "rgba(180, 120, 60, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 3.2, 0, TAU);
+    ctx.fill();
+
+    // Mound rings
+    for (let i = 3; i >= 0; i--) {
+      const rr = r * (1.15 + i * 0.22);
+      const mound = ctx.createRadialGradient(x - rr * 0.15, y - rr * 0.2, rr * 0.1, x, y, rr);
+      mound.addColorStop(0, `rgba(${70 + i * 8}, ${52 + i * 5}, ${32 + i * 3}, ${0.55 - i * 0.08})`);
+      mound.addColorStop(1, `rgba(40, 30, 20, ${0.15 - i * 0.02})`);
+      ctx.fillStyle = mound;
+      ctx.beginPath();
+      ctx.ellipse(x, y + i * 1.5, rr, rr * 0.78, 0, 0, TAU);
+      ctx.fill();
+    }
+
+    // Entrance
+    const pulse = 0.85 + Math.sin(t * 1.5) * 0.08;
+    ctx.fillStyle = "#0a0806";
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, r * 0.42 * pulse, r * 0.28 * pulse, 0, 0, TAU);
+    ctx.fill();
+
+    const rim = ctx.createRadialGradient(x, y, r * 0.15, x, y, r * 0.55);
+    rim.addColorStop(0, "rgba(20,14,10,0)");
+    rim.addColorStop(0.7, "rgba(90,65,40,0.35)");
+    rim.addColorStop(1, "rgba(140,100,55,0.15)");
+    ctx.fillStyle = rim;
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, r * 0.55, r * 0.38, 0, 0, TAU);
+    ctx.fill();
+
+    // Tiny chamber lights
+    ctx.globalAlpha = 0.35 + Math.sin(t * 2) * 0.1;
+    ctx.fillStyle = "#e8a045";
+    ctx.beginPath();
+    ctx.arc(x - 2, y + 1, 1.5, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFoods() {
+    for (const f of state.foods) {
+      const t = f.amount / f.max;
+      const r = 6 + t * 12;
+      f.pulse += 0.04;
+      const breathe = 1 + Math.sin(f.pulse) * 0.06;
+
+      const age = Math.min(1, (state.time - f.birth) * 2);
+      ctx.globalAlpha = age;
+
+      const aura = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r * 2.8);
+      aura.addColorStop(0, `rgba(126, 207, 138, ${0.28 * t})`);
+      aura.addColorStop(1, "rgba(126, 207, 138, 0)");
+      ctx.fillStyle = aura;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, r * 2.8, 0, TAU);
+      ctx.fill();
+
+      // Berry / seed cluster
+      ctx.fillStyle = `rgba(${90 + t * 40}, ${150 + t * 50}, ${80 + t * 30}, 0.95)`;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, r * breathe * 0.55, 0, TAU);
+      ctx.fill();
+
+      for (let i = 0; i < 5; i++) {
+        const ang = (i / 5) * TAU + f.pulse * 0.2;
+        const pr = r * 0.42 * breathe;
+        ctx.fillStyle = i % 2 === 0 ? "#9fe0a4" : "#5a9e62";
+        ctx.beginPath();
+        ctx.arc(f.x + Math.cos(ang) * pr, f.y + Math.sin(ang) * pr, 2.2 + t, 0, TAU);
+        ctx.fill();
+      }
+
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawAnt(ant) {
+    const s = ant.size;
+    ctx.save();
+    ctx.translate(ant.x, ant.y);
+    ctx.rotate(ant.angle);
+
+    // Soft contact shadow
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(0, 1.2, 4.5 * s, 2 * s, 0, 0, TAU);
+    ctx.fill();
+
+    const body = ant.carrying ? "#3a2818" : "#2a1e14";
+    const highlight = ant.carrying ? "#6a4a2a" : "#4a3624";
+
+    // Abdomen
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.ellipse(-3.2 * s, 0, 2.6 * s, 1.7 * s, 0, 0, TAU);
+    ctx.fill();
+
+    // Thorax
+    ctx.fillStyle = highlight;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 1.7 * s, 1.35 * s, 0, 0, TAU);
+    ctx.fill();
+
+    // Head
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.ellipse(2.6 * s, 0, 1.55 * s, 1.25 * s, 0, 0, TAU);
+    ctx.fill();
+
+    // Antennae
+    ctx.strokeStyle = "rgba(60, 42, 28, 0.85)";
+    ctx.lineWidth = 0.7 * s;
+    ctx.lineCap = "round";
+    const wag = Math.sin(ant.wobble * 1.4) * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(3.2 * s, -0.4 * s);
+    ctx.quadraticCurveTo(5 * s, (-2.5 + wag) * s, 6.2 * s, (-1.8 + wag) * s);
+    ctx.moveTo(3.2 * s, 0.4 * s);
+    ctx.quadraticCurveTo(5 * s, (2.5 - wag) * s, 6.2 * s, (1.8 - wag) * s);
+    ctx.stroke();
+
+    // Legs suggestion
+    ctx.strokeStyle = "rgba(50, 36, 24, 0.55)";
+    ctx.lineWidth = 0.55 * s;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(-1.5 * s, 0);
+      ctx.lineTo(-2.5 * s, side * 2.8 * s);
+      ctx.moveTo(0.2 * s, 0);
+      ctx.lineTo(0.5 * s, side * 2.6 * s);
+      ctx.moveTo(1.6 * s, 0);
+      ctx.lineTo(2.2 * s, side * 2.2 * s);
+      ctx.stroke();
+    }
+
+    if (ant.carrying) {
+      ctx.fillStyle = "#8fd99a";
+      ctx.beginPath();
+      ctx.arc(-5.2 * s, 0, 1.6 * s, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = "rgba(200, 255, 210, 0.45)";
+      ctx.beginPath();
+      ctx.arc(-5.5 * s, -0.5 * s, 0.55 * s, 0, TAU);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of state.particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * p.life, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawMotes() {
+    for (const m of state.motes) {
+      ctx.globalAlpha = m.a * (0.7 + Math.sin(m.phase) * 0.3);
+      ctx.fillStyle = "#e8d4b0";
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawLightShafts() {
+    if (state.reducedMotion) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "soft-light";
+    const t = state.time * 0.15;
+    for (let i = 0; i < 3; i++) {
+      const x = state.w * (0.25 + i * 0.25) + Math.sin(t + i) * 20;
+      const grd = ctx.createLinearGradient(x, 0, x + 40, state.h);
+      grd.addColorStop(0, "rgba(255, 220, 160, 0.07)");
+      grd.addColorStop(0.5, "rgba(255, 200, 120, 0.03)");
+      grd.addColorStop(1, "rgba(255, 200, 120, 0)");
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.moveTo(x - 30, 0);
+      ctx.lineTo(x + 50, 0);
+      ctx.lineTo(x + 90, state.h);
+      ctx.lineTo(x - 70, state.h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function render() {
+    if (state.ground) {
+      ctx.drawImage(state.ground, 0, 0, state.w, state.h);
+    } else {
+      ctx.fillStyle = "#1a1510";
+      ctx.fillRect(0, 0, state.w, state.h);
+    }
+
+    drawTrails();
+    drawLightShafts();
+    drawNest();
+    drawFoods();
+
+    // Depth sort-ish: draw ants
+    for (const ant of state.ants) drawAnt(ant);
+
+    drawParticles();
+    drawMotes();
+  }
+
+  function updateStats() {
+    let carrying = 0;
+    for (const a of state.ants) if (a.carrying) carrying++;
+    el.ants.textContent = String(state.ants.length);
+    el.carrying.textContent = String(carrying);
+    el.stored.textContent = String(Math.floor(state.stored));
+    el.food.textContent = String(state.foods.length);
+  }
+
+  let last = performance.now();
+  let trailTick = 0;
+
+  function frame(now) {
+    const raw = Math.min(32, now - last) / 16.666;
+    last = now;
+    const dt = state.running ? raw * state.speed : 0;
+
+    if (dt > 0) {
+      state.time += dt * 0.016;
+      syncAntCount();
+      for (const ant of state.ants) updateAnt(ant, dt);
+      updateParticles(dt);
+      updateMotes(dt);
+      maybeRespawnFood();
+      trailTick += dt;
+      if (trailTick > 1) {
+        decayTrails();
+        trailTick = 0;
+      }
+    } else if (!state.running) {
+      updateMotes(raw * 0.3);
+    }
+
+    render();
+
+    if (now - state.lastStat > 120) {
+      updateStats();
+      state.lastStat = now;
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  function showToast(msg) {
+    el.toast.textContent = msg;
+    el.toast.classList.add("show");
+    clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => el.toast.classList.remove("show"), 2200);
+  }
+
+  function canvasPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * state.w,
+      y: ((e.clientY - rect.top) / rect.height) * state.h,
+    };
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    const { x, y } = canvasPos(e);
+    if (dist2(x, y, state.nest.x, state.nest.y) < (state.nest.r + 20) ** 2) {
+      showToast("The nest is sacred ground");
+      return;
+    }
+    spawnFood(x, y, rand(40, 65));
+    burst(x, y, "rgba(126,207,138,0.8)", 12);
+    showToast("Food placed");
+    if (!state.hintShown) {
+      el.hint.classList.remove("show");
+      state.hintShown = true;
+    }
+  });
+
+  el.speed.addEventListener("input", () => {
+    state.speed = parseFloat(el.speed.value);
+    el.speedVal.textContent = state.speed.toFixed(2).replace(/\.?0+$/, "") + "×";
+  });
+
+  el.antsRange.addEventListener("input", () => {
+    state.targetAntCount = parseInt(el.antsRange.value, 10);
+    el.antsVal.textContent = String(state.targetAntCount);
+  });
+
+  el.decay.addEventListener("input", () => {
+    state.decayIdx = parseInt(el.decay.value, 10);
+    el.decayVal.textContent = DECAY_LABELS[state.decayIdx];
+  });
+
+  el.btnPause.addEventListener("click", () => {
+    state.running = !state.running;
+    el.btnPause.textContent = state.running ? "Pause" : "Resume";
+    el.btnPause.setAttribute("aria-pressed", state.running ? "false" : "true");
+    showToast(state.running ? "Colony active" : "Time holds still");
+  });
+
+  el.btnScatter.addEventListener("click", () => scatterFood(4));
+  el.btnReset.addEventListener("click", () => resetWorld());
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      el.btnPause.click();
+    } else if (e.key === "r" || e.key === "R") {
+      resetWorld();
+    } else if (e.key === "f" || e.key === "F") {
+      scatterFood(4);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    resize();
+  });
+
+  // Boot
+  resize();
+  resetWorld();
+  el.hint.classList.add("show");
+  setTimeout(() => {
+    if (!state.hintShown) {
+      el.hint.classList.remove("show");
+      state.hintShown = true;
+    }
+  }, 4800);
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
+
