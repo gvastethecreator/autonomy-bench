@@ -1,8 +1,8 @@
 # Browser Autonomy Benchmark Suite
 
-Version `2.1.0` · live bench: Rollercoaster · frozen A/B/C prompt ladder
+Version `2.2.0` · live benches: Rollercoaster, Ant Colony, Fireworks · frozen A/B/C prompt ladder
 
-The live suite is Rollercoaster only so the public gallery can stay small. Thirty-one additional v2.0.0 benches are shelved with frozen prompts. Adding a bench later is the same path as before: put it in `suite.json`, publish takes, rebuild the viewer. The experiment picker stays in the viewer and unhides when more than one live experiment exists.
+The live suite is Rollercoaster plus two benches added in v2.2.0: Ant Colony and Fireworks. Thirty-one additional v2.0.0 benches are shelved with frozen prompts. Adding a bench is the same path as before: put it in `suite.json`, publish takes, rebuild the viewer. The gallery toolbar lists every live bench, including those without published takes.
 
 - **A — Raw:** minimum task statement.
 - **B — Autonomous:** A plus exactly 20 words granting explicit authority over unspecified decisions.
@@ -24,9 +24,11 @@ The suite is evaluated **showcase-first, interaction-optional**. That is an eval
 
 ## Raw prompts
 
-|   # | Benchmark                           | Category         | A — Raw prompt                                                                                     |
-| --: | ----------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------- |
-|   1 | **Rollercoaster** (`rollercoaster`) | `3d-interactive` | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. |
+|   # | Benchmark                           | Category             | A — Raw prompt                                                                                     |
+| --: | ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------- |
+|   1 | **Rollercoaster** (`rollercoaster`) | `3d-interactive`     | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. |
+|   2 | **Ant Colony** (`ant-colony`)       | `physics-simulation` | Create an ant colony simulation in a single HTML file.                                             |
+|   3 | **Fireworks** (`fireworks`)         | `minimal-creative`   | Create a fireworks display in a single HTML file.                                                  |
 
 ## Evaluation profile
 

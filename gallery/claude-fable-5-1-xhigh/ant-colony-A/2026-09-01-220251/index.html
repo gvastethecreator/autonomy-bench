@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ant Colony</title>
+<style>
+:root{color-scheme:dark;--ink:#efe6da;--muted:#a89a8b;--panel:rgba(20,15,11,.86);--line:rgba(255,255,255,.09);--accent:#ff8a5b;--home:#4f9cff;--food-trail:#ff6a40;--food:#8be06a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#2e251d;color:var(--ink);font:12.5px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+#world{position:fixed;inset:0;display:block;touch-action:none;cursor:crosshair}
+#panel{position:fixed;top:14px;left:14px;width:276px;max-height:calc(100vh - 28px);overflow:auto;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.4);user-select:none;-webkit-user-select:none}
+#panel header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 10px}
+#panel h1{margin:0;font-size:15px;font-weight:650;letter-spacing:.2px}
+#panel h1 small{display:block;font-size:11px;font-weight:400;color:var(--muted);margin-top:2px}
+#toggle{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1;padding:0}
+#toggle:hover{color:var(--ink);border-color:rgba(255,255,255,.2)}
+#panel.collapsed .body{display:none}
+.body{padding:0 14px 12px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;margin-bottom:10px}
+.stat{background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:6px 9px;min-width:0}
+.stat b{display:block;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.stat span{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.legend{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-bottom:4px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.section{margin-top:10px}
+.section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:6px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px}
+.seg button{background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 2px;cursor:pointer;font:inherit;font-size:12px}
+.seg button:hover{background:rgba(255,255,255,.09)}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:#1b110c;font-weight:600}
+.row{display:grid;grid-template-columns:78px 1fr 46px;align-items:center;gap:8px;margin:6px 0}
+.row label{color:var(--muted)}
+.row output{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}
+input[type=range]{width:100%;margin:0;accent-color:var(--accent);cursor:pointer}
+.check{display:flex;align-items:center;gap:6px;color:var(--muted);margin-top:8px;cursor:pointer}
+.check input{accent-color:var(--accent);margin:0}
+.buttons{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}
+.buttons button{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 8px;cursor:pointer;font:inherit}
+.buttons button:hover{background:rgba(255,255,255,.11)}
+.buttons button.primary{background:var(--accent);border-color:var(--accent);color:#1b110c;font-weight:600}
+.hint{color:var(--muted);font-size:11px;margin:10px 0 0;line-height:1.45}
+.fps{position:fixed;right:12px;bottom:10px;color:rgba(255,255,255,.4);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none}
+@media (max-width:560px){#panel{width:calc(100vw - 28px)}}
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+
+<div id="panel">
+  <header>
+    <h1>Ant Colony<small>Pheromone foraging simulation</small></h1>
+    <button id="toggle" title="Collapse panel" aria-label="Collapse panel">&minus;</button>
+  </header>
+  <div class="body">
+    <div class="stats">
+      <div class="stat"><b id="sAnts">0</b><span id="sAntsSub">ants</span></div>
+      <div class="stat"><b id="sFood">0</b><span>food stored</span></div>
+      <div class="stat"><b id="sLeft">0</b><span>food in the field</span></div>
+      <div class="stat"><b id="sTime">0:00</b><span>colony time</span></div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--home)"></i>home trail</span>
+      <span><i style="background:var(--food-trail)"></i>food trail</span>
+      <span><i style="background:var(--food)"></i>food</span>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Tool</div>
+      <div class="seg" id="tools">
+        <button data-tool="food" class="on" title="Click to drop food (F)">Food</button>
+        <button data-tool="wall" title="Drag to build walls (W)">Wall</button>
+        <button data-tool="erase" title="Drag to remove walls and food (E)">Erase</button>
+        <button data-tool="nest" title="Click to move the nest (N)">Nest</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Colony</div>
+      <div class="row"><label for="antsRange">Ants</label><input id="antsRange" type="range" min="10" max="3000" step="10" value="600"><output id="antsOut"></output></div>
+      <div class="row"><label for="speedRange">Speed</label><input id="speedRange" type="range" min="1" max="8" step="1" value="2"><output id="speedOut"></output></div>
+      <div class="row" title="How quickly trails fade. Food scent fades twice as fast as home scent."><label for="evapRange">Evaporation</label><input id="evapRange" type="range" min="1" max="100" step="1" value="20"><output id="evapOut"></output></div>
+      <div class="row"><label for="wanderRange">Wander</label><input id="wanderRange" type="range" min="5" max="80" step="1" value="30"><output id="wanderOut"></output></div>
+      <label class="check" title="New food appears somewhere in the field when supplies run low"><input type="checkbox" id="autoFood" checked> Food appears over time</label>
+    </div>
+
+    <div class="section">
+      <div class="section-title">View</div>
+      <div class="seg" id="trails">
+        <button data-trails="both" class="on">Both trails</button>
+        <button data-trails="home">Home</button>
+        <button data-trails="food">Food</button>
+        <button data-trails="off">Off</button>
+      </div>
+      <label class="check"><input type="checkbox" id="showAnts" checked> Show ants</label>
+    </div>
+
+    <div class="buttons">
+      <button id="pauseBtn" class="primary">Pause</button>
+      <button id="resetBtn">New world</button>
+      <button id="clearBtn">Clear trails</button>
+      <button id="scatterBtn">Scatter food</button>
+    </div>
+    <p class="hint">Click or drag on the ground to use the tool. Right-drag erases. Space pauses, C clears trails. Keys F, W, E and N switch tools.</p>
+  </div>
+</div>
+<div class="fps" id="fps"></div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Constants ----------
+const TAU = Math.PI * 2;
+const CELL = 4;                       // grid cell size in CSS px
+const MAX_ANTS = 3000;
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+
+const ANT_SPEED = 1.35;               // px per tick
+const TURN = 0.3;                     // rad per tick when steering to a sensor
+const SENSOR_DIST = 13, SENSOR_ANGLE = 0.62;
+const DEPOSIT = 0.02;                 // pheromone laid per tick at full freshness
+const FRESH_DECAY = Math.exp(-1 / 600); // freshness halves roughly every 7 s of travel, so trails slope towards their source
+const PH_CAP = 3;                     // ceiling on a cell's pheromone: about one busy trail, so merges and crowds cannot form hotspots
+const DIFFUSE_EVERY = 3, DIFF = 0.14;
+const GIVE_UP = 2400;                 // typical ticks before a forager heads home empty (varies per ant)
+const TRAIL_PATIENCE = 900;           // ticks a forager will follow food scent without reward before ignoring it
+const FOOD_EVAP = 2;                  // food scent fades this many times faster than home scent
+const NEST_R = 14, NEST_SIGHT = 60;
+const EDGE = 30, EDGE_TURN = 0.15;    // soft push away from the world border
+const HOME_TURN = 0.06;               // how firmly a trail-less ant steers by its memory of home
+const HOME_PULL = 0.025;              // gentle bias towards home while following a trail
+const AWAY = 1.9;                     // a trail leading more than this (rad) away from home is not trusted
+const MIN_SIGNAL = 0.03;              // sensor sums below this count as no trail at all
+const FOOD_SIGHT = 4;                 // cells scanned around a forager for food
+const FOOD_MAX = 15;                  // units a single cell can hold
+
+// Ant states
+const SEARCH = 0, CARRY = 1, HOMING = 2;
+
+// ---------- Tunables bound to the panel ----------
+const P = { ants: 600, speed: 2, evap: 0.002, wander: 0.3, trails: 'both', showAnts: true, autoFood: true };
+
+// ---------- World ----------
+let W = 0, H = 0, gw = 0, gh = 0;
+let homePh = null, foodPh = null, tmpPh = null, walls = null, food = null;
+let foodTotal = 0, delivered = 0, ticks = 0, paused = false, wallsDirty = true, nestPulse = 0, ready = false;
+const nest = { x: 0, y: 0 };
+
+// Ants as a structure of arrays
+const ax = new Float32Array(MAX_ANTS), ay = new Float32Array(MAX_ANTS), aa = new Float32Array(MAX_ANTS),
+      at = new Float32Array(MAX_ANTS), asp = new Float32Array(MAX_ANTS);
+const aox = new Float32Array(MAX_ANTS), aoy = new Float32Array(MAX_ANTS);   // where the ant last left the nest
+const agu = new Float32Array(MAX_ANTS);                                      // this ant's patience before giving up
+const afr = new Float32Array(MAX_ANTS);                                      // freshness of what it lays (1 at the source, decaying)
+const aft = new Float32Array(MAX_ANTS);                                      // ticks spent following food scent without finding any
+const ast = new Uint8Array(MAX_ANTS), abias = new Int8Array(MAX_ANTS);
+let antCount = 0;
+
+const $ = id => document.getElementById(id);
+const canvas = $('world');
+const ctx = canvas.getContext('2d');
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+// ---------- Ant sprite sheet ----------
+const NF = 64, SPR = 14, SPX = Math.round(SPR * DPR);
+const sprite = document.createElement('canvas');
+sprite.width = NF * SPX; sprite.height = 2 * SPX;
+{
+  const c = sprite.getContext('2d');
+  for (let row = 0; row < 2; row++) for (let k = 0; k < NF; k++) {
+    c.save();
+    c.translate(k * SPX + SPX / 2, row * SPX + SPX / 2);
+    c.scale(SPX / SPR, SPX / SPR);
+    c.rotate(k * TAU / NF);
+    drawAnt(c, row === 1);
+    c.restore();
+  }
+}
+function ell(c, x, y, rx, ry) { c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, TAU); c.fill(); }
+function drawAnt(c, carrying) {
+  c.lineCap = 'round';
+  c.strokeStyle = 'rgba(28,22,17,0.92)'; c.lineWidth = 0.55;
+  c.beginPath();
+  const legs = [[1.1, 0.7, 2.7, 2.3], [0.3, 0.8, 0.4, 2.9], [-0.6, 0.8, -2.3, 2.5]];
+  for (const [x0, y0, x1, y1] of legs) { c.moveTo(x0, y0); c.lineTo(x1, y1); c.moveTo(x0, -y0); c.lineTo(x1, -y1); }
+  c.moveTo(3.3, 0.4); c.lineTo(4.7, 1.6); c.moveTo(3.3, -0.4); c.lineTo(4.7, -1.6);
+  c.stroke();
+  c.fillStyle = '#15100c';
+  ell(c, -2.4, 0, 2.2, 1.35); ell(c, 0.2, 0, 1.3, 0.95); ell(c, 2.5, 0, 1.15, 0.95);
+  c.strokeStyle = 'rgba(255,230,200,0.35)'; c.lineWidth = 0.4;
+  c.beginPath(); c.ellipse(-2.4, 0, 2.2, 1.35, 0, 0, TAU); c.stroke();
+  c.fillStyle = 'rgba(255,225,190,0.16)'; ell(c, -2.7, -0.45, 1.1, 0.45);
+  if (carrying) {
+    c.fillStyle = '#8be06a'; ell(c, 3.9, 0, 1.4, 1.4);
+    c.fillStyle = 'rgba(255,255,255,0.35)'; ell(c, 3.5, -0.5, 0.5, 0.5);
+  }
+}
+
+// ---------- Offscreen layers ----------
+let bgCanvas, wallCanvas, phCanvas, phCtx, phImg, phData;
+function makeCanvas(w, h, hidpi) {
+  const c = document.createElement('canvas');
+  const s = hidpi ? DPR : 1;
+  c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+  const x = c.getContext('2d'); if (hidpi) x.scale(s, s);
+  return c;
+}
+
+function resize() {
+  const nw = Math.max(320, Math.round(window.innerWidth)), nh = Math.max(240, Math.round(window.innerHeight));
+  const ngw = Math.ceil(nw / CELL), ngh = Math.ceil(nh / CELL);
+  canvas.width = Math.round(nw * DPR); canvas.height = Math.round(nh * DPR);
+  canvas.style.width = nw + 'px'; canvas.style.height = nh + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (ngw !== gw || ngh !== gh) {
+    const n = ngw * ngh;
+    const nHome = new Float32Array(n), nFood = new Float32Array(n), nWalls = new Uint8Array(n), nFd = new Uint8Array(n);
+    if (homePh) {
+      const cw = Math.min(gw, ngw), ch = Math.min(gh, ngh);
+      for (let y = 0; y < ch; y++) {
+        const o = y * gw, q = y * ngw;
+        nHome.set(homePh.subarray(o, o + cw), q); nFood.set(foodPh.subarray(o, o + cw), q);
+        nWalls.set(walls.subarray(o, o + cw), q); nFd.set(food.subarray(o, o + cw), q);
+      }
+    }
+    homePh = nHome; foodPh = nFood; tmpPh = new Float32Array(n); walls = nWalls; food = nFd;
+    gw = ngw; gh = ngh;
+    foodTotal = 0; for (let i = 0; i < n; i++) foodTotal += food[i];
+    phCanvas = makeCanvas(gw, gh, false); phCtx = phCanvas.getContext('2d');
+    phImg = phCtx.createImageData(gw, gh); phData = phImg.data;
+  }
+  W = nw; H = nh;
+  bgCanvas = makeCanvas(W, H, true); drawBackground(bgCanvas.getContext('2d'));
+  wallCanvas = makeCanvas(W, H, true); wallsDirty = true;
+  if (ready) {
+    nest.x = clamp(nest.x, NEST_R + 10, W - NEST_R - 10); nest.y = clamp(nest.y, NEST_R + 10, H - NEST_R - 10);
+    for (let i = 0; i < antCount; i++) if (blocked(ax[i], ay[i])) spawnAnt(i);
+  }
+}
+
+function drawBackground(c) {
+  c.fillStyle = '#2e251d'; c.fillRect(0, 0, W, H);
+  const n = Math.floor(W * H / 90);
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * W, y = Math.random() * H, s = Math.random() < 0.8 ? 1 : 2;
+    c.fillStyle = Math.random() < 0.5
+      ? 'rgba(255,225,190,' + (0.03 + Math.random() * 0.07).toFixed(3) + ')'
+      : 'rgba(0,0,0,' + (0.08 + Math.random() * 0.15).toFixed(3) + ')';
+    c.fillRect(x, y, s, s);
+  }
+  const g = c.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.35)');
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+}
+
+const WALL_TONES = ['#4b423a', '#554b41', '#403833', '#5d5247'];
+function drawWalls() {
+  const c = wallCanvas.getContext('2d');
+  c.clearRect(0, 0, W, H);
+  for (let y = 0; y < gh; y++) for (let x = 0, i = y * gw; x < gw; x++, i++) {
+    if (!walls[i]) continue;
+    let h = (x * 374761393 + y * 668265263) | 0; h = ((h ^ (h >>> 13)) * 1274126177) | 0; h ^= h >>> 16;
+    c.fillStyle = WALL_TONES[h & 3];
+    c.fillRect(x * CELL, y * CELL, CELL, CELL);
+    if (y > 0 && !walls[i - gw]) { c.fillStyle = 'rgba(255,240,220,0.16)'; c.fillRect(x * CELL, y * CELL, CELL, 1); }
+    if (y < gh - 1 && !walls[i + gw]) { c.fillStyle = 'rgba(0,0,0,0.45)'; c.fillRect(x * CELL, y * CELL + CELL - 1, CELL, 1); }
+  }
+  wallsDirty = false;
+}
+
+// ---------- World editing ----------
+function fillCircle(cx, cy, r, fn) {
+  const x0 = Math.max(0, Math.floor((cx - r) / CELL)), x1 = Math.min(gw - 1, Math.floor((cx + r) / CELL));
+  const y0 = Math.max(0, Math.floor((cy - r) / CELL)), y1 = Math.min(gh - 1, Math.floor((cy + r) / CELL));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const dx = x * CELL + CELL / 2 - cx, dy = y * CELL + CELL / 2 - cy, d2 = dx * dx + dy * dy;
+    if (d2 <= r * r) fn(y * gw + x, Math.sqrt(d2) / r);
+  }
+}
+function cellCentre(i) { return [(i % gw) * CELL + CELL / 2, Math.floor(i / gw) * CELL + CELL / 2]; }
+function nearNest(i, margin) { const [px, py] = cellCentre(i); return (px - nest.x) ** 2 + (py - nest.y) ** 2 < margin * margin; }
+
+function setWall(i) {
+  if (nearNest(i, NEST_R + 12)) return;
+  if (food[i]) { foodTotal -= food[i]; food[i] = 0; }
+  walls[i] = 1; wallsDirty = true;
+}
+function addFoodBlob(cx, cy, r) {
+  fillCircle(cx, cy, r, (i, t) => {
+    if (walls[i] || nearNest(i, NEST_R + 16)) return;
+    if (t > 0.72 && Math.random() < (t - 0.72) * 3) return;      // ragged rim
+    const amt = Math.max(1, Math.round(FOOD_MAX * (0.35 + 0.65 * (1 - t)) * (0.6 + Math.random() * 0.6)));
+    const nv = Math.min(FOOD_MAX, food[i] + amt);
+    foodTotal += nv - food[i]; food[i] = nv;
+  });
+}
+function eraseAt(cx, cy, r) {
+  fillCircle(cx, cy, r, i => {
+    if (walls[i]) { walls[i] = 0; wallsDirty = true; }
+    if (food[i]) { foodTotal -= food[i]; food[i] = 0; }
+  });
+}
+function addRock(cx, cy) {
+  const parts = 2 + Math.floor(Math.random() * 3);
+  for (let p = 0; p < parts; p++) {
+    const ox = cx + (Math.random() - 0.5) * 50, oy = cy + (Math.random() - 0.5) * 50, r = 10 + Math.random() * 26;
+    fillCircle(ox, oy, r, setWall);
+  }
+}
+function scatterFood(count, maxDist) {
+  const R2 = maxDist ? maxDist * maxDist : Infinity;
+  for (let k = 0, tries = 0; k < count && tries < 300; tries++) {
+    const x = 40 + Math.random() * (W - 80), y = 40 + Math.random() * (H - 80);
+    const d2 = (x - nest.x) ** 2 + (y - nest.y) ** 2;
+    if (d2 < 120 * 120 || d2 > R2) continue;
+    if (blocked(x, y)) continue;
+    addFoodBlob(x, y, 13 + Math.random() * 8); k++;
+  }
+}
+
+function clearWorld() {
+  homePh.fill(0); foodPh.fill(0); walls.fill(0); food.fill(0);
+  foodTotal = 0; delivered = 0; ticks = 0; antCount = 0; nestPulse = 0; wallsDirty = true;
+}
+function generateWorld() {
+  clearWorld();
+  nest.x = W / 2; nest.y = H / 2;
+  const spots = [];
+  const n = 3 + Math.floor(Math.random() * 2);
+  const base = Math.random() * TAU;
+  for (let k = 0; k < n; k++) {
+    const a = base + k * TAU / n + (Math.random() - 0.5) * TAU / n * 0.5;
+    const f = 0.5 + Math.random() * 0.3;
+    const x = clamp(nest.x + Math.cos(a) * (W / 2 - 70) * f, 40, W - 40);
+    const y = clamp(nest.y + Math.sin(a) * (H / 2 - 70) * f, 40, H - 40);
+    addFoodBlob(x, y, 14 + Math.random() * 8);
+    spots.push({ x, y });
+  }
+  const rocks = Math.round(4 + (W * H) / 400000);
+  for (let placed = 0, tries = 0; placed < rocks && tries < 300; tries++) {
+    const x = 40 + Math.random() * (W - 80), y = 40 + Math.random() * (H - 80);
+    if ((x - nest.x) ** 2 + (y - nest.y) ** 2 < 130 * 130) continue;
+    if (spots.some(s => (x - s.x) ** 2 + (y - s.y) ** 2 < 95 * 95)) continue;
+    addRock(x, y); placed++;
+  }
+}
+
+// ---------- Ant behaviour ----------
+function spawnAnt(i) {
+  ax[i] = nest.x; ay[i] = nest.y; aa[i] = Math.random() * TAU; at[i] = 0; ast[i] = SEARCH;
+  aox[i] = nest.x; aoy[i] = nest.y;
+  asp[i] = 0.85 + Math.random() * 0.3; abias[i] = Math.random() < 0.5 ? -1 : 1;
+  agu[i] = GIVE_UP * (0.7 + Math.random() * 0.6); afr[i] = 1; aft[i] = 0;
+}
+
+function blocked(x, y) {
+  if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return true;
+  return walls[((y / CELL) | 0) * gw + ((x / CELL) | 0)] === 1;
+}
+
+function lineClear(x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const n = Math.ceil(Math.sqrt(dx * dx + dy * dy) / 3);
+  for (let s = 1; s < n; s++) { const t = s / n; if (blocked(x0 + dx * t, y0 + dy * t)) return false; }
+  return true;
+}
+
+// Sum of a 3x3 block of pheromone around a sensor point. Walls and the edge read as negative so ants avoid them.
+function sense(g, px, py) {
+  if (px < CELL || py < CELL || px >= W - CELL || py >= H - CELL) return -2;
+  const cx = (px / CELL) | 0, cy = (py / CELL) | 0;
+  const i = cy * gw + cx;
+  if (walls[i]) return -1;
+  return g[i - gw - 1] + g[i - gw] + g[i - gw + 1] + g[i - 1] + g[i] + g[i + 1] + g[i + gw - 1] + g[i + gw] + g[i + gw + 1];
+}
+
+let sawWall = false;   // set by steer(): a sensor touched a wall or the border
+function steer(g, x, y, ang, i) {
+  const c = sense(g, x + Math.cos(ang) * SENSOR_DIST, y + Math.sin(ang) * SENSOR_DIST);
+  const l = sense(g, x + Math.cos(ang - SENSOR_ANGLE) * SENSOR_DIST, y + Math.sin(ang - SENSOR_ANGLE) * SENSOR_DIST);
+  const r = sense(g, x + Math.cos(ang + SENSOR_ANGLE) * SENSOR_DIST, y + Math.sin(ang + SENSOR_ANGLE) * SENSOR_DIST);
+  sawWall = c < 0 || l < 0 || r < 0;
+  if (!sawWall && c < MIN_SIGNAL && l < MIN_SIGNAL && r < MIN_SIGNAL) return NaN;   // nothing to follow
+  if (c >= l && c >= r) return ang;
+  if (l > r) return ang - TURN;
+  if (r > l) return ang + TURN;
+  return ang + TURN * abias[i];
+}
+
+function nearestFood(x, y) {
+  const cx = (x / CELL) | 0, cy = (y / CELL) | 0;
+  const x0 = Math.max(0, cx - FOOD_SIGHT), x1 = Math.min(gw - 1, cx + FOOD_SIGHT);
+  const y0 = Math.max(0, cy - FOOD_SIGHT), y1 = Math.min(gh - 1, cy + FOOD_SIGHT);
+  let best = -1, bd = Infinity;
+  for (let yy = y0; yy <= y1; yy++) {
+    let i = yy * gw + x0;
+    const dy = yy * CELL + CELL / 2 - y;
+    for (let xx = x0; xx <= x1; xx++, i++) {
+      if (!food[i]) continue;
+      const dx = xx * CELL + CELL / 2 - x, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+  }
+  return best;
+}
+
+function updateAnt(i) {
+  let x = ax[i], y = ay[i], ang = aa[i], st = ast[i];
+  const ci = ((y / CELL) | 0) * gw + ((x / CELL) | 0);
+  if (walls[ci]) { spawnAnt(i); return; }            // a wall was painted over this ant
+  const tt = ++at[i];
+  const ndx = nest.x - x, ndy = nest.y - y, nd2 = ndx * ndx + ndy * ndy;
+  const fi = st === SEARCH ? nearestFood(x, y) : -1;
+
+  // Lay pheromone. Freshness decays with time since the nest (searching) or since pick-up (carrying), so every
+  // trail slopes towards its source. Nothing is laid where it would only create a hotspot: no food scent within
+  // sight of the nest, no home scent while standing at a food pile.
+  const fresh = afr[i] *= FRESH_DECAY;
+  if (fresh > 0.02) {
+    if (st === SEARCH) { if (fi < 0) { const v = homePh[ci] + DEPOSIT * fresh; homePh[ci] = v > PH_CAP ? PH_CAP : v; } }
+    else if (st === CARRY && nd2 > NEST_SIGHT * NEST_SIGHT) { const v = foodPh[ci] + DEPOSIT * fresh; foodPh[ci] = v > PH_CAP ? PH_CAP : v; }
+  }
+
+  if (st === SEARCH) {
+    let handled = false;
+    if (fi >= 0) {
+      const fx = (fi % gw) * CELL + CELL / 2, fy = ((fi / gw) | 0) * CELL + CELL / 2;
+      const dx = fx - x, dy = fy - y, d2 = dx * dx + dy * dy;
+      if (d2 < 10) {
+        food[fi]--; foodTotal--;
+        st = CARRY; at[i] = 0; afr[i] = 1; aft[i] = 0; ang += Math.PI; handled = true;
+      } else if (lineClear(x, y, fx, fy)) { ang = Math.atan2(dy, dx); handled = true; }
+    }
+    if (!handled) {
+      if (tt > agu[i]) { st = HOMING; at[i] = 0; }
+      else {
+        // Follow food scent, but a trail that has led nowhere for a long time is ignored until the next visit home
+        const s = steer(foodPh, x, y, ang, i);
+        if (s === s && (sawWall || aft[i] < TRAIL_PATIENCE)) { ang = s; if (!sawWall) aft[i]++; }
+      }
+    }
+  } else {
+    const dx = ndx, dy = ndy, d2 = nd2;
+    if (d2 < NEST_R * NEST_R) {
+      if (st === CARRY) {
+        delivered++; if (nestPulse <= 0) nestPulse = 1;
+        ang += Math.PI + (Math.random() - 0.5) * 2.4;        // head back out roughly the way it came
+      } else ang = Math.random() * TAU;                       // came home empty: try a fresh direction
+      st = SEARCH; at[i] = 0; afr[i] = 1; aft[i] = 0;
+      aox[i] = nest.x; aoy[i] = nest.y;
+    } else if (d2 < NEST_SIGHT * NEST_SIGHT && lineClear(x, y, nest.x, nest.y)) {
+      ang = Math.atan2(dy, dx);
+    } else {
+      if (st === HOMING && tt > agu[i]) { st = SEARCH; at[i] = 0; afr[i] = 0; }   // lost: forage again, lay nothing
+      const s = steer(homePh, x, y, ang, i);
+      const hx = aox[i] - x, hy = aoy[i] - y;
+      if (hx * hx + hy * hy > 400) {
+        // Path integration: the ant remembers roughly where home lies. It follows a home trail when one is
+        // sensed, unless that trail is carrying it away from home (which breaks circular mills), and it steers
+        // by memory alone when no trail is in reach.
+        let d = Math.atan2(hy, hx) - ang; d -= TAU * Math.round(d / TAU);
+        const onTrail = s === s && (sawWall || (d < AWAY && d > -AWAY));
+        if (onTrail) { ang = s; d = Math.atan2(hy, hx) - ang; d -= TAU * Math.round(d / TAU); }
+        const pull = onTrail ? HOME_PULL : HOME_TURN;
+        ang += d > pull ? pull : d < -pull ? -pull : d;
+      } else if (s === s) ang = s;
+    }
+  }
+
+  // Nudge ants back towards the interior so they do not slide along the border
+  const ex = x < EDGE ? 1 : x > W - EDGE ? -1 : 0, ey = y < EDGE ? 1 : y > H - EDGE ? -1 : 0;
+  if (ex !== 0 || ey !== 0) {
+    let d = Math.atan2(ey, ex) - ang;
+    d -= TAU * Math.round(d / TAU);
+    ang += d > EDGE_TURN ? EDGE_TURN : d < -EDGE_TURN ? -EDGE_TURN : d;
+  }
+  ang += (Math.random() - 0.5) * P.wander;
+  const sp = ANT_SPEED * asp[i];
+  const nx = x + Math.cos(ang) * sp, ny = y + Math.sin(ang) * sp;
+  if (!blocked(nx, ny)) { x = nx; y = ny; }
+  else if (!blocked(nx, y)) { x = nx; ang = Math.atan2(Math.sin(ang) > 0 ? -0.3 : 0.3, Math.cos(ang) >= 0 ? 1 : -1); }   // slide along a wall above or below
+  else if (!blocked(x, ny)) { y = ny; ang = Math.atan2(Math.sin(ang) >= 0 ? 1 : -1, Math.cos(ang) > 0 ? -0.3 : 0.3); }   // slide along a wall to the side
+  else ang += Math.PI + (Math.random() - 0.5);
+  ax[i] = x; ay[i] = y; aa[i] = ang; ast[i] = st;
+}
+
+// ---------- Pheromone field ----------
+function diffuse(g, e) {
+  const k = 1 - DIFF, q = DIFF * 0.25, out = tmpPh;
+  for (let y = 1; y < gh - 1; y++) {
+    let i = y * gw + 1;
+    for (let x = 1; x < gw - 1; x++, i++) {
+      if (walls[i]) { out[i] = 0; continue; }
+      const c = g[i];
+      const l = walls[i - 1] ? c : g[i - 1], r = walls[i + 1] ? c : g[i + 1];
+      const u = walls[i - gw] ? c : g[i - gw], d = walls[i + gw] ? c : g[i + gw];
+      const v = (c * k + (l + r + u + d) * q) * e;
+      out[i] = v < 1e-6 ? 0 : v;
+    }
+  }
+  const last = (gh - 1) * gw;
+  for (let x = 0; x < gw; x++) { out[x] = g[x] * e; out[last + x] = g[last + x] * e; }
+  for (let y = 0; y < gh; y++) { const a = y * gw, b = a + gw - 1; out[a] = g[a] * e; out[b] = g[b] * e; }
+  return out;
+}
+
+function tick() {
+  ticks++;
+  if (antCount < P.ants) { const n = Math.min(P.ants - antCount, 3); for (let k = 0; k < n; k++) spawnAnt(antCount++); }
+  else if (antCount > P.ants) antCount = P.ants;
+  for (let i = 0; i < antCount; i++) updateAnt(i);
+  const e = 1 - P.evap, ef = 1 - P.evap * FOOD_EVAP;
+  if (ticks % DIFFUSE_EVERY === 0) {
+    let o = diffuse(homePh, e); tmpPh = homePh; homePh = o;
+    o = diffuse(foodPh, ef); tmpPh = foodPh; foodPh = o;
+  } else {
+    for (let i = 0, n = gw * gh; i < n; i++) {
+      const h = homePh[i] * e, f = foodPh[i] * ef;
+      homePh[i] = h < 1e-6 ? 0 : h; foodPh[i] = f < 1e-6 ? 0 : f;
+    }
+  }
+  if (nestPulse > 0) nestPulse -= 0.025;
+  if (P.autoFood && ticks % 300 === 0 && foodTotal < 600) scatterFood(1, Math.min(W, H) * 0.45);
+}
+
+// ---------- Rendering ----------
+function renderPheromones() {
+  const d = phData, showH = P.trails !== 'food', showF = P.trails !== 'home', K2 = 0.15 * 0.15;
+  for (let i = 0, p = 0, n = gw * gh; i < n; i++, p += 4) {
+    let ha = 0, fa = 0;
+    if (showH) { const v = homePh[i]; if (v > 0.002) { const q = v * v; ha = q / (q + K2); } }
+    if (showF) { const v = foodPh[i]; if (v > 0.002) { const q = v * v; fa = q / (q + K2); } }
+    const s = ha + fa;
+    if (s <= 0) { d[p + 3] = 0; continue; }
+    const w = 1 / s;                                    // colour is the mix of the two trails
+    d[p] = (ha * 70 + fa * 255) * w;
+    d[p + 1] = (ha * 150 + fa * 100) * w;
+    d[p + 2] = (ha * 255 + fa * 60) * w;
+    d[p + 3] = (s > 1 ? 1 : s) * 255;                   // strength sets opacity
+  }
+  phCtx.putImageData(phImg, 0, 0);
+}
+
+const FOOD_TONES = ['#8fe36c', '#6fcf52', '#a8ee82'];
+function renderFood() {
+  if (foodTotal <= 0) return;
+  const paths = [new Path2D(), new Path2D(), new Path2D()];
+  for (let y = 0; y < gh; y++) for (let x = 0, i = y * gw; x < gw; x++, i++) {
+    const f = food[i]; if (!f) continue;
+    let h = (x * 374761393 + y * 668265263) | 0; h = ((h ^ (h >>> 13)) * 1274126177) | 0; h ^= h >>> 16;
+    const px = x * CELL + CELL / 2 + ((h & 15) - 7.5) * 0.16, py = y * CELL + CELL / 2 + (((h >>> 4) & 15) - 7.5) * 0.16;
+    const r = 0.8 + 1.4 * f / FOOD_MAX;
+    const p = paths[(h >>> 8) % 3];
+    p.moveTo(px + r, py); p.arc(px, py, r, 0, TAU);
+  }
+  for (let k = 0; k < 3; k++) { ctx.fillStyle = FOOD_TONES[k]; ctx.fill(paths[k]); }
+}
+
+function renderNest() {
+  const { x, y } = nest, R = NEST_R + 7;
+  const g = ctx.createRadialGradient(x, y, NEST_R * 0.3, x, y, R);
+  g.addColorStop(0, '#0b0806'); g.addColorStop(0.6, '#1a1310'); g.addColorStop(0.68, '#5a4a3d'); g.addColorStop(1, '#3a2f26');
+  ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,180,0.18)'; ctx.lineWidth = 1; ctx.stroke();
+  if (nestPulse > 0) {
+    ctx.beginPath(); ctx.arc(x, y, R + (1 - nestPulse) * 28, 0, TAU);
+    ctx.strokeStyle = 'rgba(139,224,106,' + (nestPulse * 0.55).toFixed(3) + ')'; ctx.lineWidth = 2; ctx.stroke();
+  }
+}
+
+function renderAnts() {
+  const half = SPR / 2, kf = NF / TAU;
+  for (let i = 0; i < antCount; i++) {
+    let k = Math.round(aa[i] * kf) % NF; if (k < 0) k += NF;
+    ctx.drawImage(sprite, k * SPX, ast[i] === CARRY ? SPX : 0, SPX, SPX, ax[i] - half, ay[i] - half, SPR, SPR);
+  }
+}
+
+function renderCursor() {
+  if (!ptr.over) return;
+  const t = effectiveTool();
+  const r = t === 'food' ? 14 : t === 'wall' ? 9 : t === 'erase' ? 12 : NEST_R + 7;
+  ctx.beginPath(); ctx.arc(ptr.x, ptr.y, r, 0, TAU);
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
+}
+
+function render() {
+  ctx.drawImage(bgCanvas, 0, 0, W, H);
+  if (P.trails !== 'off') {
+    renderPheromones();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(phCanvas, 0, 0, W, H);
+  }
+  if (wallsDirty) drawWalls();
+  ctx.drawImage(wallCanvas, 0, 0, W, H);
+  renderFood();
+  renderNest();
+  if (P.showAnts) renderAnts();
+  renderCursor();
+}
+
+// ---------- Input ----------
+let tool = 'food';
+const ptr = { x: 0, y: 0, over: false, down: false, button: 0, lx: 0, ly: 0, acc: 0 };
+const effectiveTool = () => (ptr.down && ptr.button === 2) ? 'erase' : tool;
+
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll('#tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  canvas.style.cursor = t === 'nest' ? 'pointer' : 'crosshair';
+}
+function applyTool(x, y, isClick) {
+  const t = effectiveTool();
+  if (t === 'food') addFoodBlob(x, y, 14);
+  else if (t === 'wall') fillCircle(x, y, 9, setWall);
+  else if (t === 'erase') eraseAt(x, y, 12);
+  else if (t === 'nest' && isClick) {
+    nest.x = clamp(x, NEST_R + 10, W - NEST_R - 10); nest.y = clamp(y, NEST_R + 10, H - NEST_R - 10);
+    eraseAt(nest.x, nest.y, NEST_R + 26);
+    homePh.fill(0); foodPh.fill(0);
+    for (let i = 0; i < antCount; i++) { aox[i] = nest.x; aoy[i] = nest.y; }
+  }
+}
+function paintStroke(x0, y0, x1, y1) {
+  const t = effectiveTool();
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  if (t === 'food') { ptr.acc += d; if (ptr.acc >= 18) { ptr.acc = 0; applyTool(x1, y1, false); } return; }
+  if (t !== 'wall' && t !== 'erase') return;
+  const n = Math.max(1, Math.ceil(d / 3));
+  for (let s = 1; s <= n; s++) applyTool(x0 + (x1 - x0) * s / n, y0 + (y1 - y0) * s / n, false);
+}
+
+canvas.addEventListener('pointerdown', e => {
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* not a live pointer */ }
+  ptr.down = true; ptr.button = e.button; ptr.over = true;
+  ptr.x = ptr.lx = e.clientX; ptr.y = ptr.ly = e.clientY; ptr.acc = 0;
+  applyTool(ptr.x, ptr.y, true);
+});
+canvas.addEventListener('pointermove', e => {
+  ptr.over = true; ptr.x = e.clientX; ptr.y = e.clientY;
+  if (ptr.down) paintStroke(ptr.lx, ptr.ly, ptr.x, ptr.y);
+  ptr.lx = ptr.x; ptr.ly = ptr.y;
+});
+const release = e => { ptr.down = false; if (e.pointerType === 'touch') ptr.over = false; };
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('pointerleave', () => { if (!ptr.down) ptr.over = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  switch (e.key) {
+    case ' ': e.preventDefault(); togglePause(); break;
+    case 'f': case 'F': setTool('food'); break;
+    case 'w': case 'W': setTool('wall'); break;
+    case 'e': case 'E': setTool('erase'); break;
+    case 'n': case 'N': setTool('nest'); break;
+    case 'c': case 'C': clearTrails(); break;
+    default: return;
+  }
+});
+
+// ---------- Panel ----------
+document.querySelectorAll('#tools button').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+document.querySelectorAll('#trails button').forEach(b => b.addEventListener('click', () => {
+  P.trails = b.dataset.trails;
+  document.querySelectorAll('#trails button').forEach(o => o.classList.toggle('on', o === b));
+}));
+$('showAnts').addEventListener('change', e => { P.showAnts = e.target.checked; });
+$('autoFood').addEventListener('change', e => { P.autoFood = e.target.checked; });
+
+function bindRange(id, outId, fn) {
+  const el = $(id), out = $(outId);
+  const upd = () => { out.textContent = fn(+el.value); };
+  el.addEventListener('input', upd); upd();
+}
+bindRange('antsRange', 'antsOut', v => { P.ants = v; return String(v); });
+bindRange('speedRange', 'speedOut', v => { P.speed = v; return v + '×'; });
+bindRange('evapRange', 'evapOut', v => { P.evap = v / 10000; return (v / 100).toFixed(2) + '%'; });
+bindRange('wanderRange', 'wanderOut', v => { P.wander = v / 100; return (v / 100).toFixed(2); });
+
+const pauseBtn = $('pauseBtn');
+function togglePause() { paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; }
+function clearTrails() { homePh.fill(0); foodPh.fill(0); }
+pauseBtn.addEventListener('click', togglePause);
+$('resetBtn').addEventListener('click', generateWorld);
+$('clearBtn').addEventListener('click', clearTrails);
+$('scatterBtn').addEventListener('click', () => scatterFood(3));
+const panel = $('panel'), toggleBtn = $('toggle');
+toggleBtn.addEventListener('click', () => {
+  const c = panel.classList.toggle('collapsed');
+  toggleBtn.textContent = c ? '+' : '−';
+  toggleBtn.title = toggleBtn.ariaLabel = c ? 'Expand panel' : 'Collapse panel';
+});
+document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => b.blur()));
+
+// ---------- Stats ----------
+const sAnts = $('sAnts'), sAntsSub = $('sAntsSub'), sFood = $('sFood'), sLeft = $('sLeft'), sTime = $('sTime'), fpsEl = $('fps');
+function fmtTime(sec) { sec = Math.floor(sec); const m = Math.floor(sec / 60), s = sec % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+function updateStats() {
+  let carrying = 0;
+  for (let i = 0; i < antCount; i++) if (ast[i] === CARRY) carrying++;
+  sAnts.textContent = antCount;
+  sAntsSub.textContent = carrying + ' carrying food';
+  sFood.textContent = delivered;
+  sLeft.textContent = Math.max(0, foodTotal);
+  sTime.textContent = fmtTime(ticks / 60);
+  fpsEl.textContent = Math.round(fps) + ' fps';
+}
+
+// ---------- Main loop ----------
+let last = performance.now(), fps = 60, frames = 0;
+function frame(now) {
+  const dt = now - last; last = now;
+  if (dt > 0 && dt < 1000) fps = fps * 0.92 + (1000 / dt) * 0.08;
+  if (!paused) for (let s = 0; s < P.speed; s++) tick();
+  render();
+  if ((++frames % 6) === 0) updateStats();
+  requestAnimationFrame(frame);
+}
+
+let resizeTimer = 0;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 120); });
+
+resize();
+generateWorld();
+ready = true;
+updateStats();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

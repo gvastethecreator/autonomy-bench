@@ -1,7 +1,7 @@
 import { compareDateStamp } from './layout.mjs';
 import { applyModelThinking } from './model-meta.mjs';
 import { isShowcaseFixed } from './receipt.mjs';
-import { pickCellForMonth } from './run-month.mjs';
+import { pickCellForMonth, pickLatestCell } from './run-month.mjs';
 import { staffPicksFromCells } from './staff-picks.mjs';
 
 export function glanceFromReceipt(receipt) {
@@ -84,7 +84,7 @@ export function findCell(cells, { model, experiment, level, promptRevision, date
   });
   if (pin != null) return matches[0] || null;
   if (month) return pickCellForMonth(matches, month);
-  return matches[0] || null;
+  return pickLatestCell(matches);
 }
 
 export function maxPromptRevision(revisions, experiment, level) {
@@ -137,22 +137,28 @@ export function buildCatalogFromCells(cells, extras = {}) {
     if (!entry.adapter && cell.receipt?.adapter) entry.adapter = cell.receipt.adapter;
     runMap.set(runId, entry);
   }
-  const experimentIds = [];
   const seenExp = new Set();
-  for (const cell of keyed) {
-    if (seenExp.has(cell.experiment)) continue;
-    seenExp.add(cell.experiment);
-    experimentIds.push(cell.experiment);
+  const experimentIds = [];
+  for (const id of extras.experimentOrder || []) {
+    if (!id || seenExp.has(id)) continue;
+    seenExp.add(id);
+    experimentIds.push(id);
   }
-  const preferredExp = extras.experimentOrder || [];
-  experimentIds.sort((a, b) => {
-    const ia = preferredExp.indexOf(a);
-    const ib = preferredExp.indexOf(b);
-    const sa = ia === -1 ? 1000 : ia;
-    const sb = ib === -1 ? 1000 : ib;
-    return sa - sb || a.localeCompare(b);
-  });
-  const titles = new Map(keyed.map((cell) => [cell.experiment, cell.title || cell.experiment]));
+  const leftover = [];
+  for (const cell of keyed) {
+    if (!cell.experiment || seenExp.has(cell.experiment)) continue;
+    seenExp.add(cell.experiment);
+    leftover.push(cell.experiment);
+  }
+  leftover.sort((a, b) => a.localeCompare(b));
+  experimentIds.push(...leftover);
+  const titles = new Map();
+  for (const [id, title] of Object.entries(extras.experimentTitles || {})) {
+    if (id) titles.set(id, title || id);
+  }
+  for (const cell of keyed) {
+    if (cell.experiment) titles.set(cell.experiment, cell.title || cell.experiment);
+  }
   const experiments = experimentIds.map((id) => ({ id, title: titles.get(id) || id }));
 
   const modelIds = [];

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ant Colony</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:rgba(17,20,27,.9); --line:rgba(255,255,255,.08);
+    --text:#d9dee7; --dim:#8a93a3; --amber:#ffb84d; --green:#62e18c; --red:#ff7878;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--bg);color:var(--text);
+    font:13px/1.45 system-ui,"Segoe UI",Roboto,sans-serif;
+    user-select:none;-webkit-user-select:none;
+  }
+  #world{position:fixed;inset:0;display:block;cursor:crosshair;touch-action:none}
+  #top{
+    position:fixed;top:0;left:0;right:0;height:56px;z-index:5;
+    display:flex;align-items:center;gap:14px;padding:0 18px;pointer-events:none;
+    background:linear-gradient(rgba(11,13,18,.92),rgba(11,13,18,0));
+  }
+  #top h1{font-size:15px;font-weight:700;letter-spacing:2.5px}
+  #top h1 span{color:var(--amber)}
+  #top .sub{color:var(--dim);font-size:11px;margin-top:2px;letter-spacing:.3px}
+  .chips{margin-left:auto;display:flex;gap:8px}
+  .chip{
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    padding:5px 11px;font-size:12px;font-variant-numeric:tabular-nums;
+    display:flex;align-items:center;gap:7px;backdrop-filter:blur(8px);
+    box-shadow:0 4px 14px rgba(0,0,0,.25);
+  }
+  .chip b{font-weight:650;color:#fff}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--amber);flex:none}
+  .dot.g{background:var(--green)}
+  #panel{
+    position:fixed;left:14px;bottom:14px;width:240px;z-index:5;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:13px 14px 12px;backdrop-filter:blur(10px);
+    box-shadow:0 10px 34px rgba(0,0,0,.45);
+  }
+  button{
+    background:rgba(255,255,255,.05);color:var(--text);
+    border:1px solid var(--line);border-radius:8px;
+    padding:6px 10px;font:inherit;font-size:12px;cursor:pointer;
+    transition:background .15s,border-color .15s,color .15s;
+  }
+  button:hover{background:rgba(255,255,255,.11)}
+  button.active{background:rgba(255,184,77,.16);border-color:rgba(255,184,77,.55);color:#ffd9a0}
+  .row{display:flex;gap:8px}
+  .row+.row{margin-top:8px}
+  .row .tool,.row button{flex:1}
+  .ctl{display:block;margin-top:10px;font-size:11.5px;color:var(--dim)}
+  .ctl>span{display:flex;justify-content:space-between;align-items:baseline}
+  .ctl output{color:var(--text);font-variant-numeric:tabular-nums;font-weight:600}
+  .ctl input{width:100%;margin-top:4px;accent-color:var(--amber);cursor:pointer}
+  .hint{margin-top:11px;font-size:10.5px;color:#67707f;line-height:1.55}
+  .hint b{color:#8d96a6;font-weight:600}
+  @media (max-width:760px){
+    #top .sub{display:none}
+    .chip{padding:4px 8px;font-size:11px}
+    #panel{width:212px}
+  }
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+<header id="top">
+  <div>
+    <h1>ANT<span>COLONY</span></h1>
+    <div class="sub">stigmergy foraging &mdash; ants remember nothing, the trail remembers everything</div>
+  </div>
+  <div class="chips">
+    <div class="chip"><i class="dot g"></i>Food stored <b id="stStored">0</b></div>
+    <div class="chip"><i class="dot"></i>Carrying <b id="stCarry">0</b></div>
+    <div class="chip"><i class="dot"></i>Ants <b id="stAnts">0</b></div>
+    <div class="chip">FPS <b id="stFps">&ndash;</b></div>
+  </div>
+</header>
+<div id="panel">
+  <div class="row">
+    <button class="tool active" data-tool="food">Food</button>
+    <button class="tool" data-tool="wall">Wall</button>
+    <button class="tool" data-tool="erase">Erase</button>
+  </div>
+  <label class="ctl"><span>Ants <output id="oAnts">250</output></span>
+    <input id="sAnts" type="range" min="50" max="600" step="10" value="250"></label>
+  <label class="ctl"><span>Trail life <output id="oLife">30s</output></span>
+    <input id="sLife" type="range" min="4" max="90" step="1" value="30"></label>
+  <label class="ctl"><span>Sim speed <output id="oSpeed">1&times;</output></span>
+    <input id="sSpeed" type="range" min="0.25" max="3" step="0.25" value="1"></label>
+  <div class="row">
+    <button id="bPause">Pause</button>
+    <button id="bTrails">Trails</button>
+    <button id="bReset">Reset</button>
+  </div>
+  <p class="hint">Drag to place the selected tool, <b>right-drag</b> erases &middot; <b>Space</b> pause &middot; <b>R</b> reset. Trails (amber) are laid by ants hauling food home; fresh ants follow them to the green food.</p>
+</div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('world'),ctx=canvas.getContext('2d');
+const gridCanvas=document.createElement('canvas'),gctx=gridCanvas.getContext('2d');
+let gridImg=null;
+const CELL=6,SAMPLE_D=[5,10,16];
+let W=0,H=0,gw=1,gh=1;
+let ph=null,food=null,wall=null,tmp=null;
+const nest={x:300,y:300,r:16};
+const P={ants:250,trailLife:30,diff:0.12,speed:1,paused:false,tool:'food',deposit:42,maxPh:400};
+const ants=[];
+let stored=0;
+const sL={ph:0,food:false},sC={ph:0,food:false},sR={ph:0,food:false};
+
+function cellAt(x,y){
+  if(x<0||y<0||x>=W||y>=H)return -1;
+  return ((y/CELL)|0)*gw+((x/CELL)|0);
+}
+function blocked(x,y){const c=cellAt(x,y);return c<0||wall[c]===1;}
+function blockedAhead(x,y,ang){const c=cellAt(x+Math.cos(ang)*9,y+Math.sin(ang)*9);return c<0||wall[c]===1;}
+
+function makeGrids(){
+  const ngw=Math.max(1,Math.ceil(W/CELL)),ngh=Math.max(1,Math.ceil(H/CELL));
+  const nph=new Float32Array(ngw*ngh),nfood=new Float32Array(ngw*ngh),nwall=new Uint8Array(ngw*ngh);
+  if(ph){
+    const cw=Math.min(gw,ngw),ch=Math.min(gh,ngh);
+    for(let y=0;y<ch;y++)for(let x=0;x<cw;x++){
+      nph[y*ngw+x]=ph[y*gw+x];
+      nfood[y*ngw+x]=food[y*gw+x];
+      nwall[y*ngw+x]=wall[y*gw+x];
+    }
+  }
+  gw=ngw;gh=ngh;ph=nph;food=nfood;wall=nwall;tmp=new Float32Array(gw*gh);
+  gridCanvas.width=gw;gridCanvas.height=gh;
+  gridImg=gctx.createImageData(gw,gh);
+}
+function resize(){
+  W=window.innerWidth;H=window.innerHeight;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);
+  canvas.style.width=W+'px';canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  makeGrids();
+  nest.x=W/2;nest.y=H/2;
+}
+function spawnAnts(n){
+  while(ants.length<n){
+    ants.push({x:nest.x+(Math.random()-0.5)*8,y:nest.y+(Math.random()-0.5)*8,
+      h:Math.random()*Math.PI*2,state:0});
+  }
+  if(ants.length>n)ants.length=n;
+}
+function stampFood(x,y,r,v){
+  const c0=Math.max(0,((x-r)/CELL)|0),c1=Math.min(gw-1,((x+r)/CELL)|0);
+  const r0=Math.max(0,((y-r)/CELL)|0),r1=Math.min(gh-1,((y+r)/CELL)|0);
+  const rr=r*r,nr=(nest.r+8)*(nest.r+8);
+  for(let cy=r0;cy<=r1;cy++)for(let cx=c0;cx<=c1;cx++){
+    const dx=cx*CELL+CELL/2-x,dy=cy*CELL+CELL/2-y;
+    if(dx*dx+dy*dy<=rr){
+      const i=cy*gw+cx;
+      if(wall[i]!==1){
+        const nx=cx*CELL+CELL/2-nest.x,ny=cy*CELL+CELL/2-nest.y;
+        if(nx*nx+ny*ny>nr)food[i]=Math.min(12,food[i]+v);
+      }
+    }
+  }
+}
+function stampWall(x,y,r){
+  const c0=Math.max(0,((x-r)/CELL)|0),c1=Math.min(gw-1,((x+r)/CELL)|0);
+  const r0=Math.max(0,((y-r)/CELL)|0),r1=Math.min(gh-1,((y+r)/CELL)|0);
+  const rr=r*r,nr=(nest.r+10)*(nest.r+10);
+  for(let cy=r0;cy<=r1;cy++)for(let cx=c0;cx<=c1;cx++){
+    const dx=cx*CELL+CELL/2-x,dy=cy*CELL+CELL/2-y;
+    if(dx*dx+dy*dy<=rr){
+      const i=cy*gw+cx;
+      const nx=cx*CELL+CELL/2-nest.x,ny=cy*CELL+CELL/2-nest.y;
+      if(nx*nx+ny*ny>nr){wall[i]=1;food[i]=0;ph[i]=0;}
+    }
+  }
+}
+function eraseArea(x,y,r){
+  const c0=Math.max(0,((x-r)/CELL)|0),c1=Math.min(gw-1,((x+r)/CELL)|0);
+  const r0=Math.max(0,((y-r)/CELL)|0),r1=Math.min(gh-1,((y+r)/CELL)|0);
+  const rr=r*r;
+  for(let cy=r0;cy<=r1;cy++)for(let cx=c0;cx<=c1;cx++){
+    const dx=cx*CELL+CELL/2-x,dy=cy*CELL+CELL/2-y;
+    if(dx*dx+dy*dy<=rr){const i=cy*gw+cx;wall[i]=0;food[i]=0;ph[i]=0;}
+  }
+}
+function resetScene(){
+  ph.fill(0);food.fill(0);wall.fill(0);stored=0;
+  nest.x=W/2;nest.y=H/2;
+  for(let i=0;i<4;i++){
+    const ang=i*Math.PI/2+Math.random()*0.9;
+    const d=Math.min(W,H)*(0.26+Math.random()*0.16);
+    stampFood(nest.x+Math.cos(ang)*d,nest.y+Math.sin(ang)*d,16,3);
+  }
+  ants.length=0;spawnAnts(P.ants);
+}
+function sense(x,y,ang,res){
+  res.ph=0;res.food=false;
+  const ca=Math.cos(ang),sa=Math.sin(ang);
+  for(let k=0;k<3;k++){
+    const d=SAMPLE_D[k];
+    const c=cellAt(x+ca*d,y+sa*d);
+    if(c<0||wall[c]===1){res.ph=0;res.food=false;return;}
+    res.ph+=ph[c];
+    if(food[c]>0)res.food=true;
+  }
+}
+function stepPh(){
+  const retain=Math.pow(0.5,(1/60)/P.trailLife);
+  for(let i=0;i<ph.length;i++){
+    const v=ph[i]*retain;
+    ph[i]=v<0.02?0:v;
+  }
+  const d=P.diff;
+  for(let y=0;y<gh;y++){
+    const row=y*gw;
+    for(let x=0;x<gw;x++){
+      const i=row+x;
+      const l=x>0?ph[i-1]:ph[i],r2=x<gw-1?ph[i+1]:ph[i];
+      const u=y>0?ph[i-gw]:ph[i],dn=y<gh-1?ph[i+gw]:ph[i];
+      tmp[i]=ph[i]+((l+r2+u+dn)*0.25-ph[i])*d;
+    }
+  }
+  ph.set(tmp);
+}
+function stepAnt(){
+  const spd=62,dt=1/60;
+  for(let n=0;n<ants.length;n++){
+    const a=ants[n];
+    if(a.state===0){
+      sense(a.x,a.y,a.h-0.5,sL);sense(a.x,a.y,a.h,sC);sense(a.x,a.y,a.h+0.5,sR);
+      if(sC.food)a.h+=(Math.random()-0.5)*0.06;
+      else if(sL.food)a.h-=0.5;
+      else if(sR.food)a.h+=0.5;
+      else{
+        const tot=sL.ph+sC.ph+sR.ph;
+        if(tot<0.15){
+          a.h+=(Math.random()-0.5)*0.55;
+          if(Math.random()<0.004)a.h+=(Math.random()-0.5)*1.8;
+        }else if(sC.ph>=sL.ph&&sC.ph>=sR.ph)a.h+=(Math.random()-0.5)*0.09;
+        else if(sL.ph>sR.ph)a.h-=0.32;
+        else a.h+=0.32;
+      }
+      if(blockedAhead(a.x,a.y,a.h)){
+        if(!blockedAhead(a.x,a.y,a.h-0.9))a.h-=0.9;
+        else if(!blockedAhead(a.x,a.y,a.h+0.9))a.h+=0.9;
+        else a.h+=Math.PI;
+      }
+      const ci=cellAt(a.x,a.y);
+      if(ci>=0&&food[ci]>0){
+        food[ci]-=1;a.state=1;
+        a.h=Math.atan2(nest.y-a.y,nest.x-a.x)+(Math.random()-0.5)*0.6;
+      }
+    }else{
+      const dx=nest.x-a.x,dy=nest.y-a.y;
+      let dh=Math.atan2(dy,dx)-a.h;
+      dh=Math.atan2(Math.sin(dh),Math.cos(dh));
+      a.h+=dh*0.12+(Math.random()-0.5)*0.07;
+      const ci=cellAt(a.x,a.y);
+      if(ci>=0&&wall[ci]!==1)ph[ci]=Math.min(P.maxPh,ph[ci]+P.deposit*dt);
+      if(dx*dx+dy*dy<=nest.r*nest.r){
+        stored++;a.state=0;a.h=Math.random()*Math.PI*2;
+      }
+    }
+    const cs=Math.cos(a.h)*spd*dt,sn=Math.sin(a.h)*spd*dt;
+    let nx=a.x+cs,ny=a.y+sn;
+    if(!blocked(nx,ny)){a.x=nx;a.y=ny;}
+    else{
+      let ok=false;
+      for(let i=1;i<=4&&!ok;i++){
+        for(let s=-1;s<=1;s+=2){
+          const ang=a.h+s*i*0.45;
+          nx=a.x+Math.cos(ang)*spd*dt;ny=a.y+Math.sin(ang)*spd*dt;
+          if(!blocked(nx,ny)){a.h=ang;a.x=nx;a.y=ny;ok=true;break;}
+        }
+      }
+      if(!ok)a.h+=Math.PI;
+    }
+    if(a.x<1)a.x=1;else if(a.x>W-2)a.x=W-2;
+    if(a.y<1)a.y=1;else if(a.y>H-2)a.y=H-2;
+  }
+}
+function renderGrid(){
+  const data=gridImg.data;
+  for(let i=0,j=0;i<ph.length;i++,j+=4){
+    if(wall[i]===1){data[j]=54;data[j+1]=58;data[j+2]=68;data[j+3]=255;continue;}
+    let r=0,g=0,b=0,a=0;
+    const p=ph[i];
+    if(p>0){
+      const t=p/60,al=(t>1?1:t)*0.85;
+      const aa=Math.pow(al,0.55);
+      r=255;g=170;b=60;a=aa;
+    }
+    const f=food[i];
+    if(f>0){
+      const fa=Math.min(1,f/4)*0.95;
+      const na=fa+a*(1-fa);
+      if(na>0.001){
+        r=(98*fa+r*a*(1-fa))/na;
+        g=(225*fa+g*a*(1-fa))/na;
+        b=(140*fa+b*a*(1-fa))/na;
+        a=na;
+      }
+    }
+    data[j]=r;data[j+1]=g;data[j+2]=b;data[j+3]=a*255;
+  }
+  gctx.putImageData(gridImg,0,0);
+}
+function render(now){
+  ctx.fillStyle='#0b0d12';ctx.fillRect(0,0,W,H);
+  ctx.imageSmoothingEnabled=true;
+  ctx.drawImage(gridCanvas,0,0,gw,gh,0,0,gw*CELL,gh*CELL);
+  const pulse=1+Math.sin(now*0.0022)*0.07;
+  const R=nest.r*3*pulse;
+  const gr=ctx.createRadialGradient(nest.x,nest.y,nest.r*0.4,nest.x,nest.y,R);
+  gr.addColorStop(0,'rgba(255,176,84,0.28)');gr.addColorStop(1,'rgba(255,176,84,0)');
+  ctx.fillStyle=gr;ctx.beginPath();ctx.arc(nest.x,nest.y,R,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(nest.x,nest.y,nest.r,0,7);
+  ctx.fillStyle='#241a10';ctx.fill();
+  ctx.lineWidth=2;ctx.strokeStyle='#c9883c';ctx.stroke();
+  ctx.beginPath();ctx.arc(nest.x,nest.y,nest.r*0.45,0,7);
+  ctx.fillStyle='#0b0d12';ctx.fill();
+  ctx.lineCap='round';ctx.lineWidth=1.6;
+  ctx.strokeStyle='#ccd3e0';ctx.beginPath();
+  for(let i=0;i<ants.length;i++){
+    const a=ants[i];
+    if(a.state===0){
+      ctx.moveTo(a.x-Math.cos(a.h)*2.6,a.y-Math.sin(a.h)*2.6);
+      ctx.lineTo(a.x+Math.cos(a.h)*1.4,a.y+Math.sin(a.h)*1.4);
+    }
+  }
+  ctx.stroke();
+  ctx.strokeStyle='#ffc46a';ctx.beginPath();
+  for(let i=0;i<ants.length;i++){
+    const a=ants[i];
+    if(a.state===1){
+      ctx.moveTo(a.x-Math.cos(a.h)*2.6,a.y-Math.sin(a.h)*2.6);
+      ctx.lineTo(a.x+Math.cos(a.h)*1.4,a.y+Math.sin(a.h)*1.4);
+    }
+  }
+  ctx.stroke();
+  if(mx>=0&&my>=0){
+    const t=(buttons&2)?'erase':P.tool;
+    const rr=t==='food'?13:t==='wall'?11:16;
+    ctx.beginPath();ctx.arc(mx,my,rr,0,7);ctx.lineWidth=1;
+    ctx.strokeStyle=t==='food'?'rgba(98,225,140,.8)':t==='wall'?'rgba(150,160,180,.8)':'rgba(255,120,120,.8)';
+    ctx.stroke();
+  }
+}
+function updateStats(){
+  let car=0;
+  for(let i=0;i<ants.length;i++)if(ants[i].state===1)car++;
+  $('stStored').textContent=stored;
+  $('stCarry').textContent=car;
+  $('stAnts').textContent=ants.length;
+  $('stFps').textContent=Math.round(fpsA);
+}
+let painting=false,mx=-1,my=-1,buttons=0,lastPaint=null;
+function effTool(){return (buttons&2)?'erase':P.tool;}
+function stamp(t,x,y){
+  if(t==='food')stampFood(x,y,13,2);
+  else if(t==='wall')stampWall(x,y,11);
+  else eraseArea(x,y,16);
+}
+function paintLine(x,y){
+  const t=effTool();
+  if(!lastPaint){lastPaint=[x,y];stamp(t,x,y);return;}
+  const dx=x-lastPaint[0],dy=y-lastPaint[1];
+  const d=Math.hypot(dx,dy);
+  const steps=Math.max(1,Math.ceil(d/7));
+  for(let i=1;i<=steps;i++)stamp(t,lastPaint[0]+dx*i/steps,lastPaint[1]+dy*i/steps);
+  lastPaint=[x,y];
+}
+canvas.addEventListener('pointerdown',e=>{
+  painting=true;buttons=e.buttons;
+  canvas.setPointerCapture(e.pointerId);
+  mx=e.clientX;my=e.clientY;lastPaint=null;
+  paintLine(mx,my);
+});
+canvas.addEventListener('pointermove',e=>{
+  buttons=e.buttons;mx=e.clientX;my=e.clientY;
+  if(painting)paintLine(mx,my);
+});
+const stopPaint=()=>{painting=false;lastPaint=null;};
+canvas.addEventListener('pointerup',stopPaint);
+canvas.addEventListener('pointercancel',stopPaint);
+canvas.addEventListener('pointerleave',()=>{mx=-1;my=-1;});
+window.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return;
+  if(e.code==='Space'){e.preventDefault();$('bPause').click();}
+  else if(e.key==='r'||e.key==='R')resetScene();
+});
+document.querySelectorAll('#panel .tool').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('#panel .tool').forEach(o=>o.classList.toggle('active',o===b));
+    P.tool=b.dataset.tool;
+  });
+});
+$('sAnts').addEventListener('input',e=>{
+  P.ants=+e.target.value;$('oAnts').textContent=P.ants;spawnAnts(P.ants);
+});
+$('sLife').addEventListener('input',e=>{
+  P.trailLife=+e.target.value;$('oLife').textContent=P.trailLife+'s';
+});
+$('sSpeed').addEventListener('input',e=>{
+  P.speed=+e.target.value;$('oSpeed').textContent=P.speed+'\u00d7';
+});
+$('bPause').addEventListener('click',()=>{
+  P.paused=!P.paused;
+  $('bPause').textContent=P.paused?'Resume':'Pause';
+  $('bPause').classList.toggle('active',P.paused);
+});
+$('bTrails').addEventListener('click',()=>ph.fill(0));
+$('bReset').addEventListener('click',resetScene);
+let last=performance.now(),acc=0,fpsA=60,lastStat=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dtms=now-last;last=now;
+  if(dtms>0)fpsA+=(1000/dtms-fpsA)*0.08;
+  if(!P.paused){
+    acc+=(dtms/16.667)*P.speed;
+    let n=acc|0;
+    if(n>8){n=8;acc=0;}else acc-=n;
+    for(let s=0;s<n;s++){stepPh();stepAnt();}
+  }
+  renderGrid();
+  render(now);
+  if(now-lastStat>250){lastStat=now;updateStats();}
+}
+resize();
+resetScene();
+window.addEventListener('resize',resize);
+requestAnimationFrame(t=>{last=t;requestAnimationFrame(loop);});
+</script>
+</body>
+</html>

@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Midnight Fireworks</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #02040c;
+    --bg1: #07101f;
+    --ink: #f4f1ea;
+    --muted: rgba(244, 241, 234, 0.62);
+    --accent: #ffd38a;
+    --glass: rgba(8, 14, 28, 0.48);
+    --line: rgba(255, 255, 255, 0.12);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 120%, #12203a 0%, var(--bg1) 38%, var(--bg0) 100%);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    touch-action: none;
+    user-select: none;
+  }
+
+  canvas#sky {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+  }
+
+  .hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: max(18px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  }
+
+  .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .brand {
+    max-width: min(420px, 70vw);
+  }
+
+  .brand h1 {
+    font-size: clamp(1.35rem, 3vw, 2rem);
+    font-weight: 620;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    text-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  }
+
+  .brand p {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.45;
+    max-width: 34ch;
+    text-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  }
+
+  .controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    pointer-events: auto;
+  }
+
+  button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--glass);
+    color: var(--ink);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 999px;
+    padding: 10px 14px;
+    font: inherit;
+    font-size: 0.88rem;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  }
+
+  button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
+
+  button:active { transform: translateY(1px) scale(0.98); }
+
+  button[aria-pressed="true"] {
+    background: rgba(255, 211, 138, 0.18);
+    border-color: rgba(255, 211, 138, 0.45);
+    color: var(--accent);
+  }
+
+  .center-hint {
+    place-self: center;
+    text-align: center;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 700ms ease, transform 700ms ease;
+    pointer-events: none;
+  }
+
+  .center-hint.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .center-hint strong {
+    display: block;
+    font-size: clamp(1.1rem, 2.4vw, 1.45rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+
+  .center-hint span {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  .meter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--glass);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6dffb2;
+    box-shadow: 0 0 12px rgba(109, 255, 178, 0.8);
+  }
+
+  .dot.off {
+    background: #ff8f8f;
+    box-shadow: 0 0 12px rgba(255, 143, 143, 0.55);
+  }
+
+  @media (max-width: 640px) {
+    .top { flex-direction: column; }
+    .controls { justify-content: flex-start; }
+    .brand p { max-width: 42ch; }
+    .footer { flex-direction: column; align-items: flex-start; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    button, .center-hint { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="sky" aria-label="Fireworks night sky. Click or tap to launch."></canvas>
+
+  <div class="hud">
+    <div class="top">
+      <div class="brand">
+        <h1>Midnight Fireworks</h1>
+        <p>A quiet harbor skyline under a choreographed show. Click anywhere to add your own bursts.</p>
+      </div>
+      <div class="controls">
+        <button id="btnShow" type="button" aria-pressed="true">Pause show</button>
+        <button id="btnSound" type="button" aria-pressed="false">Sound on</button>
+        <button id="btnFinale" type="button">Finale</button>
+      </div>
+    </div>
+
+    <div id="hint" class="center-hint show">
+      <strong>Tap the sky</strong>
+      <span>or let the show run itself</span>
+    </div>
+
+    <div class="footer">
+      <div class="meter"><span id="liveDot" class="dot"></span><span id="liveLabel">Show running</span></div>
+      <div>Press F for finale · Space to pause</div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("sky");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const hint = document.getElementById("hint");
+  const btnShow = document.getElementById("btnShow");
+  const btnSound = document.getElementById("btnSound");
+  const btnFinale = document.getElementById("btnFinale");
+  const liveDot = document.getElementById("liveDot");
+  const liveLabel = document.getElementById("liveLabel");
+
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let W = 0, H = 0, dpr = 1;
+  let rockets = [];
+  let sparks = [];
+  let flashes = [];
+  let stars = [];
+  let buildings = [];
+  let showOn = true;
+  let soundOn = false;
+  let audioCtx = null;
+  let nextLaunch = 0;
+  let finaleUntil = 0;
+  let lastTs = 0;
+  let hintHideAt = performance.now() + 4200;
+  let seed = 20260901;
+
+  const PALETTES = [
+    ["#ff6b6b", "#ffd93d", "#fff1a8"],
+    ["#4cc9f0", "#4895ef", "#b8f2ff"],
+    ["#f72585", "#b5179e", "#ff9de2"],
+    ["#80ed99", "#57cc99", "#c7f9cc"],
+    ["#ff9f1c", "#ffbf69", "#ffe8c2"],
+    ["#c77dff", "#9b5de5", "#e0aaff"],
+    ["#ffd60a", "#ffef9f", "#fff"],
+    ["#00f5d4", "#00bbf9", "#d0f4de"]
+  ];
+
+  function rand() {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  }
+
+  function rnd(a = 0, b = 1) {
+    return a + Math.random() * (b - a);
+  }
+
+  function pick(arr) {
+    return arr[(Math.random() * arr.length) | 0];
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    makeStars();
+    makeSkyline();
+  }
+
+  function makeStars() {
+    const count = Math.floor((W * H) / 14000);
+    stars = Array.from({ length: count }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H * 0.72,
+      r: Math.random() * 1.2 + 0.2,
+      a: Math.random() * 0.55 + 0.15,
+      tw: Math.random() * Math.PI * 2,
+      sp: rnd(0.4, 1.4)
+    }));
+  }
+
+  function makeSkyline() {
+    buildings = [];
+    let x = -20;
+    const base = H * 0.78;
+    while (x < W + 40) {
+      const bw = rnd(28, 78);
+      const bh = rnd(H * 0.08, H * 0.22);
+      const windows = [];
+      const cols = Math.max(2, Math.floor(bw / 12));
+      const rows = Math.max(2, Math.floor(bh / 14));
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (Math.random() > 0.55) {
+            windows.push({
+              x: 4 + c * (bw / cols),
+              y: 6 + r * (bh / rows),
+              w: Math.max(2, bw / cols - 6),
+              h: Math.max(2, bh / rows - 7),
+              a: rnd(0.15, 0.55)
+            });
+          }
+        }
+      }
+      buildings.push({ x, y: base - bh, w: bw, h: bh, windows });
+      x += bw + rnd(4, 18);
+    }
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playLaunch() {
+    const ac = ensureAudio();
+    if (!ac || !soundOn) return;
+    const t = ac.currentTime;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    const f = ac.createBiquadFilter();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(520, t + 0.35);
+    f.type = "lowpass";
+    f.frequency.value = 900;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.04, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    o.connect(f); f.connect(g); g.connect(ac.destination);
+    o.start(t); o.stop(t + 0.42);
+  }
+
+  function playBoom(x, power = 1) {
+    const ac = ensureAudio();
+    if (!ac || !soundOn) return;
+    const t = ac.currentTime;
+    const pan = ((x / W) * 2 - 1) * 0.7;
+    const duration = 0.55 + power * 0.25;
+
+    const bufferSize = Math.floor(ac.sampleRate * duration);
+    const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const env = Math.pow(1 - i / bufferSize, 2.2);
+      data[i] = (Math.random() * 2 - 1) * env;
+    }
+    const noise = ac.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ac.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(1400 + power * 800, t);
+    filter.frequency.exponentialRampToValueAtTime(180, t + duration);
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.18 * power, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    let node = noise;
+    if (ac.createStereoPanner) {
+      const panner = ac.createStereoPanner();
+      panner.pan.value = pan;
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner);
+      panner.connect(ac.destination);
+    } else {
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ac.destination);
+    }
+    noise.start(t);
+
+    const thump = ac.createOscillator();
+    const tg = ac.createGain();
+    thump.type = "sine";
+    thump.frequency.setValueAtTime(70 + power * 20, t);
+    thump.frequency.exponentialRampToValueAtTime(28, t + 0.3);
+    tg.gain.setValueAtTime(0.0001, t);
+    tg.gain.exponentialRampToValueAtTime(0.22 * power, t + 0.01);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    thump.connect(tg); tg.connect(ac.destination);
+    thump.start(t); thump.stop(t + 0.36);
+  }
+
+  function launchRocket(x, targetY, opts = {}) {
+    const palette = opts.palette || pick(PALETTES);
+    const style = opts.style || pick(["peony", "chrysanthemum", "willow", "ring", "sparkle", "brocade"]);
+    const rocket = {
+      x,
+      y: H + 10,
+      vx: rnd(-0.35, 0.35),
+      vy: -rnd(7.2, 10.8) * (opts.power || 1),
+      targetY: targetY ?? rnd(H * 0.18, H * 0.48),
+      trail: [],
+      hue: palette[0],
+      palette,
+      style,
+      life: 1,
+      cracked: false,
+      sparkTimer: 0
+    };
+    rockets.push(rocket);
+    playLaunch();
+  }
+
+  function explode(rocket) {
+    const { x, y, palette, style } = rocket;
+    const power = style === "willow" ? 0.85 : style === "ring" ? 0.7 : 1;
+    flashes.push({ x, y, r: 8, max: 55 + power * 40, life: 1, color: palette[2] || "#fff" });
+    playBoom(x, power);
+
+    let count = reducedMotion ? 28 : (style === "sparkle" ? 90 : style === "chrysanthemum" ? 110 : 70);
+    count = Math.floor(count * (0.85 + Math.random() * 0.3));
+
+    if (style === "ring") {
+      count = reducedMotion ? 36 : 64;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rnd(-0.04, 0.04);
+        const speed = rnd(3.2, 4.1);
+        spawnSpark(x, y, Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+          grav: 0.028, drag: 0.985, life: rnd(0.7, 1), size: rnd(1.4, 2.4), glitter: true
+        });
+      }
+    } else if (style === "willow") {
+      for (let i = 0; i < count; i++) {
+        const a = rnd(-Math.PI, 0);
+        const speed = rnd(1.2, 4.5);
+        spawnSpark(x, y, Math.cos(a) * speed * 0.55, Math.sin(a) * speed - rnd(0.5, 1.8), palette, {
+          grav: 0.055, drag: 0.992, life: rnd(1.1, 1.8), size: rnd(1.1, 2), longTrail: true
+        });
+      }
+    } else if (style === "chrysanthemum") {
+      for (let i = 0; i < count; i++) {
+        const a = rnd(0, Math.PI * 2);
+        const speed = rnd(2.2, 6.5);
+        spawnSpark(x, y, Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+          grav: 0.035, drag: 0.978, life: rnd(0.8, 1.35), size: rnd(1.5, 2.8), glitter: Math.random() > 0.55
+        });
+      }
+    } else if (style === "sparkle") {
+      for (let i = 0; i < count; i++) {
+        const a = rnd(0, Math.PI * 2);
+        const speed = rnd(0.6, 5.8);
+        spawnSpark(x, y, Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+          grav: 0.04, drag: 0.97, life: rnd(0.5, 1.1), size: rnd(1, 2.2), glitter: true, twinkle: true
+        });
+      }
+    } else if (style === "brocade") {
+      for (let i = 0; i < count; i++) {
+        const a = rnd(0, Math.PI * 2);
+        const speed = rnd(2.8, 5.5);
+        spawnSpark(x, y, Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+          grav: 0.03, drag: 0.984, life: rnd(0.9, 1.5), size: rnd(1.3, 2.5), secondary: true
+        });
+      }
+    } else {
+      for (let i = 0; i < count; i++) {
+        const a = rnd(0, Math.PI * 2);
+        const speed = rnd(1.8, 5.8);
+        spawnSpark(x, y, Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+          grav: 0.038, drag: 0.982, life: rnd(0.75, 1.25), size: rnd(1.4, 2.6)
+        });
+      }
+    }
+
+    if (!reducedMotion && Math.random() > 0.55) {
+      setTimeout(() => {
+        if (sparks.length > 1800) return;
+        const burst = 18 + ((Math.random() * 18) | 0);
+        for (let i = 0; i < burst; i++) {
+          const a = rnd(0, Math.PI * 2);
+          const speed = rnd(1.2, 3.4);
+          spawnSpark(x + rnd(-8, 8), y + rnd(-8, 8), Math.cos(a) * speed, Math.sin(a) * speed, palette, {
+            grav: 0.045, drag: 0.97, life: rnd(0.35, 0.7), size: rnd(1, 1.8), glitter: true
+          });
+        }
+      }, 180 + Math.random() * 220);
+    }
+  }
+
+  function spawnSpark(x, y, vx, vy, palette, conf = {}) {
+    sparks.push({
+      x, y, vx, vy,
+      color: pick(palette),
+      palette,
+      life: conf.life ?? 1,
+      maxLife: conf.life ?? 1,
+      grav: conf.grav ?? 0.04,
+      drag: conf.drag ?? 0.98,
+      size: conf.size ?? 2,
+      glitter: !!conf.glitter,
+      twinkle: !!conf.twinkle,
+      longTrail: !!conf.longTrail,
+      secondary: !!conf.secondary,
+      trail: [],
+      cracked: false
+    });
+  }
+
+  function scheduleShow(now) {
+    if (!showOn) return;
+    if (now < nextLaunch) return;
+    const inFinale = now < finaleUntil;
+    const gap = inFinale
+      ? rnd(90, 180)
+      : reducedMotion ? rnd(900, 1600) : rnd(450, 1100);
+    nextLaunch = now + gap;
+
+    const volleys = inFinale ? (2 + ((Math.random() * 3) | 0)) : (Math.random() > 0.72 ? 2 : 1);
+    for (let i = 0; i < volleys; i++) {
+      const x = rnd(W * 0.12, W * 0.88);
+      const y = rnd(H * 0.16, H * 0.46);
+      setTimeout(() => {
+        if (!showOn && !inFinale) return;
+        launchRocket(x, y, { power: inFinale ? rnd(1, 1.15) : 1 });
+      }, i * (inFinale ? 70 : 140));
+    }
+  }
+
+  function startFinale() {
+    const now = performance.now();
+    finaleUntil = now + 5200;
+    nextLaunch = now;
+    showOn = true;
+    updateShowUI();
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => {
+        launchRocket(rnd(W * 0.15, W * 0.85), rnd(H * 0.18, H * 0.42), {
+          power: 1.1,
+          style: pick(["chrysanthemum", "peony", "sparkle", "brocade"])
+        });
+      }, i * 120);
+    }
+  }
+
+  function updateShowUI() {
+    btnShow.setAttribute("aria-pressed", showOn ? "true" : "false");
+    btnShow.textContent = showOn ? "Pause show" : "Resume show";
+    liveDot.classList.toggle("off", !showOn);
+    liveLabel.textContent = performance.now() < finaleUntil ? "Finale" : (showOn ? "Show running" : "Show paused");
+  }
+
+  function updateSoundUI() {
+    btnSound.setAttribute("aria-pressed", soundOn ? "true" : "false");
+    btnSound.textContent = soundOn ? "Sound off" : "Sound on";
+  }
+
+  function step(ts) {
+    if (!lastTs) lastTs = ts;
+    const dt = Math.min(32, ts - lastTs) / 16.6667;
+    lastTs = ts;
+
+    if (hint.classList.contains("show") && ts > hintHideAt) {
+      hint.classList.remove("show");
+    }
+
+    scheduleShow(ts);
+    if (ts < finaleUntil) liveLabel.textContent = "Finale";
+    else if (showOn) liveLabel.textContent = "Show running";
+
+    // sky wash
+    ctx.globalCompositeOperation = "source-over";
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#02040c");
+    g.addColorStop(0.55, "#07111f");
+    g.addColorStop(1, "#0b1528");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // soft horizon glow
+    const hg = ctx.createRadialGradient(W * 0.5, H * 0.82, 20, W * 0.5, H * 0.82, W * 0.55);
+    hg.addColorStop(0, "rgba(70, 100, 160, 0.16)");
+    hg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = hg;
+    ctx.fillRect(0, 0, W, H);
+
+    // stars
+    for (const s of stars) {
+      const tw = 0.55 + 0.45 * Math.sin(ts * 0.001 * s.sp + s.tw);
+      ctx.globalAlpha = s.a * tw;
+      ctx.fillStyle = "#e8eefc";
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // rockets
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      r.vy += 0.045 * dt;
+      r.trail.push({ x: r.x, y: r.y });
+      if (r.trail.length > 12) r.trail.shift();
+
+      r.sparkTimer -= dt;
+      if (r.sparkTimer <= 0) {
+        r.sparkTimer = 1.2;
+        sparks.push({
+          x: r.x, y: r.y,
+          vx: rnd(-0.4, 0.4), vy: rnd(0.2, 1.2),
+          color: r.hue, palette: r.palette,
+          life: 0.35, maxLife: 0.35, grav: 0.05, drag: 0.96,
+          size: 1.2, glitter: false, twinkle: false, longTrail: false,
+          secondary: false, trail: [], cracked: true
+        });
+      }
+
+      for (let t = 1; t < r.trail.length; t++) {
+        const a = t / r.trail.length;
+        ctx.strokeStyle = `rgba(255, 230, 180, ${a * 0.7})`;
+        ctx.lineWidth = a * 2.2;
+        ctx.beginPath();
+        ctx.moveTo(r.trail[t - 1].x, r.trail[t - 1].y);
+        ctx.lineTo(r.trail[t].x, r.trail[t].y);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#fff6d8";
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (r.vy >= -0.8 || r.y <= r.targetY) {
+        explode(r);
+        rockets.splice(i, 1);
+      } else if (r.y < -40 || r.x < -40 || r.x > W + 40) {
+        rockets.splice(i, 1);
+      }
+    }
+
+    // additive sparks
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const p = sparks[i];
+      p.vx *= Math.pow(p.drag, dt);
+      p.vy *= Math.pow(p.drag, dt);
+      p.vy += p.grav * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= 0.016 * dt * (p.longTrail ? 0.55 : 1);
+
+      if (p.longTrail || p.glitter) {
+        p.trail.push({ x: p.x, y: p.y, life: p.life });
+        if (p.trail.length > (p.longTrail ? 14 : 7)) p.trail.shift();
+      }
+
+      if (p.secondary && !p.cracked && p.life < p.maxLife * 0.55 && Math.random() > 0.92) {
+        p.cracked = true;
+        for (let k = 0; k < 4; k++) {
+          const a = rnd(0, Math.PI * 2);
+          const speed = rnd(0.8, 2.2);
+          spawnSpark(p.x, p.y, Math.cos(a) * speed, Math.sin(a) * speed, p.palette, {
+            grav: 0.05, drag: 0.96, life: rnd(0.25, 0.5), size: rnd(0.8, 1.4), glitter: true
+          });
+        }
+      }
+
+      const alpha = Math.max(0, p.life / p.maxLife);
+      let drawAlpha = alpha;
+      if (p.twinkle) drawAlpha *= (0.35 + 0.65 * Math.abs(Math.sin(ts * 0.03 + p.x)));
+
+      if (p.trail.length > 1) {
+        for (let t = 1; t < p.trail.length; t++) {
+          const ta = (t / p.trail.length) * drawAlpha * 0.65;
+          ctx.strokeStyle = hexToRgba(p.color, ta);
+          ctx.lineWidth = p.size * (t / p.trail.length);
+          ctx.beginPath();
+          ctx.moveTo(p.trail[t - 1].x, p.trail[t - 1].y);
+          ctx.lineTo(p.trail[t].x, p.trail[t].y);
+          ctx.stroke();
+        }
+      }
+
+      ctx.fillStyle = hexToRgba(p.color, drawAlpha);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.6 + 0.4 * alpha), 0, Math.PI * 2);
+      ctx.fill();
+
+      if (p.glitter && Math.random() > 0.86) {
+        ctx.fillStyle = `rgba(255,255,255,${drawAlpha})`;
+        ctx.fillRect(p.x - 0.5, p.y - 0.5, 1.2, 1.2);
+      }
+
+      if (p.life <= 0 || p.y > H + 30) sparks.splice(i, 1);
+    }
+
+    // flashes
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = flashes.length - 1; i >= 0; i--) {
+      const f = flashes[i];
+      f.life -= 0.045 * dt;
+      f.r += (f.max - f.r) * 0.18 * dt;
+      const a = Math.max(0, f.life);
+      const grd = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+      grd.addColorStop(0, hexToRgba("#ffffff", a * 0.85));
+      grd.addColorStop(0.25, hexToRgba(f.color, a * 0.35));
+      grd.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+      ctx.fill();
+      if (f.life <= 0) flashes.splice(i, 1);
+    }
+
+    // skyline
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#050914";
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (const b of buildings) {
+      ctx.lineTo(b.x, b.y + b.h);
+      ctx.lineTo(b.x, b.y);
+      ctx.lineTo(b.x + b.w, b.y);
+      ctx.lineTo(b.x + b.w, b.y + b.h);
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+
+    for (const b of buildings) {
+      for (const w of b.windows) {
+        ctx.globalAlpha = w.a * (0.75 + 0.25 * Math.sin(ts * 0.001 + b.x + w.y));
+        ctx.fillStyle = "#d7b36a";
+        ctx.fillRect(b.x + w.x, b.y + w.y, w.w, w.h);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // water reflection strip
+    const waterY = H * 0.78 + 8;
+    const reflectH = H - waterY;
+    if (reflectH > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, waterY, W, reflectH);
+      ctx.clip();
+      ctx.globalAlpha = 0.22;
+      ctx.translate(0, waterY);
+      ctx.scale(1, -0.35);
+      ctx.translate(0, -waterY);
+      ctx.drawImage(canvas, 0, 0, canvas.width, waterY * dpr, 0, 0, W, waterY);
+      ctx.restore();
+
+      const wg = ctx.createLinearGradient(0, waterY, 0, H);
+      wg.addColorStop(0, "rgba(5, 10, 22, 0.15)");
+      wg.addColorStop(0.2, "rgba(5, 10, 22, 0.55)");
+      wg.addColorStop(1, "rgba(2, 4, 12, 0.92)");
+      ctx.fillStyle = wg;
+      ctx.fillRect(0, waterY, W, reflectH);
+    }
+
+    // soft vignette
+    const vg = ctx.createRadialGradient(W * 0.5, H * 0.45, H * 0.2, W * 0.5, H * 0.5, H * 0.85);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.35)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+
+    // cap particles for stability
+    if (sparks.length > 2200) sparks.splice(0, sparks.length - 1800);
+
+    requestAnimationFrame(step);
+  }
+
+  function hexToRgba(hex, a) {
+    let h = hex.replace("#", "");
+    if (h.length === 3) h = h.split("").map(c => c + c).join("");
+    const n = parseInt(h, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a))})`;
+  }
+
+  function pointerLaunch(clientX, clientY) {
+    hint.classList.remove("show");
+    const x = clientX;
+    const y = Math.min(clientY, H * 0.55);
+    launchRocket(x, Math.max(40, y), {
+      style: pick(["peony", "chrysanthemum", "willow", "ring", "sparkle", "brocade"])
+    });
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (soundOn) ensureAudio();
+    pointerLaunch(e.clientX, e.clientY);
+  });
+
+  btnShow.addEventListener("click", () => {
+    showOn = !showOn;
+    if (showOn) nextLaunch = performance.now() + 300;
+    updateShowUI();
+  });
+
+  btnSound.addEventListener("click", () => {
+    soundOn = !soundOn;
+    if (soundOn) ensureAudio();
+    updateSoundUI();
+  });
+
+  btnFinale.addEventListener("click", () => {
+    if (soundOn) ensureAudio();
+    startFinale();
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      e.preventDefault();
+      showOn = !showOn;
+      if (showOn) nextLaunch = performance.now() + 300;
+      updateShowUI();
+    } else if (e.key === "f" || e.key === "F") {
+      if (soundOn) ensureAudio();
+      startFinale();
+    } else if (e.key === "m" || e.key === "M") {
+      soundOn = !soundOn;
+      if (soundOn) ensureAudio();
+      updateSoundUI();
+    }
+  });
+
+  window.addEventListener("resize", resize);
+
+  resize();
+  updateShowUI();
+  updateSoundUI();
+  nextLaunch = performance.now() + 700;
+  // opening volley
+  setTimeout(() => launchRocket(W * 0.5, H * 0.32, { style: "chrysanthemum", palette: PALETTES[6] }), 500);
+  setTimeout(() => launchRocket(W * 0.32, H * 0.28, { style: "peony", palette: PALETTES[0] }), 1100);
+  setTimeout(() => launchRocket(W * 0.68, H * 0.30, { style: "willow", palette: PALETTES[4] }), 1500);
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Formica — an ant colony</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%23e0a24c'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --ink:#eadfc4; --dim:#9c8c6b; --amber:#e0a24c;
+    --panel:rgba(22,17,11,.62); --line:rgba(234,223,196,.16);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;overflow:hidden;background:#16110a;color:var(--ink);
+    font-family:Georgia,'Iowan Old Style','Times New Roman',serif;
+    -webkit-user-select:none;user-select:none;
+  }
+  #world{position:fixed;inset:0;display:block;cursor:crosshair;touch-action:none}
+  #hud{position:fixed;top:24px;left:28px;pointer-events:none;z-index:5}
+  #hud h1{margin:0;font-weight:400;font-size:19px;letter-spacing:.46em;color:var(--ink)}
+  #hud .rule{width:46px;height:1px;background:rgba(224,162,76,.65);margin:9px 0 8px}
+  #hud .sub{font-style:italic;font-size:12.5px;color:var(--dim);letter-spacing:.06em;margin-bottom:16px}
+  #stats{display:flex;gap:28px;font-family:ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace}
+  #stats .lbl{display:block;font-size:9px;letter-spacing:.24em;color:#7d6f52}
+  #stats b{display:block;font-weight:400;font-size:15px;margin-top:4px;letter-spacing:.05em;color:var(--ink)}
+  #msg{
+    position:fixed;left:0;right:0;bottom:88px;text-align:center;pointer-events:none;z-index:4;
+    font-style:italic;font-size:15px;color:var(--ink);opacity:0;
+    text-shadow:0 1px 10px rgba(0,0,0,.75);
+  }
+  #msg.show{animation:msgfade 5.2s ease forwards}
+  @keyframes msgfade{
+    0%{opacity:0;transform:translateY(7px)}
+    12%{opacity:.94;transform:none}
+    78%{opacity:.94}
+    100%{opacity:0}
+  }
+  #hint{
+    position:fixed;left:50%;bottom:66px;transform:translateX(-50%);z-index:4;pointer-events:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:9.5px;letter-spacing:.2em;
+    text-transform:uppercase;color:#6f6248;white-space:nowrap;
+  }
+  #bar{
+    position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:6;
+    display:flex;align-items:center;padding:6px 10px;border-radius:999px;
+    background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(8px);
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  .grp{display:flex;gap:2px}
+  .sep{width:1px;height:18px;background:var(--line);margin:0 8px}
+  #bar button{
+    appearance:none;background:none;border:0;color:var(--dim);cursor:pointer;font:inherit;
+    font-size:10.5px;letter-spacing:.14em;padding:7px 10px;border-radius:999px;
+    transition:color .15s,background .15s;line-height:1;
+  }
+  #bar button:hover{color:var(--ink);background:rgba(234,223,196,.07)}
+  #bar button.on{color:#1a130a;background:var(--amber)}
+  #bar button svg{display:block}
+  #paused{
+    position:fixed;top:24px;right:28px;z-index:5;display:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;letter-spacing:.3em;
+    color:var(--amber);border:1px solid rgba(224,162,76,.4);padding:6px 12px;border-radius:999px;
+  }
+</style>
+</head>
+<body>
+<canvas id="world"></canvas>
+
+<div id="hud">
+  <h1>FORMICA</h1>
+  <div class="rule"></div>
+  <div class="sub">an ant colony — scatter seeds, raise stone, watch the trails think</div>
+  <div id="stats">
+    <span><span class="lbl">ANTS</span><b id="sPop">000</b></span>
+    <span><span class="lbl">IN NEST</span><b id="sStore">000</b></span>
+    <span><span class="lbl">DELIVERED</span><b id="sDel">0000</b></span>
+    <span><span class="lbl">SEEDS OUT</span><b id="sFood">0000</b></span>
+  </div>
+</div>
+
+<div id="msg"></div>
+<div id="hint">drag to place · right-drag erases · 1 / 2 / 3 tools · space pauses</div>
+
+<div id="bar">
+  <div class="grp">
+    <button id="tFood" class="on" title="scatter seeds">SEEDS</button>
+    <button id="tRock" title="raise stone">STONE</button>
+    <button id="tErase" title="erase trails, stone and seeds">ERASE</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp">
+    <button id="bS" title="small brush">S</button>
+    <button id="bM" class="on" title="medium brush">M</button>
+    <button id="bL" title="large brush">L</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp">
+    <button id="sp05" title="half speed">½×</button>
+    <button id="sp1" class="on" title="normal speed">1×</button>
+    <button id="sp2" title="double speed">2×</button>
+    <button id="sp4" title="quadruple speed">4×</button>
+  </div>
+  <div class="sep"></div>
+  <button id="pause" title="pause (space)">
+    <svg id="icoPause" width="10" height="12" viewBox="0 0 10 12"><rect width="3.4" height="12" fill="currentColor"/><rect x="6.6" width="3.4" height="12" fill="currentColor"/></svg>
+    <svg id="icoPlay" width="10" height="12" viewBox="0 0 10 12" style="display:none"><path d="M0 0 L10 6 L0 12 Z" fill="currentColor"/></svg>
+  </button>
+  <button id="reset" title="start a new colony">RESET</button>
+</div>
+<div id="paused">PAUSED</div>
+
+<script>
+(()=>{
+'use strict';
+const TAU=Math.PI*2;
+const cv=document.getElementById('world'), ctx=cv.getContext('2d');
+const bg=document.createElement('canvas'), bgx=bg.getContext('2d');
+const wc=document.createElement('canvas'), wx=wc.getContext('2d');
+const pc=document.createElement('canvas'), pcx=pc.getContext('2d');
+const el=id=>document.getElementById(id);
+const msgEl=el('msg');
+
+let W=0,H=0,DPR=1,cell=5,gw=0,gh=0,pimg=null;
+let fP,hP,fP2,hP2,wall;
+
+const nest={x:300,y:300,r:24};
+const ants=[], clusters=[], ripples=[];
+let delivered=0, store=0, simTime=0, autoTimer=24, emptyFlag=false, msgToken=0, mileFlags={};
+const MAXPOP=360, START_ANTS=22, FOOD_PER_ANT=4;
+
+const SPEED_S=54, SPEED_C=64, TURN=6.2, JITTER=3.4, SA=0.62, SD=13;
+const DEP_F=30, TDEP_F=9, DEP_H=15, TDEP_H=11, LOST=26;
+const EVAP_F=0.20, EVAP_H=0.28, DIFF=4.2, BEACON=46, SMELL_R=85;
+
+const TOOL={FOOD:0,ROCK:1,ERASE:2};
+let tool=TOOL.FOOD, brushIdx=1, timeScale=1, paused=false;
+const BRUSH={food:[24,42,66], rock:[13,22,36], erase:[30,52,84]};
+let mouse=null, painting=false, pErase=false, lastPaint={x:-1e9,y:-1e9};
+
+const idx=(x,y)=>((y/cell)|0)*gw+((x/cell)|0);
+const angNorm=a=>{while(a>Math.PI)a-=TAU;while(a<-Math.PI)a+=TAU;return a;};
+
+function resize(){
+  W=innerWidth; H=innerHeight;
+  DPR=Math.min(1.75, window.devicePixelRatio||1);
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  bg.width=cv.width; bg.height=cv.height;
+  wc.width=cv.width; wc.height=cv.height;
+  cell=Math.max(4, Math.round(Math.sqrt(W*H/115000)));
+  gw=Math.ceil(W/cell); gh=Math.ceil(H/cell);
+  const n=gw*gh;
+  fP=new Float32Array(n); hP=new Float32Array(n);
+  fP2=new Float32Array(n); hP2=new Float32Array(n);
+  wall=new Uint8Array(n);
+  pc.width=gw; pc.height=gh;
+  pimg=pcx.createImageData(gw,gh);
+  nest.x=Math.round(W*0.5); nest.y=Math.round(H*0.56);
+  for(const a of ants){ a.x=Math.min(Math.max(a.x,4),W-4); a.y=Math.min(Math.max(a.y,4),H-4); }
+  for(const c of clusters){ c.x=Math.min(Math.max(c.x,30),W-30); c.y=Math.min(Math.max(c.y,30),H-30); }
+  drawBackground(); redrawWalls();
+}
+
+function drawBackground(){
+  const g=bgx;
+  g.setTransform(DPR,0,0,DPR,0,0);
+  g.clearRect(0,0,W,H);
+  const base=g.createRadialGradient(nest.x,nest.y,80,W*0.5,H*0.5,Math.max(W,H)*0.8);
+  base.addColorStop(0,'#281e11');
+  base.addColorStop(0.55,'#1d150c');
+  base.addColorStop(1,'#120c06');
+  g.fillStyle=base; g.fillRect(0,0,W,H);
+  for(let i=0;i<24;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=40+Math.random()*130;
+    const gg=g.createRadialGradient(x,y,0,x,y,r);
+    gg.addColorStop(0, Math.random()<0.5?'rgba(66,48,26,0.10)':'rgba(12,8,4,0.12)');
+    gg.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=gg; g.beginPath(); g.arc(x,y,r,0,TAU); g.fill();
+  }
+  for(let i=0;i<1600;i++){
+    const x=Math.random()*W, y=Math.random()*H;
+    g.fillStyle=Math.random()<0.7
+      ? 'rgba(214,182,120,'+(0.03+Math.random()*0.06).toFixed(3)+')'
+      : 'rgba(0,0,0,'+(0.10+Math.random()*0.14).toFixed(3)+')';
+    g.fillRect(x,y,Math.random()<0.85?1:2,1);
+  }
+  const vg=g.createRadialGradient(W*0.5,H*0.5,Math.min(W,H)*0.36,W*0.5,H*0.5,Math.max(W,H)*0.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.45)');
+  g.fillStyle=vg; g.fillRect(0,0,W,H);
+}
+
+function redrawWalls(){
+  wx.setTransform(DPR,0,0,DPR,0,0);
+  wx.clearRect(0,0,W,H);
+  for(let pass=0;pass<2;pass++){
+    wx.fillStyle=pass===0?'#4a3922':'#221a0f';
+    const rr=pass===0?cell*0.82:cell*0.56;
+    for(let y=0;y<gh;y++){
+      const row=y*gw;
+      for(let x=0;x<gw;x++){
+        if(!wall[row+x]) continue;
+        wx.beginPath();
+        wx.arc(x*cell+cell*0.5, y*cell+cell*0.5, rr, 0, TAU);
+        wx.fill();
+      }
+    }
+  }
+}
+
+function pheroStep(dt){
+  if(gw<5||gh<5) return;
+  const n=gw*gh;
+  const ef=1-EVAP_F*dt, eh=1-EVAP_H*dt;
+  let dd=DIFF*dt; if(dd>0.45)dd=0.45;
+  for(let x=0;x<gw;x++){
+    fP2[x]=fP[x]*ef; hP2[x]=hP[x]*eh;
+    const j=n-gw+x; fP2[j]=fP[j]*ef; hP2[j]=hP[j]*eh;
+  }
+  for(let y=0;y<gh;y++){
+    const i=y*gw, j=i+gw-1;
+    fP2[i]=fP[i]*ef; hP2[i]=hP[i]*eh;
+    fP2[j]=fP[j]*ef; hP2[j]=hP[j]*eh;
+  }
+  for(let y=1;y<gh-1;y++){
+    const row=y*gw;
+    for(let x=1;x<gw-1;x++){
+      const i=row+x;
+      if(wall[i]){ fP2[i]=0; hP2[i]=0; continue; }
+      const l=i-1, r=i+1, u=i-gw, d=i+gw;
+      let s=(wall[l]?fP[i]:fP[l])+(wall[r]?fP[i]:fP[r])+(wall[u]?fP[i]:fP[u])+(wall[d]?fP[i]:fP[d]);
+      let v=(fP[i]+(s*0.25-fP[i])*dd)*ef;
+      fP2[i]=v>0?v:0;
+      s=(wall[l]?hP[i]:hP[l])+(wall[r]?hP[i]:hP[r])+(wall[u]?hP[i]:hP[u])+(wall[d]?hP[i]:hP[d]);
+      v=(hP[i]+(s*0.25-hP[i])*dd)*eh;
+      hP2[i]=v>0?v:0;
+    }
+  }
+  let t=fP; fP=fP2; fP2=t;
+  t=hP; hP=hP2; hP2=t;
+  const cx=(nest.x/cell)|0, cy=(nest.y/cell)|0;
+  for(let dy=-2;dy<=2;dy++){
+    const y=cy+dy; if(y<0||y>=gh) continue;
+    for(let dx=-2;dx<=2;dx++){
+      const x=cx+dx; if(x<0||x>=gw) continue;
+      if(dx*dx+dy*dy>5) continue;
+      const i=y*gw+x;
+      if(!wall[i]&&hP[i]<BEACON) hP[i]=BEACON;
+    }
+  }
+}
+
+function sense(a, ang, field){
+  const sx=a.x+Math.cos(ang)*SD, sy=a.y+Math.sin(ang)*SD;
+  const gx=(sx/cell)|0, gy=(sy/cell)|0;
+  let s=0;
+  for(let dy=-1;dy<=1;dy++){
+    const y=gy+dy; if(y<0||y>=gh) continue;
+    const row=y*gw;
+    for(let dx=-1;dx<=1;dx++){
+      const x=gx+dx; if(x<0||x>=gw) continue;
+      const i=row+x;
+      if(!wall[i]) s+=field[i];
+    }
+  }
+  return s;
+}
+
+function blocked(x,y){
+  if(x<0||y<0||x>=W||y>=H) return true;
+  return wall[idx(x,y)]===1;
+}
+
+function antStep(a, dt){
+  a.tN+=dt; if(a.carrying) a.tF+=dt;
+  const seekFood=!a.carrying&&a.tN<LOST;
+  const field=seekFood?fP:hP;
+  const l=sense(a,a.a-SA,field), c=sense(a,a.a,field), r=sense(a,a.a+SA,field);
+  const best=Math.max(l,c,r);
+  if(best>0.35){
+    if(c>=l&&c>=r){}
+    else if(l>r) a.a-=TURN*dt*(1+(l-c)/(best+1));
+    else a.a+=TURN*dt*(1+(r-c)/(best+1));
+  }else{
+    a.a+=(Math.random()-0.5)*9.0*dt;
+    if(a.carrying){
+      const na=Math.atan2(nest.y-a.y,nest.x-a.x);
+      a.a+=angNorm(na-a.a)*Math.min(1,a.tF/14)*1.1*dt;
+    }
+  }
+  if(!a.carrying){
+    for(let k=0;k<clusters.length;k++){
+      const cl=clusters[k], dx=cl.x-a.x, dy=cl.y-a.y, d2=dx*dx+dy*dy;
+      if(d2<SMELL_R*SMELL_R){
+        const d=Math.sqrt(d2)||1;
+        a.a+=angNorm(Math.atan2(dy,dx)-a.a)*(1-d/SMELL_R)*2.2*dt;
+      }
+    }
+  }
+  a.a+=(Math.random()-0.5)*JITTER*dt*(best>0.35?1:2);
+  const sp=(a.carrying?SPEED_C:SPEED_S)*a.spd*dt;
+  let nx=a.x+Math.cos(a.a)*sp, ny=a.y+Math.sin(a.a)*sp;
+  if(blocked(nx,ny)){
+    const cands=[0.7,-0.7,1.4,-1.4,2.2,-2.2,Math.PI];
+    let ok=false;
+    for(let k=0;k<cands.length;k++){
+      const ang=a.a+cands[k];
+      const tx=a.x+Math.cos(ang)*sp, ty=a.y+Math.sin(ang)*sp;
+      if(!blocked(tx,ty)){ a.a=ang; nx=tx; ny=ty; ok=true; break; }
+    }
+    if(!ok){ nx=a.x; ny=a.y; a.a+=(Math.random()-0.5)*2; }
+  }
+  a.x=nx; a.y=ny;
+  const i=idx(a.x,a.y);
+  if(!wall[i]){
+    if(a.carrying){
+      const q=1-a.tF/TDEP_F;
+      if(q>0) fP[i]+=DEP_F*q*dt;
+    }else if(a.tN<TDEP_H){
+      hP[i]+=DEP_H*(1-a.tN/TDEP_H)*dt;
+    }
+  }
+  const dnx=a.x-nest.x, dny=a.y-nest.y;
+  if(dnx*dnx+dny*dny<(nest.r+3)*(nest.r+3)){
+    a.tN=0;
+    if(a.carrying){
+      a.carrying=false; a.tF=1e3;
+      a.a+=Math.PI+(Math.random()-0.5);
+      delivered++; store++;
+      if(ripples.length<30&&Math.random()<0.15) ripples.push({x:nest.x,y:nest.y,r:nest.r,a:0.32,grow:85});
+    }
+  }
+  if(!a.carrying){
+    for(let k=0;k<clusters.length;k++){
+      const cl=clusters[k], dx=a.x-cl.x, dy=a.y-cl.y;
+      if(dx*dx+dy*dy<cl.r*cl.r){
+        if(cl.amount>0){
+          a.carrying=true; a.tF=0;
+          a.a+=Math.PI+(Math.random()-0.5)*0.6;
+          cl.amount--;
+          if(cl.amount<=0){
+            clusters.splice(k,1);
+            announce('A seed cache is spent.');
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
+function makeDots(c){
+  const want=Math.min(120, Math.max(10, Math.round(c.max/4)));
+  while(c.dots.length<want){
+    c.dots.push({
+      a:Math.random()*TAU,
+      d:Math.sqrt(Math.random())*c.r*0.92,
+      s:1.2+Math.random()*1.5
+    });
+  }
+}
+
+function addCluster(x,y,r,amt){
+  x=Math.min(Math.max(x,36),W-36); y=Math.min(Math.max(y,36),H-36);
+  let tries=0;
+  while(wall[idx(x,y)]&&tries++<8){
+    const ang=Math.random()*TAU;
+    x+=Math.cos(ang)*40; y+=Math.sin(ang)*40;
+    x=Math.min(Math.max(x,36),W-36); y=Math.min(Math.max(y,36),H-36);
+  }
+  const c={x,y,r,amount:amt,max:amt,dots:[]};
+  makeDots(c);
+  clusters.push(c);
+  emptyFlag=false;
+  return c;
+}
+
+function spawnAutoCluster(){
+  const dmin=150, dmax=Math.max(180, Math.min(W,H)*0.45);
+  for(let t=0;t<24;t++){
+    const ang=Math.random()*TAU, d=dmin+Math.random()*(dmax-dmin);
+    const x=nest.x+Math.cos(ang)*d, y=nest.y+Math.sin(ang)*d;
+    if(x<40||y<40||x>W-40||y>H-40) continue;
+    let near=false;
+    for(const c of clusters){ const dx=c.x-x,dy=c.y-y; if(dx*dx+dy*dy<90*90){near=true;break;} }
+    if(near) continue;
+    addCluster(x,y,15+Math.random()*14,Math.round(150+Math.random()*230));
+    return;
+  }
+}
+
+function spawnAnt(quiet){
+  const ang=Math.random()*TAU;
+  ants.push({
+    x:nest.x+Math.cos(ang)*nest.r*0.5,
+    y:nest.y+Math.sin(ang)*nest.r*0.5,
+    a:ang, spd:0.85+Math.random()*0.35,
+    carrying:false, tN:0, tF:1e3
+  });
+  if(!quiet&&ripples.length<30) ripples.push({x:nest.x,y:nest.y,r:nest.r,a:0.5,grow:90});
+}
+
+const MILES=[
+  {k:'d1',  c:()=>delivered>=1,   m:'First seed reaches the nest.'},
+  {k:'d25', c:()=>delivered>=25,  m:'A trail is etched into the soil.'},
+  {k:'d80', c:()=>delivered>=80,  m:'The highway hums with foragers.'},
+  {k:'d200',c:()=>delivered>=200, m:'The granary overflows.'},
+  {k:'d450',c:()=>delivered>=450, m:'The meadow tells legends of this colony.'},
+  {k:'p60', c:()=>ants.length>=60, m:'Sixty ants now serve the nest.'},
+  {k:'p150',c:()=>ants.length>=150, m:'One hundred fifty strong.'},
+  {k:'p300',c:()=>ants.length>=300, m:'Three hundred ants — the colony thrives.'}
+];
+
+function checkMilestones(){
+  for(let i=0;i<MILES.length;i++){
+    const mi=MILES[i];
+    if(!mileFlags[mi.k]&&mi.c()){ mileFlags[mi.k]=true; announce(mi.m); break; }
+  }
+}
+
+function showMsg(t){
+  msgEl.textContent=t;
+  msgEl.classList.remove('show');
+  void msgEl.offsetWidth;
+  msgEl.classList.add('show');
+}
+function announce(t,delay){
+  const tk=++msgToken;
+  if(delay>0) setTimeout(()=>{ if(tk===msgToken) showMsg(t); }, delay);
+  else showMsg(t);
+}
+
+function step(dt){
+  simTime+=dt;
+  pheroStep(dt);
+  for(let i=0;i<ants.length;i++) antStep(ants[i],dt);
+  while(store>=FOOD_PER_ANT&&ants.length<MAXPOP){ store-=FOOD_PER_ANT; spawnAnt(false); }
+  autoTimer-=dt;
+  if(autoTimer<=0){
+    autoTimer=20+Math.random()*22;
+    if(clusters.length<4) spawnAutoCluster();
+  }
+  if(clusters.length===0){
+    if(!emptyFlag){
+      emptyFlag=true;
+      announce('The fields lie bare — scatter seeds to feed the colony.');
+    }
+  }else emptyFlag=false;
+  checkMilestones();
+  for(let i=ripples.length-1;i>=0;i--){
+    const r=ripples[i];
+    r.r+=r.grow*dt; r.a-=0.65*dt;
+    if(r.a<=0) ripples.splice(i,1);
+  }
+}
+
+function renderPheromone(){
+  const d=pimg.data, n=gw*gh, sf=1/20, sh=1/38;
+  for(let i=0,j=0;i<n;i++,j+=4){
+    let f=fP[i]*sf; if(f>1)f=1;
+    let h=hP[i]*sh; if(h>1)h=1;
+    if(f<0.004&&h<0.004){ d[j+3]=0; continue; }
+    let r=f*242+h*86; if(r>255)r=255;
+    let g=f*140+h*152; if(g>255)g=255;
+    let b=f*44+h*168; if(b>255)b=255;
+    let al=f*228+h*105; if(al>238)al=238;
+    d[j]=r; d[j+1]=g; d[j+2]=b; d[j+3]=al;
+  }
+  pcx.putImageData(pimg,0,0);
+}
+
+function drawFood(){
+  ctx.fillStyle='#d9bd6c';
+  ctx.beginPath();
+  for(let k=0;k<clusters.length;k++){
+    const c=clusters[k];
+    const vis=Math.max(1, Math.round(c.dots.length*c.amount/c.max));
+    for(let i=0;i<vis;i++){
+      const p=c.dots[i];
+      const x=c.x+Math.cos(p.a)*p.d, y=c.y+Math.sin(p.a)*p.d;
+      ctx.moveTo(x+p.s,y);
+      ctx.arc(x,y,p.s,0,TAU);
+    }
+  }
+  ctx.fill();
+}
+
+function drawNest(){
+  const pulse=0.10+0.05*Math.sin(simTime*1.7);
+  const gr=ctx.createRadialGradient(nest.x,nest.y,2,nest.x,nest.y,nest.r*3.1);
+  gr.addColorStop(0,'rgba(226,166,80,'+(0.14+pulse).toFixed(3)+')');
+  gr.addColorStop(1,'rgba(226,166,80,0)');
+  ctx.fillStyle=gr;
+  ctx.beginPath(); ctx.arc(nest.x,nest.y,nest.r*3.1,0,TAU); ctx.fill();
+  ctx.strokeStyle='rgba(234,223,196,0.20)'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.arc(nest.x,nest.y,nest.r+4,0,TAU); ctx.stroke();
+  const hole=ctx.createRadialGradient(nest.x,nest.y,1,nest.x,nest.y,nest.r-2);
+  hole.addColorStop(0,'#050302');
+  hole.addColorStop(1,'#1c1409');
+  ctx.fillStyle=hole;
+  ctx.beginPath(); ctx.arc(nest.x,nest.y,nest.r-2,0,TAU); ctx.fill();
+}
+
+function drawRipples(){
+  ctx.lineWidth=1.4;
+  for(let i=0;i<ripples.length;i++){
+    const r=ripples[i];
+    ctx.strokeStyle='rgba(230,180,90,'+Math.max(0,r.a).toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,TAU); ctx.stroke();
+  }
+}
+
+function drawAnts(){
+  ctx.lineCap='round';
+  ctx.lineWidth=1.3;
+  ctx.strokeStyle='rgba(233,224,203,0.85)';
+  ctx.beginPath();
+  for(let i=0;i<ants.length;i++){
+    const a=ants[i];
+    if(a.carrying) continue;
+    const c=Math.cos(a.a)*2.1, s=Math.sin(a.a)*2.1;
+    ctx.moveTo(a.x-c,a.y-s); ctx.lineTo(a.x+c,a.y+s);
+  }
+  ctx.stroke();
+  ctx.lineWidth=1.4;
+  ctx.strokeStyle='rgba(248,236,208,0.95)';
+  ctx.beginPath();
+  for(let i=0;i<ants.length;i++){
+    const a=ants[i];
+    if(!a.carrying) continue;
+    const c=Math.cos(a.a)*2.1, s=Math.sin(a.a)*2.1;
+    ctx.moveTo(a.x-c,a.y-s); ctx.lineTo(a.x+c,a.y+s);
+  }
+  ctx.stroke();
+  ctx.fillStyle='#e6b45c';
+  ctx.beginPath();
+  for(let i=0;i<ants.length;i++){
+    const a=ants[i];
+    if(!a.carrying) continue;
+    const hx=a.x+Math.cos(a.a)*2.9, hy=a.y+Math.sin(a.a)*2.9;
+    ctx.moveTo(hx+1.7,hy);
+    ctx.arc(hx,hy,1.7,0,TAU);
+  }
+  ctx.fill();
+}
+
+function drawCursor(){
+  if(!mouse) return;
+  const t=(painting&&pErase)?TOOL.ERASE:tool;
+  const r=t===TOOL.FOOD?BRUSH.food[brushIdx]*0.8
+        :t===TOOL.ROCK?BRUSH.rock[brushIdx]
+        :BRUSH.erase[brushIdx];
+  ctx.strokeStyle=t===TOOL.FOOD?'rgba(224,162,76,.6)'
+    :t===TOOL.ROCK?'rgba(196,178,142,.55)':'rgba(226,120,90,.6)';
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(mouse.x,mouse.y,r,0,TAU); ctx.stroke();
+  ctx.beginPath(); ctx.arc(mouse.x,mouse.y,1.5,0,TAU); ctx.stroke();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.drawImage(bg,0,0,W,H);
+  ctx.drawImage(wc,0,0,W,H);
+  renderPheromone();
+  ctx.drawImage(pc,0,0,W,H);
+  drawFood();
+  drawNest();
+  drawRipples();
+  drawAnts();
+  drawCursor();
+}
+
+let last=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.05)dt=0.05;
+  if(!paused&&dt>0){
+    const sdt=dt*timeScale;
+    const steps=Math.min(6, Math.max(1, Math.ceil(sdt/0.02)));
+    const h=sdt/steps;
+    for(let s=0;s<steps;s++) step(h);
+  }
+  render();
+}
+
+function paintWall(x,y,r,on){
+  const x0=Math.max(0,((x-r)/cell)|0), x1=Math.min(gw-1,((x+r)/cell)|0);
+  const y0=Math.max(0,((y-r)/cell)|0), y1=Math.min(gh-1,((y+r)/cell)|0);
+  const r2=r*r; let changed=false;
+  for(let gy=y0;gy<=y1;gy++){
+    for(let gx=x0;gx<=x1;gx++){
+      const cx=gx*cell+cell*0.5-x, cy=gy*cell+cell*0.5-y;
+      if(cx*cx+cy*cy<=r2){
+        const i=gy*gw+gx;
+        if(wall[i]!==(on?1:0)){
+          wall[i]=on?1:0; changed=true;
+          if(on){ fP[i]=0; hP[i]=0; }
+        }
+      }
+    }
+  }
+  if(changed) redrawWalls();
+}
+
+function clearPhero(x,y,r){
+  const x0=Math.max(0,((x-r)/cell)|0), x1=Math.min(gw-1,((x+r)/cell)|0);
+  const y0=Math.max(0,((y-r)/cell)|0), y1=Math.min(gh-1,((y+r)/cell)|0);
+  const r2=r*r;
+  for(let gy=y0;gy<=y1;gy++){
+    for(let gx=x0;gx<=x1;gx++){
+      const cx=gx*cell+cell*0.5-x, cy=gy*cell+cell*0.5-y;
+      if(cx*cx+cy*cy<=r2){ const i=gy*gw+gx; fP[i]=0; hP[i]=0; }
+    }
+  }
+}
+
+function applyTool(x,y,erase){
+  const t=erase?TOOL.ERASE:tool;
+  if(t===TOOL.FOOD){
+    let bestC=null, bd=1e9;
+    for(let k=0;k<clusters.length;k++){
+      const c=clusters[k], d=Math.hypot(c.x-x,c.y-y);
+      if(d<c.r+34&&d<bd){ bd=d; bestC=c; }
+    }
+    if(bestC){
+      const add=12+BRUSH.food[brushIdx]*1.1;
+      bestC.amount=Math.min(650,bestC.amount+add);
+      bestC.max=Math.max(bestC.max,bestC.amount);
+      makeDots(bestC);
+    }else{
+      const r=Math.max(13,BRUSH.food[brushIdx]*0.8);
+      const amt=Math.round(60+BRUSH.food[brushIdx]*2.4);
+      addCluster(x,y,r,amt);
+    }
+  }else if(t===TOOL.ROCK){
+    const r=BRUSH.rock[brushIdx];
+    if(Math.hypot(x-nest.x,y-nest.y)<nest.r+r+12) return;
+    paintWall(x,y,r,true);
+  }else{
+    const r=BRUSH.erase[brushIdx];
+    paintWall(x,y,r,false);
+    for(let k=clusters.length-1;k>=0;k--){
+      const c=clusters[k];
+      if(Math.hypot(c.x-x,c.y-y)<r+c.r*0.5) clusters.splice(k,1);
+    }
+    clearPhero(x,y,r);
+  }
+}
+
+function pointerPos(e){
+  const r=cv.getBoundingClientRect();
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
+
+cv.addEventListener('pointerdown',e=>{
+  try{ cv.setPointerCapture(e.pointerId); }catch(err){}
+  painting=true;
+  pErase=e.button===2;
+  const p=pointerPos(e);
+  mouse=p; lastPaint=p;
+  applyTool(p.x,p.y,pErase);
+  e.preventDefault();
+});
+cv.addEventListener('pointermove',e=>{
+  const p=pointerPos(e);
+  mouse=p;
+  if(painting){
+    const er=pErase||(e.buttons&2)===2;
+    const br=er?BRUSH.erase[brushIdx]
+      :tool===TOOL.FOOD?BRUSH.food[brushIdx]*0.8
+      :tool===TOOL.ROCK?BRUSH.rock[brushIdx]:BRUSH.erase[brushIdx];
+    const dx=p.x-lastPaint.x, dy=p.y-lastPaint.y;
+    if(dx*dx+dy*dy>(br*0.55)*(br*0.55)){
+      lastPaint=p;
+      applyTool(p.x,p.y,er);
+    }
+  }
+});
+addEventListener('pointerup',()=>{ painting=false; pErase=false; });
+cv.addEventListener('pointerleave',()=>{ if(!painting) mouse=null; });
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+
+function setTool(t){
+  tool=t;
+  el('tFood').classList.toggle('on',t===TOOL.FOOD);
+  el('tRock').classList.toggle('on',t===TOOL.ROCK);
+  el('tErase').classList.toggle('on',t===TOOL.ERASE);
+}
+function setBrush(i){
+  brushIdx=i;
+  el('bS').classList.toggle('on',i===0);
+  el('bM').classList.toggle('on',i===1);
+  el('bL').classList.toggle('on',i===2);
+}
+const SPEED_BTNS=[['sp05',0.5],['sp1',1],['sp2',2],['sp4',4]];
+function setSpeed(s){
+  timeScale=s;
+  for(const [id,v] of SPEED_BTNS) el(id).classList.toggle('on',v===s);
+}
+function setPaused(p){
+  paused=p;
+  el('icoPause').style.display=p?'none':'block';
+  el('icoPlay').style.display=p?'block':'none';
+  el('paused').style.display=p?'block':'none';
+  el('pause').classList.toggle('on',p);
+}
+el('tFood').onclick=e=>{ setTool(TOOL.FOOD); e.currentTarget.blur(); };
+el('tRock').onclick=e=>{ setTool(TOOL.ROCK); e.currentTarget.blur(); };
+el('tErase').onclick=e=>{ setTool(TOOL.ERASE); e.currentTarget.blur(); };
+el('bS').onclick=e=>{ setBrush(0); e.currentTarget.blur(); };
+el('bM').onclick=e=>{ setBrush(1); e.currentTarget.blur(); };
+el('bL').onclick=e=>{ setBrush(2); e.currentTarget.blur(); };
+for(const [id,v] of SPEED_BTNS) el(id).onclick=e=>{ setSpeed(v); e.currentTarget.blur(); };
+el('pause').onclick=e=>{ setPaused(!paused); e.currentTarget.blur(); };
+el('reset').onclick=e=>{ init(); e.currentTarget.blur(); };
+
+addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); setPaused(!paused); }
+  else if(e.key==='1') setTool(TOOL.FOOD);
+  else if(e.key==='2') setTool(TOOL.ROCK);
+  else if(e.key==='3') setTool(TOOL.ERASE);
+  else if(e.key==='[') setBrush(Math.max(0,brushIdx-1));
+  else if(e.key===']') setBrush(Math.min(2,brushIdx+1));
+});
+
+let rsT=null;
+addEventListener('resize',()=>{
+  clearTimeout(rsT);
+  rsT=setTimeout(resize,120);
+});
+
+setInterval(()=>{
+  el('sPop').textContent=String(ants.length).padStart(3,'0');
+  el('sStore').textContent=String(Math.max(0,Math.floor(store))).padStart(3,'0');
+  el('sDel').textContent=String(delivered).padStart(4,'0');
+  let out=0;
+  for(const c of clusters) out+=Math.round(c.amount);
+  el('sFood').textContent=String(out).padStart(4,'0');
+},300);
+
+function init(){
+  ants.length=0; clusters.length=0; ripples.length=0;
+  if(fP){ fP.fill(0); hP.fill(0); }
+  if(wall) wall.fill(0);
+  delivered=0; store=0; simTime=0; autoTimer=24;
+  emptyFlag=false; mileFlags={}; msgToken++;
+  nest.x=Math.round(W*0.5); nest.y=Math.round(H*0.56);
+  redrawWalls();
+  const a1=Math.random()*TAU;
+  addCluster(nest.x+Math.cos(a1)*190, nest.y+Math.sin(a1)*190, 20, 190);
+  const a2=a1+Math.PI*(0.6+Math.random()*0.8);
+  addCluster(nest.x+Math.cos(a2)*330, nest.y+Math.sin(a2)*330, 24, 300);
+  for(let i=0;i<START_ANTS;i++) spawnAnt(true);
+  announce('The queen wakes. Twenty-two scouts set out.',700);
+}
+
+window.__f={
+  get delivered(){return delivered;},
+  get pop(){return ants.length;},
+  get store(){return store;},
+  get clusters(){return clusters.length;},
+  setSpeed:s=>setSpeed(s)
+};
+
+resize();
+init();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

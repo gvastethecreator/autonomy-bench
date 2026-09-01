@@ -6,7 +6,7 @@ Preview the public stage (`gallery/index.html`) with `vp run dev`. After you reg
 
 The title is the desaturated experiment emoji plus `{benchmark} Bench` for the selected experiment.
 
-The left sidebar holds A/B/C prompt-level buttons and models. The experiment select (previous/next and the dropdown) stays in the DOM and hides itself when the catalog has only one live experiment. Compact (or `[`) collapses the sidebar to an icon rail. When more than one experiment is live, the menu shows a desaturated emoji beside the name. The model list shows only models that have a generated HTML take for the selected benchmark and the current month or run. In Models view every listed take is on stage. Click a model to hide or show it. Anime.js layout animates models that enter or leave that list.
+The left sidebar holds A/B/C prompt-level buttons and models. Compact (or `[`) collapses the sidebar to an icon rail. The model list shows only models that have a generated HTML take for the selected benchmark and the current filters. In Models view every listed take is on stage. Click a model to hide or show it. Anime.js layout animates models that enter or leave that list.
 
 **Table** is a coverage matrix: every benchmark against every model that has at least one playable take. A filled square is present for the current A/B/C level. An empty square is missing. A gold crown is the unique public vote leader for that prompt-V. A gold star is the staff pick (rollercoaster A prefers `grok-4.6`; other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`; B and C prefer `grok-4.6-high`). Click a filled cell to open that take. Click the bench name to open the staff pick.
 
@@ -22,11 +22,11 @@ Open HTML or receipt panels stack on the right, one panel per take. If more than
 
 The crown is a public winner vote for that prompt-V (`rollercoaster-A`). It selects a model, not a take date. Gold on the toolbar means your vote. Gold on the model list and in the Table view marks the unique leader. A tie shows no public crown. You can move your vote or click the same crown to clear it. Votes use an anonymous `ab_voter` cookie. The API does not store IP. If a vote request fails, that prompt shows no crowns. A later successful request can still load other prompts. Vote buttons stay hidden until at least one request succeeds.
 
-The top toolbar groups three dropdowns: **Filters** (prompt version, month, and run), **View** (Single, Models, ABC, Table, plus Columns/Grid/Rows when that view needs a layout), and **Fit** (Fill or Fit). View has previous and next arrows. If a month has more than one run, Filters also lists those runs. Omit `date` to keep the month combined. Fit is disabled in Table.
+The top toolbar groups **Bench**, **Filters** (prompt version, optional month, and optional run), **View** (Single, Models, ABC, Table, plus Columns/Grid/Rows when that view needs a layout), and **Fit** (Fill or Fit). View has previous and next arrows. Bench unhides when the catalog has more than one live experiment. Month defaults to all months for the selected prompt version. Pick a month to narrow. If more than one run matches, Filters also lists those runs. Omit `date` to keep runs combined. Fit is disabled in Table.
 
 If a listed model has no playable HTML for the current filters, the stage typesets the prompt instead of faking a preview.
 
-Default experiment order follows the live suite. Rollercoaster is first. The picker unhides when a second live experiment is in the catalog.
+Default experiment order follows the live suite. Rollercoaster is first. The catalog lists every live suite bench, including benches with no published takes yet.
 
 ## Motion
 

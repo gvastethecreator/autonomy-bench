@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js Rollercoaster</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; }
+        canvas { display: block; }
+        #info { 
+            position: absolute; 
+            top: 10px; 
+            width: 100%; 
+            text-align: center; 
+            color: #ffffff; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            font-size: 24px;
+            pointer-events: none; 
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5); 
+            z-index: 100;
+        }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="info">Procedural Rollercoaster</div>
+    <script type="module">
+        import * as THREE from 'three';
+
+        // 1. Setup Scene, Camera, Renderer
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        scene.fog = new THREE.Fog(0x87CEEB, 100, 800);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        // 2. Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.5); // Soft white light
+        scene.add(ambientLight);
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+        hemiLight.position.set(0, 200, 0);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(200, 300, 150);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.top = 400;
+        dirLight.shadow.camera.bottom = -400;
+        dirLight.shadow.camera.left = -400;
+        dirLight.shadow.camera.right = 400;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 1000;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // 3. Environment (Ground & Scenery)
+        const groundGeo = new THREE.PlaneGeometry(3000, 3000);
+        const groundMat = new THREE.MeshStandardMaterial({ 
+            color: 0x2e8b57, // Sea green
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -50;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Add some procedural trees
+        const treeGeo = new THREE.ConeGeometry(5, 15, 8);
+        const treeMat = new THREE.MeshStandardMaterial({ color: 0x006400, roughness: 0.9 });
+        const trunkGeo = new THREE.CylinderGeometry(1, 1, 5);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 1.0 });
+        
+        for (let i = 0; i < 400; i++) {
+            const x = (Math.random() - 0.5) * 1500;
+            const z = (Math.random() - 0.5) * 1500;
+            
+            // Keep trees away from origin
+            if (Math.abs(x) < 40 && Math.abs(z) < 40) continue;
+
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.position.set(x, ground.position.y + 2.5, z);
+            trunk.castShadow = true;
+            trunk.receiveShadow = true;
+            scene.add(trunk);
+
+            const leaves = new THREE.Mesh(treeGeo, treeMat);
+            leaves.position.set(x, ground.position.y + 5 + 7.5, z);
+            leaves.castShadow = true;
+            leaves.receiveShadow = true;
+            scene.add(leaves);
+        }
+
+        // 4. Rollercoaster Track Curve
+        const points = [
+            new THREE.Vector3(0, 10, 0),
+            new THREE.Vector3(100, 50, -100),
+            new THREE.Vector3(200, 120, -200),
+            new THREE.Vector3(300, 30, -100),
+            new THREE.Vector3(200, -20, 100),
+            new THREE.Vector3(50, 80, 200),
+            new THREE.Vector3(-100, 150, 100),
+            new THREE.Vector3(-250, 60, -50),
+            new THREE.Vector3(-150, 0, -200),
+            new THREE.Vector3(-50, -30, -100),
+            new THREE.Vector3(0, 10, 0) // Loop back
+        ];
+        
+        // true = closed curve
+        const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5);
+
+        // 5. Build Track Geometry
+        const extrudeSettings = {
+            steps: 500,
+            bevelEnabled: true,
+            bevelThickness: 0.2,
+            bevelSize: 0.2,
+            bevelSegments: 2,
+            extrudePath: curve
+        };
+        
+        // A simple I-beam like shape for the track
+        const shape = new THREE.Shape();
+        shape.moveTo(-1.5, -0.5);
+        shape.lineTo(1.5, -0.5);
+        shape.lineTo(1.5, 0.5);
+        shape.lineTo(0.5, 0.5);
+        shape.lineTo(0.5, 1.0);
+        shape.lineTo(-0.5, 1.0);
+        shape.lineTo(-0.5, 0.5);
+        shape.lineTo(-1.5, 0.5);
+        shape.lineTo(-1.5, -0.5);
+
+        const trackGeometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const trackMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xaaaaaa, 
+            roughness: 0.3, 
+            metalness: 0.8,
+            wireframe: false 
+        });
+        const track = new THREE.Mesh(trackGeometry, trackMaterial);
+        track.castShadow = true;
+        track.receiveShadow = true;
+        scene.add(track);
+
+        // 6. Build Track Supports (Pillars)
+        const supportGeom = new THREE.CylinderGeometry(0.8, 1.2, 1, 8);
+        const supportMat = new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.6 });
+        
+        // Sample points along the curve for supports
+        const numSupports = 80;
+        for (let i = 0; i < numSupports; i++) {
+            const t = i / numSupports;
+            const pt = curve.getPoint(t);
+            const height = pt.y - ground.position.y;
+            
+            if (height > 2) {
+                const support = new THREE.Mesh(supportGeom, supportMat);
+                support.scale.y = height;
+                // Position exactly halfway between ground and track
+                support.position.set(pt.x, ground.position.y + height / 2, pt.z);
+                support.castShadow = true;
+                support.receiveShadow = true;
+                scene.add(support);
+            }
+        }
+
+        // 7. Animation & Physics simulation
+        const clock = new THREE.Clock();
+        let progress = 0; // 0.0 to 1.0 along the curve
+        
+        // Compute frames once for banking
+        const frames = curve.computeFrenetFrames(2000, true);
+        
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(clock.getDelta(), 0.1); // Cap delta to prevent huge jumps
+
+            // Dynamic pacing based on height (potential energy -> kinetic energy)
+            const currentPoint = curve.getPointAt(progress);
+            // Max height in our track is roughly 150. Min is roughly -30.
+            const heightFactor = Math.max(0, (150 - currentPoint.y) / 180); 
+            
+            // Base speed + extra speed when lower down
+            const dynamicSpeed = 0.03 + heightFactor * 0.12; 
+            
+            progress += delta * dynamicSpeed;
+            if (progress >= 1.0) progress -= 1.0;
+
+            // Get point and tangent at new progress
+            const point = curve.getPointAt(progress);
+            const tangent = curve.getTangentAt(progress);
+
+            // Position camera slightly above the track (rider's eye level)
+            // Use normal vector from frenet frames to offset correctly even during loops/twists
+            const index = Math.min(Math.floor(progress * 2000), 1999);
+            const normal = frames.normals[index];
+            
+            camera.position.copy(point);
+            camera.position.addScaledVector(normal, 2.5); // 2.5 units above track
+
+            // Look slightly ahead
+            const lookAtProgress = (progress + 0.01) % 1.0;
+            const lookAtPoint = curve.getPointAt(lookAtProgress);
+            const nextNormal = frames.normals[Math.min(Math.floor(lookAtProgress * 2000), 1999)];
+            lookAtPoint.addScaledVector(nextNormal, 2.5);
+
+            // Set the up vector to bank the camera
+            camera.up.copy(normal);
+            camera.lookAt(lookAtPoint);
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle Window Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start Animation Loop
+        animate();
+    </script>
+</body>
+</html>

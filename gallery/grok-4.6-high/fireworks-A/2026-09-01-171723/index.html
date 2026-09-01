@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fireworks</title>
+  <style>
+    :root {
+      --fog: rgba(8, 6, 18, 0.55);
+      --ink: #f4efe4;
+      --mute: rgba(244, 239, 228, 0.62);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #02010a;
+      color: var(--ink);
+      font-family: "Didot", "Bodoni MT", "Hoefler Text", Georgia, serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 50% 28%, transparent 42%, rgba(0, 0, 0, 0.42) 100%),
+        linear-gradient(to bottom, rgba(0, 0, 0, 0.18), transparent 18%, transparent 78%, rgba(0, 0, 0, 0.35));
+    }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: max(28px, env(safe-area-inset-top)) 32px max(22px, env(safe-area-inset-bottom));
+    }
+    .brand {
+      text-align: center;
+      animation: riseFade 5.4s ease 0.4s both;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: clamp(28px, 5vw, 64px);
+      font-weight: 400;
+      letter-spacing: 0.48em;
+      padding-left: 0.48em;
+      text-transform: uppercase;
+      text-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
+    }
+    .brand p {
+      margin: 10px 0 0;
+      font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.38em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+    .dock {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      font-family: "Gill Sans", "Trebuchet MS", sans-serif;
+    }
+    .hint {
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--mute);
+      text-shadow: 0 2px 12px #000;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+    button {
+      appearance: none;
+      border: 1px solid rgba(244, 239, 228, 0.22);
+      background: var(--fog);
+      color: var(--ink);
+      font: 11px/1 "Gill Sans", "Trebuchet MS", sans-serif;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    button:hover { border-color: rgba(244, 239, 228, 0.5); }
+    button:focus-visible { outline: 2px solid #f4efe4; outline-offset: 3px; }
+    @keyframes riseFade {
+      0% { opacity: 0; transform: translateY(12px); }
+      22% { opacity: 1; transform: translateY(0); }
+      70% { opacity: 1; }
+      100% { opacity: 0; transform: translateY(-6px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .brand { animation: none; opacity: 0.85; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+  <div class="vignette"></div>
+  <div class="overlay">
+    <div class="brand">
+      <h1>Fireworks</h1>
+      <p>A night on the water</p>
+    </div>
+    <div class="dock">
+      <div class="hint">Click the sky · F finale · M mute</div>
+      <div class="controls">
+        <button type="button" id="finale">Finale</button>
+        <button type="button" id="mute" aria-pressed="false">Sound off</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const canvas = document.getElementById("sky");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const finaleBtn = document.getElementById("finale");
+      const muteBtn = document.getElementById("mute");
+
+      const MAX = 4200;
+      const PALETTES = [
+        ["#ff5d7a", "#ffb3c1", "#fff5f7"],
+        ["#ffd60a", "#ff9e00", "#fff4c2"],
+        ["#4cc9f0", "#4361ee", "#e7f6ff"],
+        ["#f72585", "#b5179e", "#ffd6f0"],
+        ["#80ffdb", "#64dfdf", "#edfffa"],
+        ["#ff6d00", "#ffba08", "#ffe8c2"],
+        ["#c77dff", "#7b2cbf", "#f1e6ff"],
+        ["#f8f9fa", "#ced4da", "#ffffff"],
+        ["#e5383b", "#ff9f1c", "#fff0c2"],
+        ["#2ec4b6", "#ffbf69", "#ffffff"]
+      ];
+      const TYPES = [
+        "peony", "peony", "peony", "pistil", "chrys", "willow", "kamuro",
+        "ring", "double", "palm", "heart", "spiral", "crackle", "crossette"
+      ];
+      const SCORE = [
+        [1.2, "willow", 0.50, 1],
+        [2.8, "peony", 0.27, 0],
+        [3.05, "peony", 0.73, 2],
+        [5.0, "ring", 0.50, 7],
+        [6.6, "palm", 0.38, 1],
+        [6.95, "palm", 0.62, 1],
+        [8.8, "chrys", 0.22, 3],
+        [9.2, "chrys", 0.78, 4],
+        [11.4, "heart", 0.50, 0],
+        [13.6, "pistil", 0.33, 6],
+        [14.0, "pistil", 0.67, 1],
+        [16.4, "crackle", 0.50, 7],
+        [18.2, "spiral", 0.42, 2],
+        [18.6, "spiral", 0.58, 3],
+        [21.0, "kamuro", 0.50, 1],
+        [23.4, "peony", 0.18, 5],
+        [23.7, "peony", 0.50, 0],
+        [24.0, "peony", 0.82, 6],
+        [26.2, "double", 0.30, 4],
+        [26.7, "double", 0.70, 3],
+        [29.0, "crossette", 0.40, 2],
+        [29.4, "crossette", 0.60, 8],
+        [32.0, "willow", 0.24, 1],
+        [32.3, "peony", 0.50, 9],
+        [32.6, "willow", 0.76, 1],
+        [36.0, "finale"]
+      ];
+      const LOOP = 46;
+
+      const pool = new Array(MAX);
+      for (let i = 0; i < MAX; i++) {
+        pool[i] = {
+          alive: false, kind: "spark",
+          x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0,
+          life: 0, maxLife: 0, size: 0, drag: 0.98, gravity: 90,
+          color: "#fff", sprite: null, trail: false,
+          crackle: 0, split: 0, burstType: "", palette: null, bright: 1
+        };
+      }
+
+      const sprites = new Map();
+      const glows = [];
+      let w = 0, h = 0, dpr = 1, waterY = 0;
+      let stars = [];
+      let skyline = null;
+      let time = 0, last = 0, cueIndex = 0, showT = 0;
+      let finaleUntil = 0, finaleGap = 0, shake = 0;
+      let muted = true, audio = null, noiseBuffer = null;
+      let reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      function hexRgb(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        return [n >> 16 & 255, n >> 8 & 255, n & 255];
+      }
+
+      function spriteFor(hex) {
+        let s = sprites.get(hex);
+        if (s) return s;
+        const size = 64;
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+        const g = c.getContext("2d");
+        const [r, gv, b] = hexRgb(hex);
+        const rad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        rad.addColorStop(0, "rgba(255,255,255,1)");
+        rad.addColorStop(0.12, `rgba(${r},${gv},${b},0.95)`);
+        rad.addColorStop(0.38, `rgba(${r},${gv},${b},0.32)`);
+        rad.addColorStop(1, `rgba(${r},${gv},${b},0)`);
+        g.fillStyle = rad;
+        g.fillRect(0, 0, size, size);
+        sprites.set(hex, c);
+        return c;
+      }
+
+      function rng(seed) {
+        let s = seed % 2147483647;
+        if (s <= 0) s += 2147483646;
+        return () => {
+          s = s * 16807 % 2147483647;
+          return (s - 1) / 2147483646;
+        };
+      }
+
+      function resize() {
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+        w = window.innerWidth;
+        h = window.innerHeight;
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        waterY = h * 0.86;
+        buildStars();
+        buildSkyline();
+      }
+
+      function buildStars() {
+        const rand = rng(42);
+        const n = Math.floor(w * h * 0.00012);
+        stars = [];
+        for (let i = 0; i < n; i++) {
+          stars.push({
+            x: rand() * w,
+            y: rand() * waterY * 0.92,
+            r: rand() * 1.3 + 0.2,
+            a: 0.25 + rand() * 0.75,
+            tw: rand() * Math.PI * 2,
+            sp: 0.4 + rand() * 1.6
+          });
+        }
+      }
+
+      function buildSkyline() {
+        skyline = document.createElement("canvas");
+        skyline.width = Math.max(1, Math.floor(w * dpr));
+        skyline.height = Math.max(1, Math.floor(h * dpr));
+        const g = skyline.getContext("2d");
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const rand = rng(90 + Math.floor(w));
+        let x = -16;
+        while (x < w + 20) {
+          const bw = 16 + rand() * 46;
+          const bh = 28 + Math.pow(rand(), 1.35) * h * 0.2;
+          g.fillStyle = "#07060f";
+          g.fillRect(x, waterY - bh, bw, bh);
+          if (rand() < 0.22) {
+            g.fillRect(x + bw * 0.48, waterY - bh - 12 - rand() * 18, 1.5, 14 + rand() * 16);
+            g.fillStyle = "#d7b56a";
+            g.beginPath();
+            g.arc(x + bw * 0.48 + 0.75, waterY - bh - 12 - rand() * 4, 1.2, 0, Math.PI * 2);
+            g.fill();
+            g.fillStyle = "#07060f";
+          }
+          for (let wy = waterY - bh + 7; wy < waterY - 10; wy += 7) {
+            for (let wx = x + 4; wx < x + bw - 4; wx += 6) {
+              if (rand() < 0.42) {
+                const on = rand();
+                g.fillStyle = on < 0.1
+                  ? "rgba(255, 226, 150, 0.9)"
+                  : `rgba(255, 208, 120, ${0.18 + rand() * 0.28})`;
+                g.fillRect(wx, wy, 2.6, 3.4);
+              }
+            }
+          }
+          x += bw + 1 + rand() * 7;
+        }
+        g.fillStyle = "#05040c";
+        g.fillRect(0, waterY - 6, w, 10);
+      }
+
+      function spawn(opts) {
+        for (let i = 0; i < MAX; i++) {
+          const p = pool[i];
+          if (p.alive) continue;
+          p.alive = true;
+          p.kind = opts.kind || "spark";
+          p.x = opts.x;
+          p.y = opts.y;
+          p.px = opts.x;
+          p.py = opts.y;
+          p.vx = opts.vx || 0;
+          p.vy = opts.vy || 0;
+          p.maxLife = opts.life || 1.2;
+          p.life = p.maxLife;
+          p.size = opts.size || 2;
+          p.drag = opts.drag || 0.985;
+          p.gravity = opts.gravity == null ? 90 : opts.gravity;
+          p.color = opts.color;
+          p.sprite = spriteFor(opts.color);
+          p.trail = !!opts.trail;
+          p.crackle = opts.crackle || 0;
+          p.split = opts.split || 0;
+          p.burstType = opts.burstType || "";
+          p.palette = opts.palette || null;
+          p.bright = opts.bright == null ? 1 : opts.bright;
+          return p;
+        }
+        return null;
+      }
+
+      function pick() {
+        return PALETTES[(Math.random() * PALETTES.length) | 0];
+      }
+
+      function burstSphere(x, y, minSpd, maxSpd, count, color, opts) {
+        for (let i = 0; i < count; i++) {
+          const z = Math.random() * 2 - 1;
+          const r = Math.sqrt(Math.max(0, 1 - z * z));
+          const a = Math.random() * Math.PI * 2;
+          const spd = minSpd + Math.random() * (maxSpd - minSpd);
+          spawn({
+            x, y,
+            vx: r * Math.cos(a) * spd,
+            vy: r * Math.sin(a) * spd * 0.92 - 18,
+            color,
+            size: (opts.size || 2) * (0.65 + Math.abs(z) * 0.7),
+            life: (opts.life || 1.4) * (0.75 + Math.random() * 0.5),
+            drag: opts.drag || 0.984,
+            gravity: opts.gravity == null ? 86 : opts.gravity,
+            trail: opts.trail,
+            crackle: opts.crackle,
+            split: opts.split,
+            bright: 0.55 + Math.abs(z) * 0.45
+          });
+        }
+      }
+
+      function burstRing(x, y, speed, count, color) {
+        for (let i = 0; i < count; i++) {
+          const a = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.04;
+          const spd = speed * (0.94 + Math.random() * 0.12);
+          spawn({
+            x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 10,
+            color, size: 2.1, life: 1.5, drag: 0.986, gravity: 70, trail: true
+          });
+        }
+      }
+
+      function burstHeart(x, y, color) {
+        const n = 90;
+        for (let i = 0; i < n; i++) {
+          const t = (i / n) * Math.PI * 2;
+          const hx = 16 * Math.pow(Math.sin(t), 3);
+          const hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+          spawn({
+            x, y, vx: hx * 9.4, vy: hy * 9.4 - 20,
+            color, size: 2.2, life: 1.7, drag: 0.986, gravity: 70, trail: true
+          });
+        }
+        burstSphere(x, y, 20, 70, 18, "#fff5f7", { size: 1.2, life: 1, gravity: 60 });
+      }
+
+      function burstSpiral(x, y, color) {
+        const n = 80;
+        for (let i = 0; i < n; i++) {
+          const t = i / n;
+          const a = t * Math.PI * 10;
+          const spd = 50 + t * 210;
+          spawn({
+            x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd - 30,
+            color, size: 1.8, life: 1.8, drag: 0.988, gravity: 80, trail: true
+          });
+        }
+      }
+
+      function burstPalm(x, y, color) {
+        const n = 14;
+        for (let i = 0; i < n; i++) {
+          const a = -Math.PI / 2 + (i - (n - 1) / 2) * 0.16;
+          const spd = 220 + Math.random() * 90;
+          spawn({
+            x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+            color, size: 2.4, life: 2.4, drag: 0.99, gravity: 150, trail: true
+          });
+        }
+      }
+
+      function glitter(x, y, n, color) {
+        for (let i = 0; i < n; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const spd = 20 + Math.random() * 90;
+          spawn({
+            x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+            color, size: 1.1, life: 0.5 + Math.random() * 0.7, drag: 0.96, gravity: 40
+          });
+        }
+      }
+
+      function flash(x, y, color) {
+        glows.push({ x, y, color, life: 0.55, max: 0.55, r: 90 + Math.random() * 70 });
+        spawn({
+          kind: "flash", x, y, vx: 0, vy: 0, color, size: 28, life: 0.28, drag: 1, gravity: 0
+        });
+      }
+
+      function explode(x, y, type, palette) {
+        const [c0, c1, c2] = palette;
+        flash(x, y, c0);
+        shake = Math.min(10, shake + (type === "kamuro" || type === "willow" ? 2.2 : 3.4));
+        boom(type);
+        switch (type) {
+          case "peony":
+            burstSphere(x, y, 90, 240, 86, c0, { size: 2.3, life: 1.45, gravity: 78 });
+            glitter(x, y, 22, c2);
+            break;
+          case "pistil":
+            burstSphere(x, y, 110, 260, 88, c0, { size: 2.2, life: 1.5, gravity: 80 });
+            burstSphere(x, y, 30, 100, 36, c2, { size: 1.8, life: 1.2, gravity: 60 });
+            break;
+          case "chrys":
+            burstSphere(x, y, 80, 210, 96, c0, { size: 1.7, life: 2.15, gravity: 88, trail: true, drag: 0.99 });
+            break;
+          case "willow":
+            burstSphere(x, y, 55, 170, 74, c0, { size: 1.5, life: 3.1, gravity: 145, trail: true, drag: 0.993 });
+            break;
+          case "kamuro":
+            burstSphere(x, y, 40, 150, 150, c0, { size: 1.35, life: 3.4, gravity: 155, trail: true, drag: 0.994 });
+            burstSphere(x, y, 20, 80, 30, c2, { size: 1.2, life: 2.2, gravity: 120, trail: true });
+            break;
+          case "ring":
+            burstRing(x, y, 190, 72, c0);
+            glitter(x, y, 16, c2);
+            break;
+          case "double":
+            burstRing(x, y, 140, 48, c0);
+            burstRing(x, y, 210, 56, c1);
+            break;
+          case "palm":
+            burstPalm(x, y, c0);
+            glitter(x, y, 12, c1);
+            break;
+          case "heart":
+            burstHeart(x, y, c0);
+            break;
+          case "spiral":
+            burstSpiral(x, y, c0);
+            break;
+          case "crackle":
+            burstSphere(x, y, 70, 180, 54, c2, { size: 2, life: 1.1, gravity: 70, crackle: 0.42 });
+            break;
+          case "crossette":
+            burstSphere(x, y, 90, 190, 26, c0, { size: 2.4, life: 1.05, gravity: 70, split: 0.38, trail: true });
+            break;
+          default:
+            burstSphere(x, y, 90, 220, 80, c0, { size: 2.2, life: 1.4 });
+        }
+      }
+
+      function launchShell(x, type, palette, power) {
+        const ground = waterY - 8;
+        const apex = h * (0.16 + Math.random() * 0.22);
+        const rise = Math.max(90, ground - apex);
+        const vy = -Math.sqrt(2 * 240 * rise) * (power || (0.92 + Math.random() * 0.18));
+        const vx = (x - w / 2) * 0.04 + (Math.random() - 0.5) * 55;
+        spawn({
+          kind: "shell",
+          x: Math.max(30, Math.min(w - 30, x + (Math.random() - 0.5) * 8)),
+          y: ground,
+          vx, vy,
+          color: "#ffd7a8",
+          size: 2.6,
+          life: 3.2,
+          drag: 0.998,
+          gravity: 240,
+          trail: true,
+          burstType: type,
+          palette
+        });
+        for (let i = 0; i < 6; i++) {
+          spawn({
+            kind: "smoke",
+            x: x + (Math.random() - 0.5) * 8,
+            y: ground,
+            vx: (Math.random() - 0.5) * 18,
+            vy: -10 - Math.random() * 30,
+            color: "#6b6578",
+            size: 6 + Math.random() * 8,
+            life: 0.8,
+            drag: 0.94,
+            gravity: -20
+          });
+        }
+        whoosh();
+      }
+
+      function launchAt(px, type, paletteIndex) {
+        const palette = paletteIndex == null ? pick() : PALETTES[paletteIndex % PALETTES.length];
+        const kind = type || TYPES[(Math.random() * TYPES.length) | 0];
+        launchShell(px, kind, palette);
+      }
+
+      function startFinale() {
+        finaleUntil = time + (reduced ? 4 : 8.5);
+        finaleGap = 0;
+      }
+
+      function cracklePop(x, y, color) {
+        const n = 7 + (Math.random() * 6) | 0;
+        for (let i = 0; i < n; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const spd = 40 + Math.random() * 140;
+          spawn({
+            x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+            color, size: 1.3, life: 0.28 + Math.random() * 0.25, drag: 0.93, gravity: 50
+          });
+        }
+        snap();
+      }
+
+      function splitStar(x, y, color) {
+        for (let i = 0; i < 4; i++) {
+          const a = i * Math.PI / 2 + Math.PI / 4;
+          spawn({
+            x, y, vx: Math.cos(a) * 150, vy: Math.sin(a) * 150,
+            color, size: 1.7, life: 0.7, drag: 0.98, gravity: 90, trail: true
+          });
+        }
+      }
+
+      function update(dt) {
+        time += dt;
+        showT += dt;
+        if (showT >= LOOP) {
+          showT -= LOOP;
+          cueIndex = 0;
+        }
+        while (cueIndex < SCORE.length && SCORE[cueIndex][0] <= showT) {
+          const cue = SCORE[cueIndex++];
+          if (cue[1] === "finale") startFinale();
+          else launchAt(w * cue[2], cue[1], cue[3]);
+        }
+
+        if (time < finaleUntil) {
+          finaleGap -= dt;
+          if (finaleGap <= 0) {
+            finaleGap = reduced ? 0.22 : 0.1 + Math.random() * 0.12;
+            launchAt(w * (0.12 + Math.random() * 0.76));
+            if (Math.random() < 0.45) launchAt(w * (0.12 + Math.random() * 0.76));
+          }
+        }
+
+        shake *= Math.pow(0.04, dt);
+
+        for (let i = glows.length - 1; i >= 0; i--) {
+          glows[i].life -= dt;
+          if (glows[i].life <= 0) glows.splice(i, 1);
+        }
+
+        for (let i = 0; i < MAX; i++) {
+          const p = pool[i];
+          if (!p.alive) continue;
+          p.px = p.x;
+          p.py = p.y;
+          p.vy += p.gravity * dt;
+          p.vx *= Math.pow(p.drag, dt * 60);
+          p.vy *= Math.pow(p.drag, dt * 60);
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= dt;
+
+          if (p.kind === "shell" && (p.life < 1.7 && p.vy > -40 || p.y < h * 0.12)) {
+            p.alive = false;
+            explode(p.x, p.y, p.burstType, p.palette);
+            continue;
+          }
+          if (p.crackle && p.life < p.crackle * p.maxLife) {
+            p.alive = false;
+            cracklePop(p.x, p.y, p.color);
+            continue;
+          }
+          if (p.split && p.life < p.split * p.maxLife) {
+            p.alive = false;
+            splitStar(p.x, p.y, p.color);
+            continue;
+          }
+          if (p.life <= 0 || p.y > h + 40) p.alive = false;
+        }
+      }
+
+      function drawSpark(p, reflect) {
+        let x = p.x;
+        let y = p.y;
+        if (reflect) {
+          if (p.y > waterY) return;
+          const dy = waterY - p.y;
+          y = waterY + dy * 0.52;
+          x += Math.sin(time * 2.2 + p.x * 0.04) * 5;
+        }
+        const t = Math.max(0, p.life / p.maxLife);
+        const fade = p.kind === "flash" ? t : Math.pow(t, 0.55);
+        const alpha = fade * p.bright * (reflect ? 0.28 : 1);
+        if (alpha < 0.02) return;
+
+        if (p.trail && !reflect) {
+          ctx.globalAlpha = alpha * 0.55;
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = Math.max(0.6, p.size * 0.55);
+          ctx.beginPath();
+          ctx.moveTo(p.px, p.py);
+          ctx.lineTo(p.x, p.y);
+          ctx.stroke();
+        }
+
+        const scale = p.kind === "flash"
+          ? p.size * (1.4 - t) * 6
+          : p.kind === "smoke"
+            ? p.size * (1.4 - t * 0.4) * (reflect ? 0.5 : 1)
+            : p.size * (6 + t * 4) * (reflect ? 0.7 : 1);
+        ctx.globalAlpha = p.kind === "smoke" ? alpha * 0.18 : alpha;
+        ctx.drawImage(p.sprite, x - scale / 2, y - scale / 2, scale, scale);
+      }
+
+      function draw() {
+        const sx = (Math.random() - 0.5) * shake;
+        const sy = (Math.random() - 0.5) * shake;
+        ctx.setTransform(dpr, 0, 0, dpr, sx * dpr, sy * dpr);
+
+        const sky = ctx.createLinearGradient(0, 0, 0, h);
+        sky.addColorStop(0, "#01010c");
+        sky.addColorStop(0.42, "#0a1230");
+        sky.addColorStop(0.78, "#1c1436");
+        sky.addColorStop(0.86, "#2a1838");
+        sky.addColorStop(1, "#070616");
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, w, h);
+
+        const moonX = w * 0.82;
+        const moonY = h * 0.16;
+        const moon = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 90);
+        moon.addColorStop(0, "rgba(255, 244, 214, 0.95)");
+        moon.addColorStop(0.18, "rgba(255, 236, 190, 0.4)");
+        moon.addColorStop(1, "rgba(255, 236, 190, 0)");
+        ctx.fillStyle = moon;
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, 90, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff6d8";
+        ctx.beginPath();
+        ctx.arc(moonX, moonY, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#e8f0ff";
+        for (let i = 0; i < stars.length; i++) {
+          const s = stars[i];
+          const tw = 0.45 + 0.55 * Math.abs(Math.sin(time * s.sp + s.tw));
+          ctx.globalAlpha = s.a * tw;
+          ctx.fillRect(s.x, s.y, s.r, s.r);
+        }
+        ctx.globalAlpha = 1;
+
+        ctx.globalCompositeOperation = "lighter";
+        for (let i = 0; i < glows.length; i++) {
+          const g = glows[i];
+          const a = g.life / g.max;
+          const rad = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r * (1.4 - a));
+          const [r, gv, b] = hexRgb(g.color);
+          rad.addColorStop(0, `rgba(${r},${gv},${b},${0.28 * a})`);
+          rad.addColorStop(1, `rgba(${r},${gv},${b},0)`);
+          ctx.fillStyle = rad;
+          ctx.fillRect(g.x - 180, g.y - 180, 360, 360);
+        }
+
+        for (let i = 0; i < MAX; i++) if (pool[i].alive) drawSpark(pool[i], false);
+
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        if (skyline) ctx.drawImage(skyline, 0, 0, w, h);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, waterY, w, h - waterY);
+        ctx.clip();
+        ctx.globalCompositeOperation = "lighter";
+        for (let i = 0; i < MAX; i++) if (pool[i].alive) drawSpark(pool[i], true);
+        ctx.restore();
+
+        ctx.globalCompositeOperation = "source-over";
+        const water = ctx.createLinearGradient(0, waterY, 0, h);
+        water.addColorStop(0, "rgba(6, 10, 24, 0.28)");
+        water.addColorStop(0.18, "rgba(4, 8, 20, 0.55)");
+        water.addColorStop(1, "rgba(2, 4, 12, 0.82)");
+        ctx.fillStyle = water;
+        ctx.fillRect(0, waterY, w, h - waterY);
+
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = "#cfe6ff";
+        for (let i = 0; i < 7; i++) {
+          const yy = waterY + 6 + i * (h - waterY) / 8 + Math.sin(time * 1.4 + i) * 1.5;
+          ctx.fillRect(0, yy, w, 1);
+        }
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(0, waterY, w, 1.2);
+      }
+
+      function ensureAudio() {
+        if (!audio) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          audio = new AC();
+          noiseBuffer = audio.createBuffer(1, audio.sampleRate * 0.4, audio.sampleRate);
+          const data = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        }
+        if (audio.state === "suspended") audio.resume();
+        return audio;
+      }
+
+      function envGain(duration, peak) {
+        const g = audio.createGain();
+        g.gain.setValueAtTime(0.0001, audio.currentTime);
+        g.gain.exponentialRampToValueAtTime(peak, audio.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + duration);
+        return g;
+      }
+
+      function whoosh() {
+        if (muted || !ensureAudio()) return;
+        const src = audio.createBufferSource();
+        src.buffer = noiseBuffer;
+        const f = audio.createBiquadFilter();
+        f.type = "bandpass";
+        f.frequency.setValueAtTime(900, audio.currentTime);
+        f.frequency.exponentialRampToValueAtTime(320, audio.currentTime + 0.28);
+        const g = envGain(0.3, 0.09);
+        src.connect(f); f.connect(g); g.connect(audio.destination);
+        src.start();
+        src.stop(audio.currentTime + 0.32);
+      }
+
+      function boom(type) {
+        if (muted || !ensureAudio()) return;
+        const osc = audio.createOscillator();
+        osc.type = "sine";
+        const base = type === "willow" || type === "kamuro" ? 90 : 140;
+        osc.frequency.setValueAtTime(base + Math.random() * 40, audio.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(28, audio.currentTime + 0.7);
+        const g = envGain(0.8, type === "crackle" ? 0.12 : 0.22);
+        const f = audio.createBiquadFilter();
+        f.type = "lowpass";
+        f.frequency.value = 420;
+        osc.connect(f); f.connect(g); g.connect(audio.destination);
+        osc.start();
+        osc.stop(audio.currentTime + 0.82);
+
+        const src = audio.createBufferSource();
+        src.buffer = noiseBuffer;
+        const nf = audio.createBiquadFilter();
+        nf.type = "lowpass";
+        nf.frequency.value = 800;
+        const ng = envGain(0.35, 0.14);
+        src.connect(nf); nf.connect(ng); ng.connect(audio.destination);
+        src.start();
+        src.stop(audio.currentTime + 0.36);
+      }
+
+      function snap() {
+        if (muted || !ensureAudio()) return;
+        const src = audio.createBufferSource();
+        src.buffer = noiseBuffer;
+        const f = audio.createBiquadFilter();
+        f.type = "highpass";
+        f.frequency.value = 1800 + Math.random() * 1200;
+        const g = envGain(0.08, 0.06);
+        src.connect(f); f.connect(g); g.connect(audio.destination);
+        src.start();
+        src.stop(audio.currentTime + 0.1);
+      }
+
+      function pointerLaunch(e) {
+        ensureAudio();
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (w / rect.width);
+        launchAt(x);
+      }
+
+      function setMuted(next) {
+        muted = next;
+        muteBtn.textContent = muted ? "Sound off" : "Sound on";
+        muteBtn.setAttribute("aria-pressed", String(!muted));
+        if (!muted) ensureAudio();
+        else if (audio && audio.state === "running") audio.suspend();
+      }
+
+      canvas.addEventListener("pointerdown", pointerLaunch);
+      finaleBtn.addEventListener("click", () => {
+        ensureAudio();
+        startFinale();
+      });
+      muteBtn.addEventListener("click", () => setMuted(!muted));
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "f" || e.key === "F") {
+          ensureAudio();
+          startFinale();
+        } else if (e.key === "m" || e.key === "M") {
+          setMuted(!muted);
+        } else if (e.key === " ") {
+          e.preventDefault();
+          ensureAudio();
+          launchAt(w * (0.2 + Math.random() * 0.6));
+        }
+      });
+      window.addEventListener("resize", resize);
+
+      function frame(now) {
+        if (!last) last = now;
+        const dt = Math.min(0.033, (now - last) / 1000);
+        last = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(frame);
+      }
+
+      resize();
+      setMuted(true);
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>
+

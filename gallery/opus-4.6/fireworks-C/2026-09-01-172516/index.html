@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stunning Fireworks Display</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050510;
+            background: radial-gradient(circle at center bottom, #111424 0%, #050510 100%);
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+            user-select: none;
+            animation: fadeOut 5s forwards;
+            animation-delay: 3s;
+        }
+        @keyframes fadeOut {
+            to { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="instructions">Click anywhere to launch a firework</div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+        
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            initStars();
+        });
+
+        // Utilities
+        function random(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+        
+        function calculateDistance(p1x, p1y, p2x, p2y) {
+            return Math.hypot(p1x - p2x, p1y - p2y);
+        }
+
+        // Stars Background
+        const stars = [];
+        function initStars() {
+            stars.length = 0;
+            const starCount = Math.floor((width * height) / 4000);
+            for(let i = 0; i < starCount; i++) {
+                stars.push({
+                    x: random(0, width),
+                    y: random(0, height),
+                    size: random(0.2, 1.5),
+                    alpha: random(0.1, 0.8),
+                    flickerSpeed: random(0.005, 0.02)
+                });
+            }
+        }
+        
+        function drawStars() {
+            ctx.globalCompositeOperation = 'source-over';
+            stars.forEach(star => {
+                star.alpha += star.flickerSpeed;
+                if (star.alpha > 1 || star.alpha < 0.1) star.flickerSpeed *= -1;
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // Particle Class
+        class Particle {
+            constructor(x, y, hue, velocityScale = 1, isFlash = false) {
+                this.x = x;
+                this.y = y;
+                this.history = [];
+                this.historyLength = isFlash ? 1 : 5;
+                this.angle = random(0, Math.PI * 2);
+                this.speed = random(2, 12) * velocityScale;
+                this.friction = 0.95;
+                this.gravity = 0.15;
+                this.hue = isFlash ? 0 : random(hue - 30, hue + 30);
+                this.brightness = isFlash ? 100 : random(50, 80);
+                this.alpha = 1;
+                this.decay = random(0.01, 0.03);
+                this.size = isFlash ? random(15, 30) : random(1, 3);
+                this.isFlash = isFlash;
+            }
+
+            update(index, particles) {
+                this.history.push({ x: this.x, y: this.y });
+                if (this.history.length > this.historyLength) {
+                    this.history.shift();
+                }
+
+                if (!this.isFlash) {
+                    this.speed *= this.friction;
+                    this.x += Math.cos(this.angle) * this.speed;
+                    this.y += Math.sin(this.angle) * this.speed + this.gravity;
+                }
+                this.alpha -= this.decay;
+
+                if (this.alpha <= 0) {
+                    particles.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                if (this.history.length > 1) {
+                    ctx.moveTo(this.history[0].x, this.history[0].y);
+                } else {
+                    ctx.moveTo(this.x, this.y);
+                }
+                ctx.lineTo(this.x, this.y);
+                
+                if (this.isFlash) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = `hsla(${this.hue}, 100%, ${this.brightness}%, ${this.alpha})`;
+                    ctx.lineWidth = this.size;
+                    ctx.lineCap = 'round';
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // Firework Class
+        class Firework {
+            constructor(sx, sy, tx, ty) {
+                this.x = sx;
+                this.y = sy;
+                this.sx = sx;
+                this.sy = sy;
+                this.tx = tx;
+                this.ty = ty;
+                this.distanceToTarget = calculateDistance(sx, sy, tx, ty);
+                this.distanceTraveled = 0;
+                this.history = [];
+                this.historyLength = 3;
+                this.angle = Math.atan2(ty - sy, tx - sx);
+                this.speed = 3;
+                this.acceleration = 1.04;
+                this.hue = random(0, 360);
+            }
+
+            update(index, fireworks, particles) {
+                this.history.push({ x: this.x, y: this.y });
+                if (this.history.length > this.historyLength) {
+                    this.history.shift();
+                }
+
+                this.speed *= this.acceleration;
+                const vx = Math.cos(this.angle) * this.speed;
+                const vy = Math.sin(this.angle) * this.speed;
+                this.distanceTraveled = calculateDistance(this.sx, this.sy, this.x + vx, this.y + vy);
+
+                if (this.distanceTraveled >= this.distanceToTarget) {
+                    this.explode(particles);
+                    fireworks.splice(index, 1);
+                } else {
+                    this.x += vx;
+                    this.y += vy;
+                    
+                    // Sparkle trail
+                    if (Math.random() < 0.3) {
+                        const trail = new Particle(this.x, this.y, this.hue, 0.1);
+                        trail.decay = 0.05;
+                        trail.size = 1.5;
+                        particles.push(trail);
+                    }
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                if (this.history.length > 0) {
+                    ctx.moveTo(this.history[0].x, this.history[0].y);
+                } else {
+                    ctx.moveTo(this.x, this.y);
+                }
+                ctx.lineTo(this.x, this.y);
+                ctx.strokeStyle = `hsl(${this.hue}, 100%, 70%)`;
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+            }
+
+            explode(particles) {
+                const particleCount = Math.floor(random(80, 160));
+                for (let i = 0; i < particleCount; i++) {
+                    particles.push(new Particle(this.tx, this.ty, this.hue));
+                }
+                // Core flash
+                const flash = new Particle(this.tx, this.ty, 0, 0, true);
+                flash.decay = 0.08;
+                particles.push(flash);
+            }
+        }
+
+        const fireworks = [];
+        const particles = [];
+
+        let lastTime = 0;
+        let timer = 0;
+        let launchInterval = 800;
+
+        initStars();
+
+        function autoLaunch(deltaTime) {
+            timer += deltaTime;
+            if (timer > launchInterval) {
+                const sx = width / 2 + random(-150, 150);
+                const sy = height;
+                const tx = random(width * 0.1, width * 0.9);
+                const ty = random(height * 0.1, height * 0.5);
+                fireworks.push(new Firework(sx, sy, tx, ty));
+                timer = 0;
+                launchInterval = random(600, 2500);
+            }
+        }
+
+        function loop(timestamp) {
+            requestAnimationFrame(loop);
+            const deltaTime = timestamp - lastTime || 16;
+            lastTime = timestamp;
+
+            // Fade canvas for motion blur
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(5, 5, 16, 0.2)';
+            ctx.fillRect(0, 0, width, height);
+            
+            drawStars();
+
+            ctx.globalCompositeOperation = 'lighter';
+
+            for (let i = fireworks.length - 1; i >= 0; i--) {
+                fireworks[i].draw();
+                fireworks[i].update(i, fireworks, particles);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].draw();
+                particles[i].update(i, particles);
+            }
+
+            autoLaunch(deltaTime);
+        }
+
+        // Start
+        requestAnimationFrame((timestamp) => {
+            lastTime = timestamp;
+            loop(timestamp);
+        });
+
+        // Click to launch
+        canvas.addEventListener('mousedown', (e) => {
+            const sx = width / 2;
+            const sy = height;
+            fireworks.push(new Firework(sx, sy, e.clientX, e.clientY));
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const sx = width / 2;
+            const sy = height;
+            for(let i=0; i<e.touches.length; i++){
+                fireworks.push(new Firework(sx, sy, e.touches[i].clientX, e.touches[i].clientY));
+            }
+        }, {passive: false});
+
+    </script>
+</body>
+</html>

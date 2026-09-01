@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Formicarium — Ant Colony Simulation</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='20' r='6' fill='%23c98b3f'/%3E%3Ccircle cx='18' cy='16' r='4' fill='%238a5a24'/%3E%3Ccircle cx='25' cy='13' r='3.4' fill='%23c98b3f'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --panel-bg: linear-gradient(180deg, rgba(26,21,15,.92), rgba(17,13,9,.88));
+    --panel-border: rgba(232,190,130,.14);
+    --ink: #d8cfc2;
+    --ink-dim: #94886f;
+    --ink-faint: #6f6555;
+    --amber: #e8a24a;
+    --amber-bright: #ffd9a0;
+    --teal: #4fc3ad;
+    --leaf: #9fd468;
+  }
+  *{ box-sizing: border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; overflow:hidden; background:#0d0b09; color:var(--ink);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-user-select:none; user-select:none;
+  }
+  canvas#sim{ position:fixed; inset:0; display:block; cursor:crosshair; }
+  .vignette{
+    position:fixed; inset:0; pointer-events:none; z-index:2;
+    background: radial-gradient(ellipse 120% 105% at 50% 45%, rgba(0,0,0,0) 52%, rgba(0,0,0,.34) 82%, rgba(0,0,0,.55) 100%);
+  }
+  .panel{
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.04);
+    backdrop-filter: blur(8px);
+  }
+  .hud{ position:fixed; z-index:5; }
+
+  /* Title */
+  .hud-title{ top:16px; left:16px; padding:12px 18px 13px; }
+  .hud-title h1{
+    margin:0; font-family: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+    font-size:16px; font-weight:600; letter-spacing:.42em; color:#ecdcbe; text-indent:.42em;
+  }
+  .hud-title p{
+    margin:5px 0 0; font-size:10px; letter-spacing:.24em; text-transform:uppercase;
+    color:var(--ink-dim); text-indent:.24em;
+  }
+
+  /* Stats */
+  .hud-stats{ top:16px; right:16px; padding:12px 16px; min-width:186px; }
+  .hud-stats .row{ display:flex; justify-content:space-between; align-items:baseline; gap:18px; padding:3.5px 0; }
+  .hud-stats .row + .row{ border-top:1px solid rgba(255,255,255,.05); }
+  .hud-stats .label{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-dim); }
+  .hud-stats .value{
+    font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+    font-size:13px; color:#f0c98d; font-variant-numeric: tabular-nums;
+  }
+  .hud-stats .value.teal{ color:#8ad9c6; }
+
+  /* Legend */
+  .hud-legend{ bottom:16px; left:16px; padding:11px 15px; font-size:11px; }
+  .hud-legend .row{ display:flex; align-items:center; gap:9px; padding:2.5px 0; color:#b7ab93; letter-spacing:.03em; }
+  .sw{ width:22px; height:0; border-radius:2px; flex:0 0 auto; }
+  .sw.trail-food{ height:3px; background:linear-gradient(90deg, transparent, #ffb454); box-shadow:0 0 7px rgba(255,170,80,.65); }
+  .sw.trail-home{ height:3px; background:linear-gradient(90deg, transparent, #4fc3ad); box-shadow:0 0 7px rgba(79,195,173,.6); }
+  .sw.dot-food{ width:7px; height:7px; border-radius:50%; background:var(--leaf); box-shadow:0 0 6px rgba(159,212,104,.7); }
+  .sw.nest{ width:9px; height:9px; border-radius:50%; border:2px solid #8a6a3e; background:radial-gradient(circle, #241a10 40%, #4d3a24 41%); }
+  .sw.rock{ width:9px; height:9px; border-radius:2px; background:#3e382f; border:1px solid #57503f; }
+  .sw-lead{ width:22px; display:flex; justify-content:center; flex:0 0 auto; }
+
+  /* Hint */
+  .hud-hint{ bottom:16px; right:16px; padding:9px 14px; font-size:10.5px; color:var(--ink-faint); letter-spacing:.05em; text-align:right; line-height:1.7; }
+  .hud-hint b{ color:#a3977e; font-weight:600; }
+
+  /* Control bar */
+  .bar{
+    bottom:16px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:9px; padding:8px 10px;
+  }
+  .divider{ width:1px; height:22px; background:rgba(255,255,255,.09); }
+  button.ctl{
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    height:32px; min-width:34px; padding:0 11px;
+    background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.09);
+    border-radius:9px; color:#cbbfa8; cursor:pointer;
+    font-family:inherit; font-size:12px; letter-spacing:.04em;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  button.ctl:hover{ background:rgba(255,255,255,.08); color:#e7dcc4; }
+  button.ctl:active{ transform:translateY(1px); }
+  button.ctl.on{
+    border-color:rgba(217,155,74,.65); color:var(--amber-bright);
+    background:rgba(217,155,74,.14); box-shadow:0 0 12px rgba(217,155,74,.12) inset;
+  }
+  button.ctl svg{ width:15px; height:15px; display:block; }
+  button.ctl .ic-play, button.ctl .ic-pause{ display:none; }
+  button.ctl.running .ic-pause{ display:block; }
+  button.ctl:not(.running) .ic-play{ display:block; }
+  .seg{ display:flex; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.09); border-radius:9px; overflow:hidden; }
+  .seg button{
+    height:30px; padding:0 11px; border:none; background:transparent; color:#a99d84;
+    cursor:pointer; font-family:inherit; font-size:11.5px; letter-spacing:.03em;
+    border-right:1px solid rgba(255,255,255,.06); transition:background .15s,color .15s;
+    display:flex; align-items:center;
+  }
+  .seg button:last-child{ border-right:none; }
+  .seg button:hover{ color:#e2d7bf; }
+  .seg button.on{ background:rgba(217,155,74,.2); color:var(--amber-bright); }
+  .tools{ display:flex; gap:6px; }
+  .brush{ display:flex; align-items:center; gap:8px; padding:0 4px; transition:opacity .2s; }
+  .brush.hidden{ opacity:0; pointer-events:none; }
+  .brush .blabel{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-dim); }
+  .brush input[type=range]{
+    width:86px; accent-color:var(--amber); cursor:pointer; height:30px;
+  }
+  .brush .bval{
+    font-family:ui-monospace, Consolas, monospace; font-size:11px; color:#f0c98d; min-width:20px; text-align:right;
+  }
+  .tlabel{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); padding:0 3px; }
+
+  @media (max-width: 860px){
+    .hud-legend, .hud-hint{ display:none; }
+    .hud-stats{ min-width:150px; }
+  }
+  @media (max-width: 640px){
+    .hud-title p{ display:none; }
+    .brush{ display:none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="sim"></canvas>
+<div class="vignette"></div>
+
+<header class="panel hud hud-title">
+  <h1>FORMICARIUM</h1>
+  <p>a living ant colony</p>
+</header>
+
+<aside class="panel hud hud-stats">
+  <div class="row"><span class="label">Colony</span><span class="value" id="stat-pop">0</span></div>
+  <div class="row"><span class="label">Food stored</span><span class="value" id="stat-stored">0</span></div>
+  <div class="row"><span class="label">Food in world</span><span class="value teal" id="stat-world">0</span></div>
+  <div class="row"><span class="label">Elapsed</span><span class="value teal" id="stat-time">0:00</span></div>
+</aside>
+
+<div class="panel hud hud-legend">
+  <div class="row"><span class="sw-lead"><span class="sw trail-food"></span></span>food trail</div>
+  <div class="row"><span class="sw-lead"><span class="sw trail-home"></span></span>home trail</div>
+  <div class="row"><span class="sw-lead"><span class="sw dot-food"></span></span>food</div>
+  <div class="row"><span class="sw-lead"><span class="sw nest"></span></span>nest</div>
+  <div class="row"><span class="sw-lead"><span class="sw rock"></span></span>rock</div>
+</div>
+
+<footer class="panel hud bar" id="bar">
+  <button class="ctl running" id="btn-play" title="Pause / resume (space)">
+    <svg class="ic-pause" viewBox="0 0 16 16" fill="currentColor"><rect x="3.4" y="2.6" width="3.2" height="10.8" rx="1"/><rect x="9.4" y="2.6" width="3.2" height="10.8" rx="1"/></svg>
+    <svg class="ic-play" viewBox="0 0 16 16" fill="currentColor"><path d="M4.4 2.8l8.6 5.2-8.6 5.2z"/></svg>
+  </button>
+  <button class="ctl" id="btn-reset" title="Regenerate world (R)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 8.4a5.2 5.2 0 1 1-1.7-4.1"/><path d="M13.4 1.9v3.1h-3.1"/></svg>
+  </button>
+  <span class="divider"></span>
+  <div class="seg" id="speed-seg">
+    <button data-speed="0.5">&#189;&times;</button>
+    <button data-speed="1" class="on">1&times;</button>
+    <button data-speed="2">2&times;</button>
+    <button data-speed="4">4&times;</button>
+  </div>
+  <span class="divider"></span>
+  <div class="tools" id="tools">
+    <button class="ctl on" data-tool="observe" title="Observe (1)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 8s2.5-4.3 6.4-4.3S14.4 8 14.4 8s-2.5 4.3-6.4 4.3S1.6 8 1.6 8z"/><circle cx="8" cy="8" r="2"/></svg>
+    </button>
+    <button class="ctl" data-tool="food" title="Scatter food (2)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="5.6" cy="10.6" r="2.1"/><circle cx="10.4" cy="9.6" r="1.7"/><circle cx="8.1" cy="5.2" r="1.5"/></svg>
+      <span>food</span>
+    </button>
+    <button class="ctl" data-tool="rock" title="Place rock (3)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M3 12.8l1.4-5.2L8 3.6l4.3 2 1.6 7.2z"/><path d="M4.4 7.6L8.6 9l1-4.4"/></svg>
+      <span>rock</span>
+    </button>
+    <button class="ctl" data-tool="erase" title="Erase (4) — or right-drag anytime">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 11.4L8.4 4l4.4 3.2-4.2 5.6H5z"/><path d="M4 13.6h9.2"/></svg>
+      <span>erase</span>
+    </button>
+  </div>
+  <span class="divider"></span>
+  <div class="brush hidden" id="brush-group">
+    <span class="blabel">Brush</span>
+    <input type="range" id="brush" min="8" max="64" value="22" step="1">
+    <span class="bval" id="brush-val">22</span>
+  </div>
+</footer>
+
+<div class="panel hud hud-hint">
+  <b>drag</b> paint with tool &nbsp;&middot;&nbsp; <b>right-drag</b> erase<br>
+  <b>space</b> pause &nbsp;&middot;&nbsp; <b>r</b> new world &nbsp;&middot;&nbsp; <b>1&ndash;4</b> tools
+</div>
+
+<script>
+'use strict';
+(function(){
+  const TAU = Math.PI * 2;
+  const canvas = document.getElementById('sim');
+  const ctx = canvas.getContext('2d');
+
+  /* ------------------------------------------------------------------ */
+  /* Tuning                                                              */
+  /* ------------------------------------------------------------------ */
+  const CELL = 4;                       // pheromone cell size, px
+  const CFG = {
+    maxAnts: 520,
+    startAnts: 90,
+    speed: 1.15,                        // px per step (60 steps/s at 1x)
+    wander: 0.16,                       // random heading noise
+    sensorDist: 13,                     // antenna reach
+    sensorAngle: 0.52,                  // antenna spread, radians
+    turn: 0.32,                         // steering rate toward sensed trail
+    smellFood: 36,                      // direct food-sense radius
+    smellNest: 46,                      // direct nest-sense radius
+    foodDecay: 0.982,                   // food-trail evaporation / step
+    homeDecay: 0.9885,                  // home-trail evaporation / step
+    strDecay: 0.999,                    // per-ant deposit strength fade
+    foodDrop: 1.35,                     // deposit while returning with food
+    homeDrop: 1.0,                      // deposit while out foraging
+    maxPh: 6,                           // pheromone clamp
+    nestR: 16
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* State                                                               */
+  /* ------------------------------------------------------------------ */
+  let W = 0, H = 0, DPR = 1, GW = 0, GH = 0;
+  let food, home, foodTmp, homeTmp, wall;        // grid arrays
+  let pheroCanvas, pheroCtx, phImage, phBuf;
+  let wallCanvas, wallCtx, wallsDirty = true;
+  let bgCanvas = null;
+  let antFree, antCarry;                         // sprites
+
+  const nest = { x: 0, y: 0, stored: 0, glow: 0, pebbles: [], storeSpots: [] };
+  let ants = [], piles = [], ripples = [];
+  let steps = 0, paused = false, speedMul = 1, acc = 0;
+  let nextAntCost = 10;
+  let tool = 'observe', brush = 22;
+  const mouse = { x: -999, y: -999, inside: false, down: false, btn: 0,
+                  lastX: 0, lastY: 0, dropX: -999, dropY: -999 };
+
+  const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+  const rand = Math.random;
+
+  function angDelta(a, b){
+    let d = (b - a) % TAU;
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    return d;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* World setup                                                         */
+  /* ------------------------------------------------------------------ */
+  function resize(){
+    const w = Math.max(320, window.innerWidth);
+    const h = Math.max(320, window.innerHeight);
+    DPR = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(w * DPR);
+    canvas.height = Math.round(h * DPR);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    const gw = Math.ceil(w / CELL), gh = Math.ceil(h / CELL);
+    if (GW > 0){
+      const nFood = new Float32Array(gw * gh);
+      const nHome = new Float32Array(gw * gh);
+      const nWall = new Uint8Array(gw * gh);
+      const cw = Math.min(GW, gw), ch = Math.min(GH, gh);
+      for (let y = 0; y < ch; y++){
+        const so = y * GW, to = y * gw;
+        for (let x = 0; x < cw; x++){
+          nFood[to + x] = food[so + x];
+          nHome[to + x] = home[so + x];
+          nWall[to + x] = wall[so + x];
+        }
+      }
+      food = nFood; home = nHome; wall = nWall;
+    } else {
+      food = new Float32Array(gw * gh);
+      home = new Float32Array(gw * gh);
+      wall = new Uint8Array(gw * gh);
+    }
+    foodTmp = new Float32Array(gw * gh);
+    homeTmp = new Float32Array(gw * gh);
+    GW = gw; GH = gh; W = w; H = h;
+
+    nest.x = clamp(nest.x || W * 0.5, 60, W - 60);
+    nest.y = clamp(nest.y || H * 0.58, 60, H - 60);
+    piles = piles.filter(p => p.x > 24 && p.x < W - 24 && p.y > 24 && p.y < H - 24);
+    ants = ants.filter(a => a.x > 4 && a.x < W - 4 && a.y > 4 && a.y < H - 4);
+
+    pheroCanvas = document.createElement('canvas');
+    pheroCanvas.width = GW; pheroCanvas.height = GH;
+    pheroCtx = pheroCanvas.getContext('2d');
+    phImage = pheroCtx.createImageData(GW, GH);
+    phBuf = new Uint32Array(phImage.data.buffer);
+
+    wallCanvas = document.createElement('canvas');
+    wallCanvas.width = canvas.width; wallCanvas.height = canvas.height;
+    wallCtx = wallCanvas.getContext('2d');
+    wallsDirty = true;
+
+    buildBG();
+  }
+
+  function buildBG(){
+    bgCanvas = document.createElement('canvas');
+    bgCanvas.width = canvas.width; bgCanvas.height = canvas.height;
+    const g = bgCanvas.getContext('2d');
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    g.fillStyle = '#161210';
+    g.fillRect(0, 0, W, H);
+
+    // soft tonal patches
+    for (let i = 0; i < 26; i++){
+      const x = rand() * W, y = rand() * H, r = 60 + rand() * 170;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, rand() < 0.5 ? 'rgba(9,7,5,0.30)' : 'rgba(40,31,22,0.20)');
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+    }
+    // soil grain
+    const n = Math.floor(W * H / 240);
+    for (let i = 0; i < n; i++){
+      const x = rand() * W, y = rand() * H;
+      g.fillStyle = rand() < 0.5 ? 'rgba(0,0,0,0.16)' : 'rgba(255,235,200,0.045)';
+      const s = rand() < 0.85 ? 1 : 2;
+      g.fillRect(x, y, s, s);
+    }
+    // scattered pebbles
+    const p = Math.floor(W * H / 24000);
+    for (let i = 0; i < p; i++){
+      const x = rand() * W, y = rand() * H, r = 1.6 + rand() * 2.6;
+      g.fillStyle = 'rgba(72,61,46,0.55)';
+      g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(140,120,90,0.25)';
+      g.beginPath(); g.arc(x - r * 0.3, y - r * 0.35, r * 0.35, 0, TAU); g.fill();
+    }
+  }
+
+  function genNestDecor(){
+    nest.pebbles = [];
+    for (let i = 0; i < 12; i++){
+      nest.pebbles.push({
+        a: (i / 12) * TAU + (rand() - 0.5) * 0.35,
+        d: CFG.nestR * 1.55 + rand() * 6,
+        r: 1.5 + rand() * 1.7
+      });
+    }
+    nest.storeSpots = [];
+    for (let i = 0; i < 26; i++){
+      const a = rand() * TAU, d = CFG.nestR * (0.95 + rand() * 0.5);
+      nest.storeSpots.push({ x: Math.cos(a) * d * 1.25, y: Math.sin(a) * d * 0.85, p: rand() * TAU });
+    }
+  }
+
+  function paintWallDisc(cx, cy, r, val){
+    const gxc = Math.floor(cx / CELL), gyc = Math.floor(cy / CELL), gr = Math.ceil(r / CELL);
+    for (let y = gyc - gr; y <= gyc + gr; y++){
+      if (y < 0 || y >= GH) continue;
+      for (let x = gxc - gr; x <= gxc + gr; x++){
+        if (x < 0 || x >= GW) continue;
+        const dx = (x + 0.5) * CELL - cx, dy = (y + 0.5) * CELL - cy;
+        if (dx * dx + dy * dy <= r * r){
+          const i = y * GW + x;
+          wall[i] = val;
+          food[i] = 0; home[i] = 0;
+        }
+      }
+    }
+    wallsDirty = true;
+  }
+
+  function genRocks(){
+    const clusters = 3 + Math.floor(rand() * 3);
+    for (let c = 0; c < clusters; c++){
+      let cx = 0, cy = 0, ok = false;
+      for (let t = 0; t < 40 && !ok; t++){
+        cx = 60 + rand() * (W - 120);
+        cy = 60 + rand() * (H - 120);
+        const dx = cx - nest.x, dy = cy - nest.y;
+        if (dx * dx + dy * dy > 185 * 185) ok = true;
+      }
+      if (!ok) continue;
+      const blobs = 4 + Math.floor(rand() * 5);
+      for (let b = 0; b < blobs; b++){
+        const a = rand() * TAU, d = rand() * 34;
+        paintWallDisc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 9 + rand() * 13, 1);
+      }
+    }
+  }
+
+  function makePile(x, y, amount, r){
+    const speckles = [];
+    const n = 40, ga = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < n; i++){
+      const a = i * ga, d = Math.sqrt((i + 0.5) / n) * r * 0.78;
+      speckles.push({
+        x: Math.cos(a) * d, y: Math.sin(a) * d,
+        r: 1.3 + rand() * 0.9, p: rand() * TAU,
+        c: ['#a9d76b', '#8cbb52', '#c2e08a'][i % 3]
+      });
+    }
+    return { x, y, amount, r, speckles, found: false };
+  }
+
+  function spotFree(x, y, r){
+    for (let k = 0; k < 6; k++){
+      const a = (k / 6) * TAU, sx = x + Math.cos(a) * r, sy = y + Math.sin(a) * r;
+      if (wallAt(sx, sy)) return false;
+    }
+    return !wallAt(x, y);
+  }
+
+  function findFoodSpot(){
+    for (let t = 0; t < 80; t++){
+      const x = 50 + rand() * (W - 100);
+      const y = 50 + rand() * (H - 100);
+      const dx = x - nest.x, dy = y - nest.y;
+      if (dx * dx + dy * dy < 190 * 190) continue;
+      let near = false;
+      for (const p of piles){
+        const px = p.x - x, py = p.y - y;
+        if (px * px + py * py < 95 * 95){ near = true; break; }
+      }
+      if (near) continue;
+      if (spotFree(x, y, 16)) return { x, y };
+    }
+    return null;
+  }
+
+  function spawnAnt(x, y){
+    ants.push({
+      x: x + (rand() - 0.5) * 8,
+      y: y + (rand() - 0.5) * 8,
+      dir: rand() * TAU,
+      hasFood: false,
+      str: 1
+    });
+  }
+
+  function reset(){
+    steps = 0; acc = 0;
+    food.fill(0); home.fill(0); wall.fill(0);
+    nest.stored = 0; nest.glow = 0;
+    nest.x = W * 0.5; nest.y = H * 0.58;
+    ants = []; piles = []; ripples = [];
+    nextAntCost = 10;
+    genNestDecor();
+    genRocks();
+    for (let i = 0; i < 5; i++){
+      const s = findFoodSpot();
+      if (s) piles.push(makePile(s.x, s.y, 220 + rand() * 180, 12 + rand() * 4));
+    }
+    for (let i = 0; i < CFG.startAnts; i++) spawnAnt(nest.x, nest.y);
+    wallsDirty = true;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Grid helpers                                                        */
+  /* ------------------------------------------------------------------ */
+  function wallAt(x, y){
+    const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
+    if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true;
+    return wall[gy * GW + gx] === 1;
+  }
+
+  function sample9(g, x, y){
+    const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+    let sum = 0;
+    for (let dy = -1; dy <= 1; dy++){
+      const yy = cy + dy;
+      if (yy < 0 || yy >= GH) continue;
+      const row = yy * GW;
+      for (let dx = -1; dx <= 1; dx++){
+        const xx = cx + dx;
+        if (xx < 0 || xx >= GW) continue;
+        sum += g[row + xx];
+      }
+    }
+    return sum / 9;
+  }
+
+  function sense(g, x, y, ang){
+    return sample9(g, x + Math.cos(ang) * CFG.sensorDist, y + Math.sin(ang) * CFG.sensorDist);
+  }
+
+  function deposit(g, x, y, v){
+    const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
+    if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return;
+    const i = gy * GW + gx;
+    if (wall[i]) return;
+    g[i] += v;
+    if (gx > 0 && !wall[i - 1]) g[i - 1] += v * 0.3;
+    if (gx < GW - 1 && !wall[i + 1]) g[i + 1] += v * 0.3;
+    if (gy > 0 && !wall[i - GW]) g[i - GW] += v * 0.3;
+    if (gy < GH - 1 && !wall[i + GW]) g[i + GW] += v * 0.3;
+  }
+
+  function blur(g, out, decay){
+    const gw = GW, gh = GH;
+    for (let y = 0; y < gh; y++){
+      const row = y * gw;
+      for (let x = 0; x < gw; x++){
+        const i = row + x;
+        if (wall[i]){ out[i] = 0; continue; }
+        const c = g[i];
+        let l = x > 0 ? g[i - 1] : c;
+        let r = x < gw - 1 ? g[i + 1] : c;
+        let u = y > 0 ? g[i - gw] : c;
+        let d = y < gh - 1 ? g[i + gw] : c;
+        if (x > 0 && wall[i - 1]) l = c;
+        if (x < gw - 1 && wall[i + 1]) r = c;
+        if (y > 0 && wall[i - gw]) u = c;
+        if (y < gh - 1 && wall[i + gw]) d = c;
+        let v = (c * 4 + l + r + u + d) * 0.125 * decay;
+        if (v > CFG.maxPh) v = CFG.maxPh;
+        else if (v < 0.0015) v = 0;
+        out[i] = v;
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Ants                                                                */
+  /* ------------------------------------------------------------------ */
+  function updateAnt(a){
+    a.dir += (rand() - 0.5) * CFG.wander;
+    if (rand() < 0.012) a.dir += (rand() < 0.5 ? -1 : 1) * (0.7 + rand() * 0.9);
+
+    // follow trails: returning ants home in on the home trail,
+    // foragers chase the food trail
+    const grid = a.hasFood ? home : food;
+    const d = CFG.sensorDist, sa = CFG.sensorAngle;
+    const c = sense(grid, a.x, a.y, a.dir);
+    const l = sense(grid, a.x, a.y, a.dir - sa);
+    const r = sense(grid, a.x, a.y, a.dir + sa);
+    if (!(c >= l && c >= r)){
+      if (l > r) a.dir += CFG.turn;
+      else if (r > l) a.dir -= CFG.turn;
+    }
+
+    // direct sensing of goals up close
+    if (!a.hasFood){
+      let best = null, bd = CFG.smellFood * CFG.smellFood;
+      for (const p of piles){
+        const dx = p.x - a.x, dy = p.y - a.y, q = dx * dx + dy * dy;
+        if (q < bd){ bd = q; best = p; }
+      }
+      if (best) a.dir += angDelta(a.dir, Math.atan2(best.y - a.y, best.x - a.x)) * 0.5;
+    } else {
+      const dx = nest.x - a.x, dy = nest.y - a.y;
+      if (dx * dx + dy * dy < CFG.smellNest * CFG.smellNest)
+        a.dir += angDelta(a.dir, Math.atan2(dy, dx)) * 0.5;
+    }
+
+    // steer away from the edge of the world
+    const M = 14;
+    if (a.x < M || a.y < M || a.x > W - M || a.y > H - M)
+      a.dir += angDelta(a.dir, Math.atan2(H / 2 - a.y, W / 2 - a.x)) * 0.35;
+
+    // move
+    const nx = a.x + Math.cos(a.dir) * CFG.speed;
+    const ny = a.y + Math.sin(a.dir) * CFG.speed;
+    if (nx < 1 || ny < 1 || nx > W - 1 || ny > H - 1 || wallAt(nx, ny)){
+      a.dir += Math.PI + (rand() - 0.5) * 1.4;
+    } else {
+      a.x = nx; a.y = ny;
+    }
+
+    // lay the opposite trail, fading with distance travelled
+    if (a.hasFood){
+      deposit(food, a.x, a.y, CFG.foodDrop * a.str);
+      a.str *= CFG.strDecay;
+    } else {
+      deposit(home, a.x, a.y, CFG.homeDrop * a.str);
+      a.str *= CFG.strDecay;
+    }
+
+    // pickups and drop-offs
+    if (!a.hasFood){
+      for (let i = piles.length - 1; i >= 0; i--){
+        const p = piles[i];
+        const dx = p.x - a.x, dy = p.y - a.y, rr = p.r + 3;
+        if (dx * dx + dy * dy < rr * rr){
+          p.amount--;
+          if (!p.found){ p.found = true; addRipple(p.x, p.y, 'amber'); }
+          if (p.amount <= 0){ piles.splice(i, 1); addRipple(p.x, p.y, 'green'); }
+          a.hasFood = true; a.str = 1;
+          a.dir += Math.PI + (rand() - 0.5) * 0.8;
+          break;
+        }
+      }
+    } else {
+      const dx = a.x - nest.x, dy = a.y - nest.y;
+      if (dx * dx + dy * dy < CFG.nestR * CFG.nestR){
+        nest.stored++;
+        nest.glow = Math.min(1, nest.glow + 0.16);
+        a.hasFood = false; a.str = 1;
+        a.dir += Math.PI + (rand() - 0.5) * 0.8;
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Simulation step                                                     */
+  /* ------------------------------------------------------------------ */
+  function worldFood(){
+    let s = 0;
+    for (const p of piles) s += p.amount;
+    return s;
+  }
+
+  function maybeSpawnFood(){
+    if (steps < 600) return;
+    if (worldFood() > 1000 || piles.length >= 8) return;
+    const s = findFoodSpot();
+    if (!s) return;
+    piles.push(makePile(s.x, s.y, 200 + rand() * 140, 12 + rand() * 4));
+    addRipple(s.x, s.y, 'green');
+  }
+
+  function step(){
+    steps++;
+    if (steps % 1080 === 0) maybeSpawnFood();
+
+    // colony growth: stored food becomes new workers
+    if (steps % 20 === 0 && nest.stored >= nextAntCost && ants.length < CFG.maxAnts){
+      nest.stored -= nextAntCost;
+      spawnAnt(nest.x, nest.y);
+      nextAntCost = 10 + Math.floor(ants.length / 14) * 3;
+      nest.glow = Math.min(1, nest.glow + 0.5);
+      addRipple(nest.x, nest.y, 'amber');
+    }
+
+    for (let i = 0; i < ants.length; i++) updateAnt(ants[i]);
+
+    blur(home, homeTmp, CFG.homeDecay);
+    const th = home; home = homeTmp; homeTmp = th;
+    blur(food, foodTmp, CFG.foodDecay);
+    const tf = food; food = foodTmp; foodTmp = tf;
+
+    nest.glow *= 0.985;
+
+    for (let i = ripples.length - 1; i >= 0; i--){
+      ripples[i].t++;
+      if (ripples[i].t > ripples[i].dur) ripples.splice(i, 1);
+    }
+  }
+
+  function addRipple(x, y, kind){
+    const k = kind === 'green'
+      ? { r1: 30, rgb: '160,220,110' }
+      : { r1: 34, rgb: '255,190,110' };
+    ripples.push({ x, y, t: 0, dur: 46, r1: k.r1, rgb: k.rgb });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Sprites                                                             */
+  /* ------------------------------------------------------------------ */
+  function makeAntSprite(carry){
+    const S = 36;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const g = c.getContext('2d');
+    g.translate(18, 18);
+    g.scale(2.6, 2.6);
+    g.lineCap = 'round';
+
+    // legs (three pairs, swept back)
+    g.strokeStyle = 'rgba(26,19,11,0.95)';
+    g.lineWidth = 0.6;
+    const legX = [-3.2, -0.4, 2.2];
+    for (const lx of legX){
+      g.beginPath(); g.moveTo(lx, 0.4); g.lineTo(lx - 1.3, 2.6); g.stroke();
+      g.beginPath(); g.moveTo(lx, -0.4); g.lineTo(lx - 1.3, -2.6); g.stroke();
+    }
+
+    // antennae
+    g.strokeStyle = 'rgba(70,50,26,0.95)';
+    g.lineWidth = 0.45;
+    g.beginPath(); g.moveTo(3.2, 0.4); g.lineTo(4.7, 1.2); g.stroke();
+    g.beginPath(); g.moveTo(3.2, -0.4); g.lineTo(4.7, -1.2); g.stroke();
+
+    // abdomen
+    let gr = g.createRadialGradient(-3.1, -0.5, 0.3, -2.7, 0, 2.1);
+    gr.addColorStop(0, '#4d3820');
+    gr.addColorStop(1, '#241a0e');
+    g.fillStyle = gr;
+    g.beginPath(); g.ellipse(-2.7, 0, 1.95, 1.5, 0, 0, TAU); g.fill();
+
+    // thorax
+    gr = g.createRadialGradient(0.6, -0.3, 0.2, 0.4, 0, 1.3);
+    gr.addColorStop(0, '#5c4526');
+    gr.addColorStop(1, '#332612');
+    g.fillStyle = gr;
+    g.beginPath(); g.ellipse(0.4, 0, 1.25, 1.0, 0, 0, TAU); g.fill();
+
+    // head
+    gr = g.createRadialGradient(2.8, -0.3, 0.2, 2.5, 0, 1.4);
+    gr.addColorStop(0, '#6b4e28');
+    gr.addColorStop(1, '#3a2b14');
+    g.fillStyle = gr;
+    g.beginPath(); g.ellipse(2.5, 0, 1.35, 1.15, 0, 0, TAU); g.fill();
+
+    if (carry){
+      gr = g.createRadialGradient(4.2, -0.5, 0.2, 4.6, 0, 1.8);
+      gr.addColorStop(0, '#c6e692');
+      gr.addColorStop(1, '#7fae49');
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(4.6, 0, 1.6, 0, TAU); g.fill();
+      g.strokeStyle = 'rgba(90,125,55,0.9)';
+      g.lineWidth = 0.3;
+      g.stroke();
+    }
+    return c;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Rendering                                                           */
+  /* ------------------------------------------------------------------ */
+  function buildPherImage(){
+    const n = GW * GH;
+    for (let i = 0; i < n; i++){
+      const f = food[i], h = home[i];
+      if (wall[i] || (f < 0.012 && h < 0.012)){ phBuf[i] = 0xff000000; continue; }
+      let r = f * 46 + h * 10;
+      let g = f * 27 + h * 25;
+      let b = f * 10 + h * 23;
+      if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+      phBuf[i] = 0xff000000 | ((b & 255) << 16) | ((g & 255) << 8) | (r & 255);
+    }
+    pheroCtx.putImageData(phImage, 0, 0);
+  }
+
+  function redrawWalls(){
+    const g = wallCtx;
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const shades = ['#39332b', '#3e382f', '#342e26', '#413a31', '#3b352c'];
+    for (let y = 0; y < GH; y++){
+      const row = y * GW;
+      for (let x = 0; x < GW; x++){
+        const i = row + x;
+        if (!wall[i]) continue;
+        const px = x * CELL, py = y * CELL;
+        g.fillStyle = shades[((i * 2654435761) >>> 0) % 5];
+        g.fillRect(px, py, CELL, CELL);
+        if (y + 1 >= GH || !wall[i + GW]){
+          g.fillStyle = 'rgba(0,0,0,0.28)';
+          g.fillRect(px, py + CELL - 1, CELL, 1);
+        }
+        if (y === 0 || !wall[i - GW]){
+          g.fillStyle = 'rgba(255,240,210,0.06)';
+          g.fillRect(px, py, CELL, 1);
+        }
+      }
+    }
+  }
+
+  function drawPile(p, now){
+    const g = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, p.r * 1.35);
+    g.addColorStop(0, 'rgba(58,92,44,0.5)');
+    g.addColorStop(1, 'rgba(58,92,44,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 1.35, 0, TAU); ctx.fill();
+
+    const n = Math.max(4, Math.min(40, Math.ceil(p.amount / 11)));
+    for (let i = 0; i < n; i++){
+      const s = p.speckles[i];
+      const tw = 0.72 + 0.28 * Math.sin(now * 0.003 + s.p);
+      ctx.globalAlpha = tw;
+      ctx.fillStyle = s.c;
+      ctx.beginPath(); ctx.arc(p.x + s.x, p.y + s.y, s.r, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawNest(now){
+    const R = CFG.nestR;
+    // warm pulse, brightens with recent deliveries
+    const glowA = 0.05 + 0.30 * nest.glow;
+    const breath = 0.9 + 0.1 * Math.sin(now * 0.0012);
+    let g = ctx.createRadialGradient(nest.x, nest.y, 2, nest.x, nest.y, R * 2.7 * breath);
+    g.addColorStop(0, 'rgba(255,180,90,' + glowA.toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(255,180,90,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(nest.x, nest.y, R * 2.7 * breath, 0, TAU); ctx.fill();
+
+    // mound
+    g = ctx.createRadialGradient(nest.x - R * 0.3, nest.y - R * 0.4, 2, nest.x, nest.y, R * 1.55);
+    g.addColorStop(0, '#54402a');
+    g.addColorStop(0.7, '#3a2c1a');
+    g.addColorStop(1, '#2a1f11');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(nest.x, nest.y, R * 1.55, R * 1.25, 0, 0, TAU); ctx.fill();
+
+    // pebble ring
+    for (const pb of nest.pebbles){
+      const x = nest.x + Math.cos(pb.a) * pb.d * 1.25;
+      const y = nest.y + Math.sin(pb.a) * pb.d * 0.85;
+      ctx.fillStyle = '#5a4630';
+      ctx.beginPath(); ctx.arc(x, y, pb.r, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(160,135,95,0.35)';
+      ctx.beginPath(); ctx.arc(x - pb.r * 0.25, y - pb.r * 0.3, pb.r * 0.4, 0, TAU); ctx.fill();
+    }
+
+    // entrance
+    ctx.fillStyle = '#0a0705';
+    ctx.beginPath(); ctx.ellipse(nest.x, nest.y, R * 0.55, R * 0.4, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,90,55,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // hoarded crumbs glittering around the entrance
+    const k = Math.min(26, Math.floor(nest.stored / 10));
+    for (let i = 0; i < k; i++){
+      const s = nest.storeSpots[i];
+      const tw = 0.55 + 0.45 * Math.sin(now * 0.004 + s.p);
+      ctx.globalAlpha = tw;
+      ctx.fillStyle = '#9fd468';
+      ctx.beginPath(); ctx.arc(nest.x + s.x, nest.y + s.y, 1.3, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function render(now){
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0, W, H);
+
+    buildPherImage();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(pheroCanvas, 0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+
+    for (const p of piles) drawPile(p, now);
+
+    if (wallsDirty){ redrawWalls(); wallsDirty = false; }
+    ctx.drawImage(wallCanvas, 0, 0, W, H);
+
+    drawNest(now);
+
+    // ants (rotated sprite blits)
+    for (let i = 0; i < ants.length; i++){
+      const a = ants[i];
+      const co = Math.cos(a.dir), si = Math.sin(a.dir);
+      ctx.setTransform(DPR * co, DPR * si, -DPR * si, DPR * co, a.x * DPR, a.y * DPR);
+      ctx.drawImage(a.hasFood ? antCarry : antFree, -6, -6, 12, 12);
+    }
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    // ripples
+    for (const r of ripples){
+      const k = r.t / r.dur;
+      const e = 1 - Math.pow(1 - k, 3);
+      ctx.strokeStyle = 'rgba(' + r.rgb + ',' + ((1 - k) * 0.55).toFixed(3) + ')';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(r.x, r.y, 5 + (r.r1 - 5) * e, 0, TAU); ctx.stroke();
+    }
+
+    // brush cursor
+    if (tool !== 'observe' && mouse.inside){
+      const col = tool === 'food' ? '159,212,104' : tool === 'rock' ? '190,180,160' : '255,255,255';
+      ctx.strokeStyle = 'rgba(' + col + ',0.55)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(mouse.x, mouse.y, brush, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = 'rgba(' + col + ',0.25)';
+      ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 2, 0, TAU); ctx.stroke();
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* HUD                                                                 */
+  /* ------------------------------------------------------------------ */
+  const elPop = document.getElementById('stat-pop');
+  const elStored = document.getElementById('stat-stored');
+  const elWorld = document.getElementById('stat-world');
+  const elTime = document.getElementById('stat-time');
+  let lastHud = 0;
+
+  function updateHUD(now){
+    if (now - lastHud < 250) return;
+    lastHud = now;
+    elPop.textContent = ants.length;
+    elStored.textContent = nest.stored;
+    elWorld.textContent = worldFood();
+    const s = Math.floor(steps / 60);
+    elTime.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Input                                                               */
+  /* ------------------------------------------------------------------ */
+  function applyBrushCells(x, y, mode){
+    const gxc = Math.floor(x / CELL), gyc = Math.floor(y / CELL), gr = Math.ceil(brush / CELL);
+    for (let gy = gyc - gr; gy <= gyc + gr; gy++){
+      if (gy < 0 || gy >= GH) continue;
+      for (let gx = gxc - gr; gx <= gxc + gr; gx++){
+        if (gx < 0 || gx >= GW) continue;
+        const dx = (gx + 0.5) * CELL - x, dy = (gy + 0.5) * CELL - y;
+        if (dx * dx + dy * dy > brush * brush) continue;
+        const i = gy * GW + gx;
+        if (mode === 'rock'){ wall[i] = 1; food[i] = 0; home[i] = 0; }
+        else { wall[i] = 0; food[i] = 0; home[i] = 0; }
+      }
+    }
+    if (mode === 'rock'){
+      for (let i = piles.length - 1; i >= 0; i--){
+        const p = piles[i], dx = p.x - x, dy = p.y - y;
+        if (dx * dx + dy * dy < (brush * 0.8) * (brush * 0.8)) piles.splice(i, 1);
+      }
+    } else {
+      for (let i = piles.length - 1; i >= 0; i--){
+        const p = piles[i], dx = p.x - x, dy = p.y - y, rr = brush + 6;
+        if (dx * dx + dy * dy < rr * rr) piles.splice(i, 1);
+      }
+    }
+    wallsDirty = true;
+  }
+
+  function dropFood(x, y){
+    if (wallAt(x, y) || x < 8 || y < 8 || x > W - 8 || y > H - 8) return;
+    for (const p of piles){
+      const dx = p.x - x, dy = p.y - y;
+      if (dx * dx + dy * dy < 28 * 28){
+        p.amount = Math.min(520, p.amount + 85);
+        p.r = Math.min(20, p.r + 1.2);
+        return;
+      }
+    }
+    piles.push(makePile(x, y, 110, 11));
+    addRipple(x, y, 'green');
+  }
+
+  function paintAt(x, y, mode){
+    if (mode === 'food') dropFood(x, y);
+    else applyBrushCells(x, y, mode);
+  }
+
+  function activePaintMode(){
+    if (!mouse.down) return null;
+    if (mouse.btn === 2) return 'erase';
+    if (mouse.btn !== 0) return null;
+    if (tool === 'observe') return null;
+    return tool;
+  }
+
+  function paintStroke(x0, y0, x1, y1){
+    const mode = activePaintMode();
+    if (!mode) return;
+    const dx = x1 - x0, dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const stepPx = mode === 'food' ? 8 : 5;
+    const n = Math.max(1, Math.ceil(dist / stepPx));
+    for (let i = 1; i <= n; i++){
+      const x = x0 + dx * (i / n), y = y0 + dy * (i / n);
+      if (mode === 'food'){
+        const ddx = x - mouse.dropX, ddy = y - mouse.dropY;
+        if (ddx * ddx + ddy * ddy >= 26 * 26){
+          dropFood(x, y);
+          mouse.dropX = x; mouse.dropY = y;
+        }
+      } else {
+        applyBrushCells(x, y, mode);
+      }
+    }
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    if (e.button === 1) return;
+    canvas.setPointerCapture(e.pointerId);
+    mouse.down = true; mouse.btn = e.button;
+    mouse.x = mouse.lastX = mouse.dropX = e.clientX;
+    mouse.y = mouse.lastY = mouse.dropY = e.clientY;
+    const mode = activePaintMode();
+    if (mode) paintAt(mouse.x, mouse.y, mode);
+  });
+  canvas.addEventListener('pointermove', e => {
+    mouse.inside = true;
+    mouse.x = e.clientX; mouse.y = e.clientY;
+    if (mouse.down){
+      paintStroke(mouse.lastX, mouse.lastY, mouse.x, mouse.y);
+      mouse.lastX = mouse.x; mouse.lastY = mouse.y;
+    }
+  });
+  const endPaint = e => { mouse.down = false; };
+  canvas.addEventListener('pointerup', endPaint);
+  canvas.addEventListener('pointercancel', endPaint);
+  canvas.addEventListener('pointerleave', () => { mouse.inside = false; });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  /* Controls */
+  const btnPlay = document.getElementById('btn-play');
+  function setPaused(p){
+    paused = p;
+    btnPlay.classList.toggle('running', !paused);
+  }
+  btnPlay.addEventListener('click', () => { setPaused(!paused); btnPlay.blur(); });
+  document.getElementById('btn-reset').addEventListener('click', function(){
+    reset(); this.blur();
+  });
+
+  const speedSeg = document.getElementById('speed-seg');
+  speedSeg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-speed]');
+    if (!b) return;
+    speedMul = parseFloat(b.dataset.speed);
+    speedSeg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    b.blur();
+  });
+
+  const toolsEl = document.getElementById('tools');
+  const brushGroup = document.getElementById('brush-group');
+  const brushInput = document.getElementById('brush');
+  const brushVal = document.getElementById('brush-val');
+  function setTool(t){
+    tool = t;
+    toolsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    brushGroup.classList.toggle('hidden', t === 'observe');
+  }
+  toolsEl.addEventListener('click', e => {
+    const b = e.target.closest('button[data-tool]');
+    if (!b) return;
+    setTool(b.dataset.tool);
+    b.blur();
+  });
+  brushInput.addEventListener('input', () => {
+    brush = parseInt(brushInput.value, 10);
+    brushVal.textContent = brush;
+  });
+
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space'){ e.preventDefault(); setPaused(!paused); }
+    else if (e.code === 'KeyR'){ reset(); }
+    else if (e.code === 'Digit1') setTool('observe');
+    else if (e.code === 'Digit2') setTool('food');
+    else if (e.code === 'Digit3') setTool('rock');
+    else if (e.code === 'Digit4') setTool('erase');
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 140);
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Boot                                                                */
+  /* ------------------------------------------------------------------ */
+  antFree = makeAntSprite(false);
+  antCarry = makeAntSprite(true);
+  resize();
+  reset();
+
+  function frame(t){
+    requestAnimationFrame(frame);
+    if (!paused){
+      acc += speedMul;
+      if (acc > 8) acc = 8;
+      while (acc >= 1){ step(); acc -= 1; }
+    }
+    render(t);
+    updateHUD(t);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -53,7 +53,7 @@ describe('browser-autonomy suite', () => {
     expect(doctorSuite(suite)).toEqual([]);
     const ids = new Set<string>();
     expect(suite.id).toBe('browser-autonomy-v2');
-    expect(suite.version).toBe('2.1.0');
+    expect(suite.version).toBe('2.2.0');
     expect(suite.promptLevels.A.name).toBe('Raw');
     expect(suite.promptLevels.B.name).toBe('Autonomous');
     expect(suite.promptLevels.C.name).toBe('Showcase');
@@ -65,9 +65,11 @@ describe('browser-autonomy suite', () => {
       expect(String(benchmark.prompts?.B || '').trim().length).toBeGreaterThan(0);
       expect(String(benchmark.prompts?.C || '').trim().length).toBeGreaterThan(0);
     }
-    expect(suite.benchmarks).toHaveLength(1);
+    expect(suite.benchmarks).toHaveLength(3);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).toEqual([
       'rollercoaster',
+      'ant-colony',
+      'fireworks',
     ]);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
       'terrain-explorer',
@@ -112,6 +114,18 @@ describe('browser-autonomy suite', () => {
     expect(rollercoaster.prompts.A).toBe(
       'Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js.',
     );
+  });
+
+  it('keeps the v2.2.0 Raw A prompts byte-for-byte unchanged', () => {
+    const rawA = Object.fromEntries(
+      suite.benchmarks.map((benchmark: { id: string; prompts: { A: string } }) => [
+        benchmark.id,
+        benchmark.prompts.A,
+      ]),
+    );
+
+    expect(rawA['ant-colony']).toBe('Create an ant colony simulation in a single HTML file.');
+    expect(rawA.fireworks).toBe('Create a fireworks display in a single HTML file.');
   });
 
   it('declares the expanded evaluation profile', () => {

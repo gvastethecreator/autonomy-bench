@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fireworks</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050510;
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    .hud {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      pointer-events: none;
+      user-select: none;
+      text-align: center;
+      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+    }
+    .hud strong {
+      color: rgba(255, 220, 160, 0.85);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+  <div class="hud">Click or tap to launch · <strong>Auto</strong> display running</div>
+  <script>
+    const canvas = document.getElementById("sky");
+    const ctx = canvas.getContext("2d");
+
+    let W = 0, H = 0, dpr = 1;
+    const rockets = [];
+    const sparks = [];
+    const trails = [];
+
+    const PALETTES = [
+      ["#ff4d6d", "#ff8fa3", "#fff0f3"],
+      ["#ffd60a", "#ffc300", "#fff3b0"],
+      ["#4cc9f0", "#4895ef", "#caf0f8"],
+      ["#80ffdb", "#56cfe1", "#e0fbfc"],
+      ["#f72585", "#b5179e", "#f8edeb"],
+      ["#ff9e00", "#ff6d00", "#ffe8d6"],
+      ["#9b5de5", "#f15bb5", "#feeafa"],
+      ["#00f5d4", "#00bbf9", "#e8fcff"],
+    ];
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = Math.floor(W * dpr);
+      canvas.height = Math.floor(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function rand(a, b) {
+      return a + Math.random() * (b - a);
+    }
+
+    function pick(arr) {
+      return arr[(Math.random() * arr.length) | 0];
+    }
+
+    function hexToRgb(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+
+    class Rocket {
+      constructor(x, targetY, palette) {
+        this.x = x;
+        this.y = H + 10;
+        this.targetY = targetY;
+        this.vx = rand(-0.6, 0.6);
+        this.vy = rand(-11.5, -8.5);
+        this.palette = palette;
+        this.color = palette[0];
+        this.trail = [];
+        this.alive = true;
+        this.wobble = rand(0, Math.PI * 2);
+      }
+
+      update() {
+        this.wobble += 0.12;
+        this.vx += Math.sin(this.wobble) * 0.03;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.085;
+        this.trail.push({ x: this.x, y: this.y, life: 1 });
+        if (this.trail.length > 14) this.trail.shift();
+        for (const t of this.trail) t.life *= 0.88;
+
+        if (this.vy >= -1.2 || this.y <= this.targetY) {
+          this.alive = false;
+          explode(this.x, this.y, this.palette);
+        }
+      }
+
+      draw() {
+        for (let i = 0; i < this.trail.length; i++) {
+          const t = this.trail[i];
+          const a = t.life * 0.55;
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(255, 230, 180, ${a})`;
+          ctx.arc(t.x, t.y, 1.4 * t.life, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = this.color;
+        ctx.arc(this.x, this.y, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    function explode(x, y, palette) {
+      const style = Math.random();
+      const count = style < 0.25 ? rand(55, 80) : style < 0.55 ? rand(90, 130) : rand(40, 70);
+      const baseSpeed = style < 0.25 ? rand(2.2, 3.4) : style < 0.55 ? rand(3.5, 5.8) : rand(2.8, 4.5);
+      const ring = style >= 0.55 && style < 0.78;
+      const chrysanthemum = style >= 0.78;
+
+      for (let i = 0; i < count; i++) {
+        const angle = ring
+          ? (i / count) * Math.PI * 2 + rand(-0.05, 0.05)
+          : rand(0, Math.PI * 2);
+        const speed = ring
+          ? baseSpeed * rand(0.92, 1.08)
+          : chrysanthemum
+            ? baseSpeed * Math.pow(Math.random(), 0.35) * rand(0.5, 1.15)
+            : baseSpeed * Math.sqrt(Math.random()) * rand(0.55, 1.2);
+        const color = pick(palette);
+        sparks.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 1,
+          decay: rand(0.012, 0.024),
+          size: rand(1.2, 2.8),
+          color,
+          rgb: hexToRgb(color),
+          gravity: rand(0.028, 0.045),
+          drag: rand(0.975, 0.988),
+          flicker: Math.random() < 0.35,
+        });
+      }
+
+      // bright flash
+      trails.push({ x, y, r: 8, life: 1, color: palette[0] });
+    }
+
+    function launch(x) {
+      const palette = pick(PALETTES);
+      const targetY = rand(H * 0.15, H * 0.45);
+      rockets.push(new Rocket(x ?? rand(W * 0.15, W * 0.85), targetY, palette));
+    }
+
+    let autoTimer = 0;
+    let last = performance.now();
+
+    function frame(now) {
+      const dt = Math.min(32, now - last);
+      last = now;
+
+      // soft fade for trails
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = "rgba(0, 0, 0, 0.22)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+
+      // starfield hint
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "rgba(5, 5, 16, 0.18)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+
+      autoTimer -= dt;
+      if (autoTimer <= 0) {
+        const burst = Math.random() < 0.28 ? 2 + (Math.random() * 2 | 0) : 1;
+        for (let i = 0; i < burst; i++) {
+          setTimeout(() => launch(), i * rand(80, 220));
+        }
+        autoTimer = rand(700, 1600);
+      }
+
+      for (let i = rockets.length - 1; i >= 0; i--) {
+        const r = rockets[i];
+        r.update();
+        r.draw();
+        if (!r.alive) rockets.splice(i, 1);
+      }
+
+      for (let i = trails.length - 1; i >= 0; i--) {
+        const t = trails[i];
+        t.life -= 0.06;
+        t.r += 4;
+        if (t.life <= 0) {
+          trails.splice(i, 1);
+          continue;
+        }
+        const rgb = hexToRgb(t.color);
+        const g = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r);
+        g.addColorStop(0, `rgba(255, 255, 255, ${t.life * 0.85})`);
+        g.addColorStop(0.35, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${t.life * 0.45})`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.beginPath();
+        ctx.fillStyle = g;
+        ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        s.vx *= s.drag;
+        s.vy *= s.drag;
+        s.vy += s.gravity;
+        s.x += s.vx;
+        s.y += s.vy;
+        s.life -= s.decay;
+
+        if (s.life <= 0) {
+          sparks.splice(i, 1);
+          continue;
+        }
+
+        const alpha = s.flicker ? s.life * (0.55 + Math.random() * 0.45) : s.life;
+        const { r, g, b } = s.rgb;
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        ctx.arc(s.x, s.y, s.size * Math.max(0.3, s.life), 0, Math.PI * 2);
+        ctx.fill();
+
+        // hot core
+        if (s.life > 0.45) {
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(255, 255, 255, ${(s.life - 0.45) * 0.9})`;
+          ctx.arc(s.x, s.y, s.size * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.shadowBlur = 0;
+      ctx.globalCompositeOperation = "source-over";
+
+      requestAnimationFrame(frame);
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      launch(e.clientX);
+    });
+
+    // opening salvo
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => launch(W * (0.25 + i * 0.25)), i * 280);
+    }
+
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
+

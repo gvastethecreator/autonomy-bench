@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Fireworks</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='6' r='2' fill='%23ffd166'/%3E%3Cpath d='M8 8 6 14M8 8 10 14M8 8 3 10M8 8 13 10' stroke='%23ff6b6b' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #03040a;
+    cursor: crosshair;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  #bg { z-index: 0; }
+  #fx { z-index: 1; }
+
+  #title {
+    position: fixed;
+    top: 16vh;
+    left: 0;
+    right: 0;
+    text-align: center;
+    pointer-events: none;
+    z-index: 2;
+    animation: rise 1.6s cubic-bezier(0.2, 0.7, 0.3, 1) 0.3s both,
+               fadeaway 3s ease-in 7.5s forwards;
+  }
+  #title h1 {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    font-size: clamp(2.2rem, 6vw, 4.2rem);
+    color: #f5f1e6;
+    letter-spacing: 0.32em;
+    text-indent: 0.32em;
+    text-shadow: 0 0 26px rgba(255, 200, 120, 0.35), 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
+  #title p {
+    margin: 1.2em 0 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.22em;
+    color: rgba(216, 223, 245, 0.62);
+  }
+  kbd {
+    font-family: inherit;
+    font-size: 0.92em;
+    border: 1px solid rgba(216, 223, 245, 0.35);
+    border-radius: 4px;
+    padding: 0.1em 0.5em;
+    margin: 0 0.2em;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes fadeaway { to { opacity: 0; } }
+
+  #sound-toggle {
+    position: fixed;
+    right: 18px;
+    bottom: 16px;
+    z-index: 3;
+    font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(228, 233, 250, 0.78);
+    background: rgba(9, 13, 28, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    padding: 9px 15px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    transition: color 0.2s, border-color 0.2s;
+  }
+  #sound-toggle:hover, #sound-toggle:focus-visible {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.38);
+    outline: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<canvas id="fx"></canvas>
+
+<div id="title" aria-hidden="true">
+  <h1>Fireworks</h1>
+  <p>click the sky to launch &middot; <kbd>space</kbd> for a finale</p>
+</div>
+
+<button id="sound-toggle" type="button" aria-label="Toggle sound">Sound on</button>
+
+<script>
+(() => {
+  'use strict';
+
+  const TAU = Math.PI * 2;
+  const GRAV = 250;            // base rocket gravity, px/s^2 (before scale)
+  const MAX_PARTICLES = 2600;
+
+  const bgCanvas = document.getElementById('bg');
+  const fxCanvas = document.getElementById('fx');
+  const bctx = bgCanvas.getContext('2d');
+  const ctx = fxCanvas.getContext('2d');
+  const soundButton = document.getElementById('sound-toggle');
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randInt = (a, b) => Math.floor(rand(a, b + 1));
+  const pick = (list) => list[(Math.random() * list.length) | 0];
+  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+  const hueColor = (h, l = 62, s = 100) => `hsl(${h}, ${s}%, ${l}%)`;
+
+  let W = 0, H = 0, DPR = 1, scale = 1;
+  let twinkles = [];
+  const rockets = [];
+  const particles = [];
+  let autoTimer = 0;
+
+  /* ---------- backdrop: night sky, stars, moon, skyline ---------- */
+
+  function resize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w === W && h === H) return;
+    W = w; H = h;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    scale = clamp(Math.min(W, H) / 800, 0.65, 1.5);
+    for (const c of [bgCanvas, fxCanvas]) {
+      c.width = Math.round(W * DPR);
+      c.height = Math.round(H * DPR);
+    }
+    bctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawBackdrop();
+    makeTwinkles();
+  }
+
+  function drawBackdrop() {
+    // sky gradient
+    const sky = bctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#020309');
+    sky.addColorStop(0.55, '#070b1c');
+    sky.addColorStop(1, '#111834');
+    bctx.fillStyle = sky;
+    bctx.fillRect(0, 0, W, H);
+
+    // stars
+    const count = Math.round((W * H) / 6500);
+    bctx.save();
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * W;
+      const y = Math.random() * H * 0.82;
+      const r = rand(0.3, 1.1) * scale;
+      bctx.globalAlpha = rand(0.2, 0.85) * clamp(1 - y / (H * 0.95), 0.15, 1);
+      bctx.fillStyle = Math.random() < 0.12 ? '#cfe0ff' : '#f5f3ea';
+      bctx.beginPath();
+      bctx.arc(x, y, r, 0, TAU);
+      bctx.fill();
+    }
+    bctx.restore();
+
+    // moon with soft glow
+    const mx = W * 0.8, my = H * 0.16, mr = 34 * scale;
+    const glow = bctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 6);
+    glow.addColorStop(0, 'rgba(244, 240, 214, 0.22)');
+    glow.addColorStop(1, 'rgba(244, 240, 214, 0)');
+    bctx.fillStyle = glow;
+    bctx.fillRect(mx - mr * 6, my - mr * 6, mr * 12, mr * 12);
+    bctx.fillStyle = '#f2eeda';
+    bctx.beginPath(); bctx.arc(mx, my, mr, 0, TAU); bctx.fill();
+    bctx.fillStyle = 'rgba(186, 184, 162, 0.5)';
+    bctx.beginPath(); bctx.arc(mx - mr * 0.3, my - mr * 0.22, mr * 0.22, 0, TAU); bctx.fill();
+    bctx.beginPath(); bctx.arc(mx + mr * 0.26, my + mr * 0.3, mr * 0.14, 0, TAU); bctx.fill();
+    bctx.beginPath(); bctx.arc(mx + mr * 0.05, my - mr * 0.42, mr * 0.1, 0, TAU); bctx.fill();
+
+    // city skyline silhouette with lit windows
+    let x = -20;
+    while (x < W + 20) {
+      const bw = rand(46, 110) * scale;
+      const bh = rand(H * 0.05, H * 0.14) * rand(0.7, 1.6);
+      bctx.fillStyle = '#04050c';
+      bctx.fillRect(x, H - bh, bw, bh);
+      if (Math.random() < 0.3) {
+        bctx.fillRect(x + bw * 0.5 - 1, H - bh - rand(10, 26) * scale, 2, 30 * scale);
+      }
+      const cols = Math.max(1, Math.floor((bw - 8 * scale) / (10 * scale)));
+      const rows = Math.max(1, Math.floor((bh - 10 * scale) / (14 * scale)));
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          if (Math.random() < 0.16) {
+            bctx.fillStyle = Math.random() < 0.7
+              ? 'rgba(255, 199, 118, 0.75)'
+              : 'rgba(160, 200, 255, 0.55)';
+            bctx.fillRect(
+              x + 5 * scale + c * 10 * scale,
+              H - bh + 6 * scale + r * 14 * scale,
+              3.5 * scale, 4.5 * scale
+            );
+            bctx.fillStyle = '#04050c';
+          }
+        }
+      }
+      x += bw + rand(2, 14);
+    }
+  }
+
+  function makeTwinkles() {
+    twinkles = [];
+    const n = Math.round((W * H) / 42000) + 12;
+    for (let i = 0; i < n; i++) {
+      twinkles.push({
+        x: Math.random() * W,
+        y: Math.random() * H * 0.8,
+        r: rand(0.6, 1.6) * scale,
+        phase: rand(0, TAU),
+        speed: rand(0.6, 2.4)
+      });
+    }
+  }
+
+  /* ---------- audio (WebAudio, lazily created on first gesture) ---------- */
+
+  const Sound = {
+    ctx: null,
+    master: null,
+    noise: null,
+    enabled: true,
+    init() {
+      if (this.ctx) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      try {
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = 0.6;
+        this.master.connect(this.ctx.destination);
+        const len = Math.floor(this.ctx.sampleRate * 1.2);
+        this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+        const data = this.noise.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      } catch (e) {
+        this.ctx = null;
+      }
+    },
+    resume() {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+    },
+    ready() { return this.enabled && this.ctx; },
+    noiseSource(t, dur) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.loop = true;
+      src.start(t);
+      src.stop(t + dur);
+      return src;
+    },
+    launch() {
+      if (!this.ready()) return;
+      const t = this.ctx.currentTime;
+      const src = this.noiseSource(t, 0.55);
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.Q.value = 1.1;
+      f.frequency.setValueAtTime(320, t);
+      f.frequency.exponentialRampToValueAtTime(1500, t + 0.45);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.07, t + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      src.connect(f); f.connect(g); g.connect(this.master);
+    },
+    boom(intensity = 0.5) {
+      if (!this.ready()) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(rand(110, 150), t);
+      osc.frequency.exponentialRampToValueAtTime(34, t + 0.4);
+      const og = this.ctx.createGain();
+      og.gain.setValueAtTime(intensity, t);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      osc.connect(og); og.connect(this.master);
+      osc.start(t); osc.stop(t + 0.6);
+      const src = this.noiseSource(t, 0.5);
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(1100, t);
+      f.frequency.exponentialRampToValueAtTime(110, t + 0.4);
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(intensity * 0.8, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      src.connect(f); f.connect(ng); ng.connect(this.master);
+    },
+    crackle(offset = 0.15) {
+      if (!this.ready()) return;
+      const t0 = this.ctx.currentTime + offset;
+      const n = randInt(7, 11);
+      for (let i = 0; i < n; i++) {
+        const t = t0 + Math.random() * 0.7;
+        const src = this.noiseSource(t, 0.03);
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'highpass';
+        f.frequency.value = 2600;
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(rand(0.05, 0.1), t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+        src.connect(f); f.connect(g); g.connect(this.master);
+      }
+    },
+    pop() {
+      if (!this.ready()) return;
+      const t = this.ctx.currentTime;
+      const src = this.noiseSource(t, 0.04);
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = rand(1500, 2600);
+      f.Q.value = 2;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.06, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+      src.connect(f); f.connect(g); g.connect(this.master);
+    }
+  };
+
+  /* ---------- color palettes ---------- */
+
+  function palette() {
+    const h = randInt(0, 359);
+    const mode = pick(['mono', 'duo', 'analog', 'spread']);
+    if (mode === 'spread') {
+      return {
+        outer: () => hueColor(randInt(0, 359), rand(58, 68)),
+        inner: () => '#ffffff'
+      };
+    }
+    const h2 = (h + pick([30, 40, 150, 180, 200])) % 360;
+    const outerBase = mode === 'duo' ? h2 : h;
+    return {
+      outer: () => hueColor((outerBase + rand(-14, 14) + 360) % 360, rand(58, 70)),
+      inner: () => (mode === 'mono' ? hueColor((h + 24) % 360, 74) : hueColor(h2, 66))
+    };
+  }
+
+  /* ---------- particles ---------- */
+
+  class Particle {
+    constructor(x, y, vx, vy, color, o = {}) {
+      this.x = x; this.y = y;
+      this.vx = vx; this.vy = vy;
+      this.color = color;
+      this.life = 1;
+      this.decay = 1 / (o.life != null ? o.life : 1.1);
+      this.size = (o.size != null ? o.size : 2.2) * scale;
+      this.gravity = (o.gravity != null ? o.gravity : 130) * scale;
+      this.drag = o.drag != null ? o.drag : 1.1;
+      this.flicker = o.flicker != null ? o.flicker : 0;
+      this.splitAt = o.splitAt != null ? o.splitAt : 0;
+      this.splitPower = o.splitPower != null ? o.splitPower : 150;
+      this.isFlash = !!o.isFlash;
+      this.flashRadius = o.flashRadius != null ? o.flashRadius : 90;
+    }
+    update(dt) {
+      this.life -= this.decay * dt;
+      if (this.life <= 0) return false;
+      if (this.splitAt && this.life < this.splitAt) {
+        splitCrossette(this);
+        return false;
+      }
+      const d = Math.exp(-this.drag * dt);
+      this.vx *= d;
+      this.vy = this.vy * d + this.gravity * dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      return this.y < H + 80 && this.y > -160 && this.x > -80 && this.x < W + 80;
+    }
+    draw() {
+      if (this.isFlash) {
+        const a = Math.max(this.life, 0) * 0.55;
+        const r = this.flashRadius * scale * (1.4 - this.life * 0.5);
+        const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r);
+        g.addColorStop(0, `rgba(255, 250, 235, ${a})`);
+        g.addColorStop(0.35, `rgba(255, 220, 170, ${a * 0.45})`);
+        g.addColorStop(1, 'rgba(255, 200, 140, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, r, 0, TAU);
+        ctx.fill();
+        return;
+      }
+      let a = this.life;
+      if (this.flicker) a *= 1 - this.flicker * Math.random();
+      if (a <= 0.02) return;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = this.color;
+      const r = this.size * (0.55 + 0.45 * this.life);
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r, 0, TAU);
+      ctx.fill();
+      if (this.life > 0.82 && this.size > 1.6) {
+        ctx.globalAlpha = (this.life - 0.82) * 3;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, r * 0.5, 0, TAU);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function splitCrossette(p) {
+    const n = randInt(4, 6);
+    const sp = p.splitPower * scale;
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, TAU);
+      particles.push(new Particle(
+        p.x, p.y,
+        Math.cos(a) * sp + p.vx * 0.25,
+        Math.sin(a) * sp + p.vy * 0.25,
+        p.color,
+        { life: rand(0.5, 0.8), size: 1.7, gravity: 130, drag: 1.3, flicker: 0.5 }
+      ));
+    }
+    Sound.pop();
+  }
+
+  /* ---------- shells and explosions ---------- */
+
+  const TYPES = [
+    'peony', 'peony', 'peony', 'peony',
+    'chrys', 'chrys',
+    'ring', 'ring',
+    'willow', 'willow',
+    'crossette', 'crossette',
+    'crackle',
+    'double', 'double'
+  ];
+
+  class Rocket {
+    constructor(tx, ty, type) {
+      this.tx = tx; this.ty = ty;
+      this.x = tx + rand(-24, 24) * scale;
+      this.y = H + 12;
+      const T = rand(0.85, 1.25);
+      this.flight = T;
+      this.elapsed = 0;
+      this.vy = (ty - this.y) / T - 0.5 * GRAV * scale * T;
+      this.vx = (tx - this.x) / T;
+      this.type = type || pick(TYPES);
+      this.pal = palette();
+      this.spent = false;
+    }
+    update(dt) {
+      this.elapsed += dt;
+      this.vy += GRAV * scale * dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      // spark trail
+      particles.push(new Particle(
+        this.x, this.y,
+        this.vx * 0.1 + rand(-14, 14),
+        this.vy * 0.12 + rand(4, 30),
+        'hsl(38, 100%, 70%)',
+        { life: rand(0.25, 0.5), size: 1.1, gravity: 60, drag: 2 }
+      ));
+      if (this.elapsed >= this.flight || this.vy > -50 || this.y <= this.ty) {
+        this.detonate();
+        return false;
+      }
+      return true;
+    }
+    detonate() {
+      if (this.spent) return;
+      this.spent = true;
+      explode(this.x, this.y, this.type, this.pal);
+    }
+    draw() {
+      ctx.strokeStyle = 'rgba(255, 224, 160, 0.85)';
+      ctx.lineWidth = 1.8 * scale;
+      ctx.beginPath();
+      ctx.moveTo(this.x - this.vx * 0.03, this.y - this.vy * 0.03);
+      ctx.lineTo(this.x, this.y);
+      ctx.stroke();
+      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, 9 * scale);
+      g.addColorStop(0, 'rgba(255, 255, 240, 0.95)');
+      g.addColorStop(1, 'rgba(255, 190, 110, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 9 * scale, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function sphereBurst(x, y, count, speed, colorFn, opts) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * TAU;
+      const v = speed * Math.sqrt(Math.random()) * rand(0.9, 1.1);
+      particles.push(new Particle(
+        x, y,
+        Math.cos(a) * v, Math.sin(a) * v,
+        colorFn(),
+        opts()
+      ));
+    }
+  }
+
+  function explode(x, y, type, pal) {
+    if (particles.length > MAX_PARTICLES) {
+      particles.splice(0, particles.length - MAX_PARTICLES);
+    }
+    Sound.boom(clamp(rand(0.4, 0.6) * (0.7 + 0.3 * (y / H)), 0.25, 0.7));
+    particles.push(new Particle(x, y, 0, 0, '#fff', {
+      life: 0.22, isFlash: true, flashRadius: rand(70, 110)
+    }));
+
+    const s = scale;
+    switch (type) {
+      case 'peony': {
+        sphereBurst(x, y, randInt(70, 110), rand(210, 300) * s, pal.outer, () => ({
+          life: rand(1.0, 1.5), size: rand(1.8, 2.6), gravity: 110, drag: 1.15, flicker: 0.25
+        }));
+        break;
+      }
+      case 'chrys': {
+        sphereBurst(x, y, randInt(80, 120), rand(180, 260) * s, pal.outer, () => ({
+          life: rand(1.6, 2.2), size: rand(1.7, 2.3), gravity: 100, drag: 0.8, flicker: 0.75
+        }));
+        sphereBurst(x, y, 20, 90 * s, pal.inner, () => ({
+          life: rand(0.6, 0.9), size: 1.6, gravity: 80, drag: 1.2
+        }));
+        break;
+      }
+      case 'ring': {
+        const n = randInt(46, 66);
+        const sp = rand(220, 280) * s;
+        const tilt = rand(0.3, 0.95);
+        const rot = rand(0, TAU);
+        const cR = Math.cos(rot), sR = Math.sin(rot);
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * TAU + rand(-0.02, 0.02);
+          const vx = Math.cos(a) * sp;
+          const vy = Math.sin(a) * sp * tilt;
+          const rx = vx * cR - vy * sR;
+          const ry = vx * sR + vy * cR;
+          particles.push(new Particle(x, y, rx, ry, pal.outer(), {
+            life: rand(1.1, 1.4), size: 2.1, gravity: 60, drag: 0.9, flicker: 0.15
+          }));
+        }
+        for (let i = 0; i < 10; i++) {
+          const a = Math.random() * TAU;
+          const v = sp * 0.22 * Math.random();
+          particles.push(new Particle(x, y, Math.cos(a) * v, Math.sin(a) * v, pal.inner(), {
+            life: rand(0.4, 0.6), size: 1.6, gravity: 60, drag: 1.2
+          }));
+        }
+        break;
+      }
+      case 'willow': {
+        sphereBurst(x, y, randInt(40, 60), rand(150, 230) * s,
+          () => hueColor(rand(36, 52), rand(60, 72)), () => ({
+            life: rand(2.6, 3.6), size: rand(1.6, 2.4), gravity: 235, drag: 0.5, flicker: 0.45
+          }));
+        break;
+      }
+      case 'crossette': {
+        const n = randInt(5, 9);
+        const sp = rand(170, 240) * s;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * TAU + rand(-0.1, 0.1);
+          particles.push(new Particle(x, y, Math.cos(a) * sp, Math.sin(a) * sp, pal.outer(), {
+            life: rand(0.9, 1.2), size: 3.1, gravity: 90, drag: 0.7,
+            splitAt: rand(0.45, 0.62), splitPower: 150
+          }));
+        }
+        break;
+      }
+      case 'crackle': {
+        sphereBurst(x, y, randInt(90, 130), rand(230, 310) * s,
+          () => (Math.random() < 0.5 ? '#fff7e0' : pal.outer()), () => ({
+            life: rand(0.9, 1.6), size: rand(1.4, 2.0), gravity: 90, drag: 1.0, flicker: 0.95
+          }));
+        Sound.crackle(0.2);
+        break;
+      }
+      case 'double': {
+        const sp = rand(220, 290) * s;
+        sphereBurst(x, y, randInt(60, 90), sp, pal.outer, () => ({
+          life: rand(1.1, 1.5), size: rand(1.8, 2.5), gravity: 110, drag: 1.1, flicker: 0.2
+        }));
+        sphereBurst(x, y, randInt(30, 45), sp * 0.55, pal.inner, () => ({
+          life: rand(0.8, 1.1), size: 2.2, gravity: 100, drag: 1.0
+        }));
+        break;
+      }
+    }
+  }
+
+  /* ---------- launching ---------- */
+
+  function launch(tx, ty, type) {
+    ty = clamp(ty, H * 0.06, H * 0.72);
+    rockets.push(new Rocket(tx, ty, type));
+    Sound.launch();
+  }
+
+  function launchRandom() {
+    launch(rand(W * 0.1, W * 0.9), rand(H * 0.12, H * 0.5));
+  }
+
+  function volley(n, cx) {
+    n = n || randInt(2, 4);
+    for (let i = 0; i < n; i++) {
+      setTimeout(() => {
+        if (document.hidden) return;
+        const x = cx == null
+          ? rand(W * 0.08, W * 0.92)
+          : cx + rand(-W * 0.06, W * 0.06);
+        launch(x, rand(H * 0.12, H * 0.45));
+      }, i * rand(90, 220));
+    }
+  }
+
+  function finale() {
+    const n = reducedMotion ? 6 : randInt(10, 14);
+    for (let i = 0; i < n; i++) {
+      setTimeout(() => {
+        if (!document.hidden) launchRandom();
+      }, i * rand(110, 200));
+    }
+  }
+
+  function scheduleAuto() {
+    const base = reducedMotion ? 3200 : 1400;
+    autoTimer = setTimeout(() => {
+      if (!document.hidden) {
+        if (Math.random() < 0.25) volley(randInt(2, 3));
+        else launchRandom();
+      }
+      scheduleAuto();
+    }, rand(base * 0.5, base * 1.7));
+  }
+
+  /* ---------- main loop ---------- */
+
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.033);
+    last = now;
+
+    // fade previous frame into trails without covering the backdrop
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+
+    // twinkling stars
+    const t = now / 1000;
+    for (const st of twinkles) {
+      ctx.globalAlpha = 0.05 + 0.12 * (0.5 + 0.5 * Math.sin(t * st.speed + st.phase));
+      ctx.fillStyle = '#eef2ff';
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, st.r, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      if (!rockets[i].update(dt)) rockets.splice(i, 1);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      if (!particles[i].update(dt)) particles.splice(i, 1);
+    }
+
+    for (const r of rockets) r.draw();
+    for (const p of particles) p.draw();
+
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- input ---------- */
+
+  window.addEventListener('pointerdown', (e) => {
+    if (e.target instanceof Element && e.target.closest('button')) return;
+    Sound.init();
+    Sound.resume();
+    launch(e.clientX, e.clientY);
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && !e.repeat) {
+      e.preventDefault();
+      Sound.init();
+      Sound.resume();
+      finale();
+    }
+  });
+
+  soundButton.addEventListener('pointerdown', (e) => e.stopPropagation());
+  soundButton.addEventListener('click', () => {
+    Sound.init();
+    Sound.resume();
+    Sound.enabled = !Sound.enabled;
+    soundButton.textContent = Sound.enabled ? 'Sound on' : 'Sound off';
+    soundButton.setAttribute('aria-pressed', String(!Sound.enabled));
+  });
+
+  window.addEventListener('resize', resize);
+
+  /* ---------- go ---------- */
+
+  resize();
+  requestAnimationFrame((t) => {
+    last = t;
+    requestAnimationFrame(frame);
+  });
+  setTimeout(() => {
+    if (!document.hidden) launchRandom();
+  }, 600);
+  scheduleAuto();
+})();
+</script>
+</body>
+</html>
