@@ -93,6 +93,14 @@ describe('catalog', () => {
         experiment: 'rollercoaster',
         level: 'A',
         promptRevision: 1,
+      })?.src,
+    ).toBe('new.html');
+    expect(
+      findCell(cells, {
+        model: 'grok-4.6',
+        experiment: 'rollercoaster',
+        level: 'A',
+        promptRevision: 1,
         month: '2026-08',
       })?.src,
     ).toBe('new.html');
@@ -189,6 +197,37 @@ describe('catalog', () => {
     expect(catalog.cells[0].thinking).toBe('high');
     expect(catalog.cells[0].modelKey).toBe('grok-4.6-high');
     expect(catalog.cells[0].model).toBe('grok-4.6');
+  });
+
+  it('lists preferred experiments that have no published cells', () => {
+    const catalog = buildCatalogFromCells(
+      [
+        {
+          model: 'grok-4.6',
+          experiment: 'rollercoaster',
+          title: 'Rollercoaster',
+          level: 'A',
+          date: '2026-08-21-021413',
+          promptSha256: 'aaa',
+          status: 'complete',
+          src: 'a.html',
+        },
+      ],
+      {
+        experimentOrder: ['rollercoaster', 'ant-colony', 'fireworks'],
+        experimentTitles: {
+          rollercoaster: 'Rollercoaster',
+          'ant-colony': 'Ant Colony',
+          fireworks: 'Fireworks',
+        },
+      },
+    );
+    expect(catalog.experiments).toEqual([
+      { id: 'rollercoaster', title: 'Rollercoaster' },
+      { id: 'ant-colony', title: 'Ant Colony' },
+      { id: 'fireworks', title: 'Fireworks' },
+    ]);
+    expect(catalog.cells).toHaveLength(1);
   });
 
   it('surfaces showcaseFixed on glance', () => {

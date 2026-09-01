@@ -45,9 +45,14 @@ export function formatRunInMonth(stamp) {
   return out;
 }
 
+export function pickLatestCell(cells) {
+  const list = [...(cells || [])];
+  list.sort((a, b) => String(b?.date || '').localeCompare(String(a?.date || '')));
+  return list[0] || null;
+}
+
 export function pickCellForMonth(cells, month) {
   const key = monthKey(month) || String(month || '');
   const inMonth = (cells || []).filter((cell) => monthKey(cell.date) === key);
-  inMonth.sort((a, b) => String(b?.date || '').localeCompare(String(a?.date || '')));
-  return inMonth[0] || null;
+  return pickLatestCell(inMonth);
 }

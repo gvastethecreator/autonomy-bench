@@ -2,7 +2,8 @@
 
 ## 0.7.6 — 2026-09-01
 
-- Browser Autonomy Suite v2.2.0: add three live benches with new ids: Ant Colony (`ant-colony`, `physics-simulation`), Pinball (`pinball`, `games`), and Fireworks (`fireworks`, `minimal-creative`). Each Raw A prompt is a minimum task statement. B and C use the fixed suite-wide suffixes. Rollercoaster A stays byte-for-byte unchanged. The 31 shelved v2.0.0 benches stay shelved.
+- Browser Autonomy Suite v2.2.0: add two live benches with new ids: Ant Colony (`ant-colony`, `physics-simulation`) and Fireworks (`fireworks`, `minimal-creative`). Each Raw A prompt is a minimum task statement. B and C use the fixed suite-wide suffixes. Rollercoaster A stays byte-for-byte unchanged. The 31 shelved v2.0.0 benches stay shelved.
+- Gallery toolbar: a Bench dropdown next to Filters. Catalog lists live benches even without published takes. Prompt v defaults across every month; month is an optional filter.
 - Suite tests lock the new Raw A prompts, the live id list, and the suite version.
 - Rebuild `agent.json`, `llms.txt`, and the viewer so the published prompt pack and experiment marks include the new benches.
 - Remove internal architecture and agent operator docs from the tracked tree.

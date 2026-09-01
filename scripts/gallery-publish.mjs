@@ -250,10 +250,28 @@ export function publishRun({ runDir, galleryDir, suite }) {
   return { manifest: m, experimentOrder, copiedHtml, copiedReceipts, copiedPrompts };
 }
 
+export function experimentTitlesFromSuite(suite) {
+  return Object.fromEntries((suite?.benchmarks || []).map((b) => [b.id, b.title || b.id]));
+}
+
+export function catalogExperimentOrder(suite, extras = {}) {
+  const known = liveBenchmarkIds(suite);
+  const fromSuite = (suite?.benchmarks || []).map((b) => b.id);
+  const preferred = extras.experimentOrder || [];
+  const order = [];
+  const seen = new Set();
+  for (const id of [...DEFAULT_EXPERIMENT_ORDER, ...preferred, ...fromSuite]) {
+    if (!id || seen.has(id)) continue;
+    if (known.size && !known.has(id)) continue;
+    seen.add(id);
+    order.push(id);
+  }
+  return order;
+}
+
 export function writeCatalogFile(galleryDir, suite, extras = {}) {
   const catalogPath = join(galleryDir, 'catalog.json');
   const prev = existsSync(catalogPath) ? readJson(catalogPath) : {};
-  const preferred = extras.experimentOrder || DEFAULT_EXPERIMENT_ORDER;
   const catalog = buildCatalogFromCells(indexPublishedCells(galleryDir, suite), {
     generatedAt: extras.generatedAt || new Date().toISOString(),
     // prev fills in only when no run is being published (viewer rebuild);
@@ -262,9 +280,8 @@ export function writeCatalogFile(galleryDir, suite, extras = {}) {
     label: (extras.runId ? extras.label : extras.label || prev.label) || '',
     harness: (extras.runId ? extras.harness : extras.harness || prev.harness) || '',
     adapter: (extras.runId ? extras.adapter : extras.adapter || prev.adapter) || '',
-    experimentOrder: DEFAULT_EXPERIMENT_ORDER.concat(
-      preferred.filter((id) => !DEFAULT_EXPERIMENT_ORDER.includes(id)),
-    ),
+    experimentOrder: catalogExperimentOrder(suite, extras),
+    experimentTitles: experimentTitlesFromSuite(suite),
   });
   writeJson(catalogPath, catalog);
   return catalog;

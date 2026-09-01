@@ -23,7 +23,6 @@ describe('gallery CLI module', () => {
     expect(suite.benchmarks.map((row: { id: string }) => row.id)).toEqual([
       'rollercoaster',
       'ant-colony',
-      'pinball',
       'fireworks',
     ]);
   });

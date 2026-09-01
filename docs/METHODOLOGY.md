@@ -24,7 +24,7 @@ The evaluation is **showcase-first** rather than interaction-first. A strong out
 
 This is an evaluation lens, **not a hidden implementation requirement**. Do not fail an A or B take merely because it waits for interaction when the prompt does not require autonomous playback. Instead, score how well the model's decision supports the relevant quality dimensions, especially judgment and showcase quality. C explicitly adds presentation pressure, but still does not prescribe autoplay, demo data, camera motion, controls, or any other concrete feature.
 
-The suite currently ships **Rollercoaster**, **Ant Colony**, **Pinball**, and **Fireworks** as the live tasks. Familiar v2.0.0 anchors such as Solar System, Asteroids, Physics Sandbox, Automated Factory, and Medieval City remain frozen locally and can return without rewriting prompts.
+The suite currently ships **Rollercoaster**, **Ant Colony**, and **Fireworks** as the live tasks. Familiar v2.0.0 anchors such as Solar System, Asteroids, Physics Sandbox, Automated Factory, and Medieval City remain frozen locally and can return without rewriting prompts.
 
 Rollercoaster A remains byte-for-byte identical to the original v1 prompt because continuous first-person playback is part of that benchmark's identity.
 

@@ -6,6 +6,7 @@ import {
   monthKey,
   monthsFromDates,
   pickCellForMonth,
+  pickLatestCell,
 } from '../scripts/run-month.mjs';
 
 describe('monthKey', () => {
@@ -42,6 +43,16 @@ describe('formatRunInMonth', () => {
   it('shows day and time once the month is already selected', () => {
     expect(formatRunInMonth('2026-08-23-034329')).toBe('23 · 03:43');
     expect(formatRunInMonth('2026-08-21-021413-a02')).toBe('21 · 02:14 a02');
+  });
+});
+
+describe('pickLatestCell', () => {
+  it('returns the newest cell across months', () => {
+    const picked = pickLatestCell([
+      { date: '2026-08-21-021413', src: 'aug.html' },
+      { date: '2026-07-01-010000', src: 'july.html' },
+    ]);
+    expect(picked?.src).toBe('aug.html');
   });
 });
 

@@ -294,12 +294,45 @@ describe('publishRun', () => {
     expect(JSON.parse(readFileSync(join(galleryDir, 'serve.json'), 'utf8'))).toEqual({
       cleanUrls: false,
     });
-    expect(result.catalog.experiments.map((row: { id: string }) => row.id)).toContain(
+    expect(result.catalog.experiments.map((row: { id: string }) => row.id)).toEqual([
       'rollercoaster',
-    );
+    ]);
     expect(existsSync(join(galleryDir, 'vendor', 'gallery-query.mjs'))).toBe(true);
     expect(existsSync(join(galleryDir, 'vendor', 'webmcp.mjs'))).toBe(true);
     expect(existsSync(join(galleryDir, 'agent.json'))).toBe(true);
     expect(existsSync(join(galleryDir, 'llms.txt'))).toBe(true);
+  });
+
+  it('puts every live suite bench in the catalog even without takes', () => {
+    const galleryDir = tempDir();
+    const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
+    const animeBundle = join(galleryDir, 'anime.esm.min.js');
+    writeFileSync(animeBundle, 'export const animate = {};\n');
+    mkdirSync(join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(galleryDir, 'grok-4.6', 'rollercoaster-A', '2026-08-24-010000', 'index.html'),
+      '<html></html>',
+    );
+    const live = {
+      promptLevels: { A: { name: 'Raw' }, B: { name: 'Autonomous' }, C: { name: 'Showcase' } },
+      benchmarks: [
+        { id: 'rollercoaster', title: 'Rollercoaster' },
+        { id: 'ant-colony', title: 'Ant Colony' },
+        { id: 'fireworks', title: 'Fireworks' },
+      ],
+    };
+    const result = finishGallery({
+      galleryDir,
+      scriptsDir,
+      animeBundle,
+      suite: live,
+    });
+    expect(result.catalog.experiments).toEqual([
+      { id: 'rollercoaster', title: 'Rollercoaster' },
+      { id: 'ant-colony', title: 'Ant Colony' },
+      { id: 'fireworks', title: 'Fireworks' },
+    ]);
   });
 });

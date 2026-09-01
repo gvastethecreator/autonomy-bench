@@ -65,11 +65,10 @@ describe('browser-autonomy suite', () => {
       expect(String(benchmark.prompts?.B || '').trim().length).toBeGreaterThan(0);
       expect(String(benchmark.prompts?.C || '').trim().length).toBeGreaterThan(0);
     }
-    expect(suite.benchmarks).toHaveLength(4);
+    expect(suite.benchmarks).toHaveLength(3);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).toEqual([
       'rollercoaster',
       'ant-colony',
-      'pinball',
       'fireworks',
     ]);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
@@ -126,7 +125,6 @@ describe('browser-autonomy suite', () => {
     );
 
     expect(rawA['ant-colony']).toBe('Create an ant colony simulation in a single HTML file.');
-    expect(rawA.pinball).toBe('Create a pinball game in a single HTML file.');
     expect(rawA.fireworks).toBe('Create a fireworks display in a single HTML file.');
   });
 
