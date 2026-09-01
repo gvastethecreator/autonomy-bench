@@ -1,6 +1,6 @@
 # Methodology
 
-The suite is designed around **controlled under-specification**. The model is given enough information to make the task unambiguous, but not enough to prescribe architecture, visual style, interaction design, optional polish, or how much product judgment it should contribute.
+The suite uses **controlled under-specification**. The model is given enough information to make the task unambiguous, but not enough to prescribe architecture, visual style, interaction design, optional polish, or how much product judgment it should contribute.
 
 Browser Autonomy v2 uses a frozen three-level prompt ladder:
 

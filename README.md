@@ -8,7 +8,7 @@ Live gallery: [benchmark.gvaste.dev](https://benchmark.gvaste.dev).
 
 ## Quick start
 
-Requires [Vite+](https://viteplus.dev) (`vp`) and `pnpm@11.22.0`.
+Requires [Vite+](https://viteplus.dev) (`vp`) and `pnpm@12.0.0`.
 
 ```powershell
 vp install
@@ -28,15 +28,17 @@ vp run bench -- plan --models grok-4.6 --benchmarks rollercoaster --levels A,B,C
 vp run bench -- gallery --run <run-id>
 ```
 
-CLI, run modes, and publish: [docs/commands.md](docs/commands.md).
+CLI, run modes, and gallery publish: [docs/commands.md](docs/commands.md).
 
 ## Docs
 
 - [Commands](docs/commands.md)
 - [Methodology](docs/METHODOLOGY.md)
-- [Architecture](docs/ARCHITECTURE.md)
+- [Gallery viewer](docs/gallery.md)
 - [Suite prompts](suites/browser-autonomy/README.md)
 - [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

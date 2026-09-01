@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Remove internal architecture and agent operator docs from the tracked tree.
+- Pin the package manager to pnpm@12.0.0.
+
 ## 0.7.5 — 2026-08-27
 
 - Share CLI argv, suite doctor, run listing, Prototype Lab export, vote allow/store, viewer query, compact token counts, iframe settle, and gallery finish behind named modules.

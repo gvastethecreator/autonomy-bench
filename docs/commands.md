@@ -1,6 +1,6 @@
 # Commands
 
-Autonomy Bench uses **Vite+** (`vp`) for install, lint, format, test, and npm scripts. The coordinator CLI is `scripts/bench.mjs`.
+Use **Vite+** (`vp`) for install, lint, format, test, and npm scripts. The coordinator CLI is `scripts/bench.mjs`.
 
 ## Toolchain
 

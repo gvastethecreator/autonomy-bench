@@ -2,7 +2,7 @@
 
 Read [docs/METHODOLOGY.md](docs/METHODOLOGY.md) and [docs/commands.md](docs/commands.md) first.
 
-There are two contribution paths. Do not mix them.
+Two contribution paths. Do not mix them.
 
 ## Submit a take
 

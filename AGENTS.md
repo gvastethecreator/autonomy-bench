@@ -4,24 +4,8 @@ Coordinator for frozen browser-autonomy cells. Workers get only their cell packe
 
 Root commands, suite files, and receipts: `README.md`, `docs/commands.md`, `SKILLS/autonomy-bench/SKILL.md`.
 Suite additions and donated takes: `CONTRIBUTING.md`.
-
-## Agent skills
-
-### Issue tracker
-
-GitHub Issues and the linked GitHub Project hold live state. `.scratch/` holds synchronized local mirrors. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-One category label (`bug` or `enhancement`) and one triage label (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: root `CONTEXT.md` plus `docs/adr/` when those files exist. See `docs/agents/domain.md`. `/grill-with-docs` creates them when terms or decisions resolve.
-
-### Local archive
-
-Shelved v2.0.0 benches and retired gallery takes live under `.scratch/archive/` (gitignored). Read that folder's `MANIFEST.md` before restore. Do not put them in tracked `docs/` or `archive/`.
+Code map: `docs/codemap/codemap.md`.
+Toolchain: Vite+ (`vp`). Keep the declared package manager. Do not rewrite frozen prompts under gallery/ or runs/.
 
 ## Hard rules
 
