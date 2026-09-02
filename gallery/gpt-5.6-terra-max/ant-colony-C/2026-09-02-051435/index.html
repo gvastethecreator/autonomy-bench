@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Colony Below — Ant Colony Simulation</title>
+  <style>
+    :root {
+      --ink: #f8edcf;
+      --muted: #b9a88b;
+      --line: rgba(248, 237, 207, .18);
+      --panel: rgba(22, 17, 12, .57);
+      --orange: #ff9a3d;
+      --mint: #b9e59d;
+      --soil: #15100c;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { width: 100%; height: 100%; margin: 0; }
+
+    body {
+      overflow: hidden;
+      background: #090807;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    button, input { font: inherit; }
+
+    #colonyCanvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+
+    .grain, .vignette, .scanline {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+    }
+
+    .grain {
+      opacity: .15;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.75'/%3E%3C/svg%3E");
+      mix-blend-mode: soft-light;
+    }
+
+    .vignette {
+      background: radial-gradient(ellipse at 50% 46%, transparent 31%, rgba(0, 0, 0, .1) 61%, rgba(0, 0, 0, .65) 100%);
+    }
+
+    .scanline {
+      opacity: .08;
+      background: repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(255,255,255,.10) 4px);
+      mix-blend-mode: overlay;
+    }
+
+    .topbar {
+      pointer-events: none;
+      position: fixed;
+      top: clamp(18px, 3vw, 44px);
+      left: clamp(18px, 4vw, 64px);
+      right: clamp(18px, 4vw, 64px);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      letter-spacing: .02em;
+    }
+
+    .brand-mark {
+      width: 37px;
+      height: 37px;
+      border: 1px solid rgba(255, 196, 111, .58);
+      border-radius: 50%;
+      position: relative;
+      box-shadow: 0 0 22px rgba(255, 153, 57, .18), inset 0 0 16px rgba(255, 153, 57, .08);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      background: var(--orange);
+      border-radius: 99px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .brand-mark::before {
+      width: 4px;
+      height: 21px;
+      box-shadow: -7px -3px 0 -1px var(--orange), 7px 3px 0 -1px var(--orange);
+    }
+
+    .brand-mark::after {
+      width: 20px;
+      height: 4px;
+      box-shadow: 0 -7px 0 -1px var(--orange), 0 7px 0 -1px var(--orange);
+    }
+
+    .eyebrow {
+      display: block;
+      color: var(--orange);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .23em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 5px 0 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(19px, 2.2vw, 31px);
+      font-weight: 400;
+      letter-spacing: -.035em;
+      line-height: .95;
+    }
+
+    .status-pill {
+      margin-top: 2px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(16, 14, 10, .34);
+      padding: 9px 13px;
+      backdrop-filter: blur(12px);
+      color: #e8d9bb;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #c6f281;
+      box-shadow: 0 0 0 4px rgba(198, 242, 129, .09), 0 0 11px #c6f281;
+      animation: breathe 2.2s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      50% { opacity: .45; transform: scale(.74); }
+    }
+
+    .telemetry {
+      pointer-events: none;
+      position: fixed;
+      left: clamp(18px, 4vw, 64px);
+      top: 50%;
+      transform: translateY(-42%);
+      width: min(230px, 27vw);
+      display: grid;
+      gap: 10px;
+    }
+
+    .metric {
+      border-left: 1px solid rgba(255, 194, 109, .52);
+      padding: 8px 0 8px 13px;
+      background: linear-gradient(90deg, rgba(20, 15, 10, .44), transparent);
+      text-shadow: 0 1px 0 #000;
+    }
+
+    .metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      margin-top: 3px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .metric-value small {
+      color: #aa9778;
+      font-family: Inter, ui-sans-serif, sans-serif;
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .right-note {
+      pointer-events: none;
+      position: fixed;
+      right: clamp(18px, 4vw, 64px);
+      bottom: clamp(104px, 12vw, 160px);
+      width: 185px;
+      text-align: right;
+      color: rgba(238, 222, 191, .76);
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 13px;
+      font-style: italic;
+      line-height: 1.35;
+    }
+
+    .right-note strong {
+      display: block;
+      margin-bottom: 7px;
+      color: #fff0cc;
+      font-family: Inter, ui-sans-serif, sans-serif;
+      font-size: 9px;
+      font-style: normal;
+      font-weight: 750;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+
+    .control-dock {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      bottom: clamp(18px, 3vw, 42px);
+      transform: translateX(-50%);
+      width: min(730px, calc(100vw - 36px));
+      min-height: 71px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border: 1px solid rgba(255, 228, 182, .17);
+      border-radius: 16px;
+      background: linear-gradient(120deg, rgba(26, 20, 14, .84), rgba(12, 11, 9, .72));
+      padding: 11px 13px;
+      box-shadow: 0 18px 52px rgba(0, 0, 0, .32), inset 0 1px rgba(255,255,255,.05);
+      backdrop-filter: blur(16px) saturate(1.1);
+    }
+
+    .icon-button, .action-button {
+      appearance: none;
+      border: 1px solid rgba(255, 223, 171, .22);
+      color: var(--ink);
+      background: rgba(255,255,255,.055);
+      cursor: pointer;
+      transition: transform .2s ease, background .2s ease, border-color .2s ease;
+    }
+
+    .icon-button:hover, .action-button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255, 183, 91, .7);
+      background: rgba(255, 158, 64, .14);
+    }
+
+    .icon-button:focus-visible, .action-button:focus-visible, input:focus-visible {
+      outline: 2px solid #f7c373;
+      outline-offset: 3px;
+    }
+
+    .icon-button {
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+    }
+
+    .pause-glyph {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      justify-content: center;
+      height: 15px;
+    }
+
+    .pause-glyph i {
+      display: block;
+      width: 3px;
+      height: 15px;
+      border-radius: 4px;
+      background: currentColor;
+    }
+
+    .play-glyph {
+      width: 0;
+      height: 0;
+      margin-left: 3px;
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-left: 12px solid currentColor;
+    }
+
+    .speed-control {
+      min-width: 135px;
+      flex: 1 1 190px;
+      padding: 0 4px;
+    }
+
+    .speed-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    #speedReadout { color: var(--orange); }
+
+    input[type="range"] {
+      display: block;
+      width: 100%;
+      accent-color: var(--orange);
+      cursor: ew-resize;
+    }
+
+    .divider {
+      align-self: stretch;
+      width: 1px;
+      background: var(--line);
+    }
+
+    .action-button {
+      flex: 0 0 auto;
+      border-radius: 10px;
+      padding: 11px 13px;
+      color: #fee6b9;
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .action-button.primary {
+      border-color: rgba(255, 157, 63, .56);
+      background: linear-gradient(135deg, #d75b22, #ed8732);
+      box-shadow: 0 7px 18px rgba(204, 76, 22, .2);
+      color: #fff3db;
+    }
+
+    .action-button.primary:hover {
+      background: linear-gradient(135deg, #e16a27, #f6a043);
+    }
+
+    .hint {
+      pointer-events: none;
+      position: fixed;
+      z-index: 3;
+      left: 50%;
+      bottom: calc(clamp(18px, 3vw, 42px) + 87px);
+      transform: translate(-50%, 8px);
+      opacity: 0;
+      border: 1px solid rgba(255,228,182,.16);
+      border-radius: 999px;
+      background: rgba(22, 17, 12, .72);
+      padding: 8px 12px;
+      color: #e7d6b5;
+      font-size: 10px;
+      letter-spacing: .06em;
+      transition: opacity .25s ease, transform .25s ease;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+
+    .hint.show { opacity: 1; transform: translate(-50%, 0); }
+
+    .keyboard-hint {
+      pointer-events: none;
+      position: fixed;
+      left: clamp(18px, 4vw, 64px);
+      bottom: clamp(25px, 3vw, 42px);
+      color: rgba(230, 215, 185, .44);
+      font-size: 10px;
+      letter-spacing: .06em;
+    }
+
+    kbd {
+      margin: 0 2px;
+      border: 1px solid rgba(230,215,185,.22);
+      border-bottom-color: rgba(230,215,185,.38);
+      border-radius: 4px;
+      padding: 1px 4px;
+      color: rgba(255,239,207,.65);
+      font-family: inherit;
+      font-size: 9px;
+    }
+
+    @media (max-width: 650px) {
+      .topbar { top: 18px; left: 18px; right: 18px; }
+      .status-pill { padding: 8px 10px; font-size: 8px; }
+      .telemetry { top: auto; bottom: 107px; transform: none; gap: 4px; width: 130px; }
+      .metric { padding: 4px 0 4px 9px; }
+      .metric-value { font-size: 19px; }
+      .metric:nth-child(3) { display: none; }
+      .right-note, .keyboard-hint { display: none; }
+      .control-dock { gap: 9px; min-height: 64px; padding: 9px; }
+      .divider { display: none; }
+      .action-button { padding: 10px 9px; font-size: 8px; }
+      .action-button:not(.primary) { display: none; }
+      .hint { bottom: 95px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="colonyCanvas" aria-label="An animated ant colony simulation. Click underground to scatter a new food source."></canvas>
+  <div class="grain"></div>
+  <div class="vignette"></div>
+  <div class="scanline"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <span class="eyebrow">Field station 07 · subterranean study</span>
+        <h1>Colony Below</h1>
+      </div>
+    </div>
+    <div class="status-pill"><span class="status-dot"></span><span id="statusText">Forage cycle active</span></div>
+  </header>
+
+  <section class="telemetry" aria-label="Colony telemetry">
+    <div class="metric">
+      <span class="metric-label">Worker network</span>
+      <span class="metric-value"><span id="workerCount">0</span><small>ants</small></span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Larder stores</span>
+      <span class="metric-value"><span id="foodCount">0</span><small>seeds</small></span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Trail signal</span>
+      <span class="metric-value"><span id="trailCount">0</span><small>strength</small></span>
+    </div>
+  </section>
+
+  <aside class="right-note">
+    <strong>Living system</strong>
+    Each returning worker leaves a warmer, stronger path for the colony to follow.
+  </aside>
+
+  <div class="hint" id="hint" aria-live="polite"></div>
+
+  <nav class="control-dock" aria-label="Simulation controls">
+    <button class="icon-button" id="pauseButton" type="button" aria-label="Pause simulation" title="Pause simulation">
+      <span class="pause-glyph" id="pauseGlyph" aria-hidden="true"><i></i><i></i></span>
+    </button>
+    <label class="speed-control">
+      <span class="speed-header"><span>Forage tempo</span><span id="speedReadout">1.0×</span></span>
+      <input id="speedSlider" type="range" min="0.4" max="2.4" value="1" step="0.1" aria-label="Forage tempo">
+    </label>
+    <div class="divider"></div>
+    <button class="action-button" id="workerButton" type="button">+ 8 workers</button>
+    <button class="action-button primary" id="seedButton" type="button">Drop food</button>
+  </nav>
+
+  <div class="keyboard-hint">Click the terrain to place food · <kbd>space</kbd> pause · <kbd>R</kbd> renew colony</div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var canvas = document.getElementById("colonyCanvas");
+      var ctx = canvas.getContext("2d");
+      var pauseButton = document.getElementById("pauseButton");
+      var pauseGlyph = document.getElementById("pauseGlyph");
+      var speedSlider = document.getElementById("speedSlider");
+      var speedReadout = document.getElementById("speedReadout");
+      var workerButton = document.getElementById("workerButton");
+      var seedButton = document.getElementById("seedButton");
+      var hint = document.getElementById("hint");
+      var statusText = document.getElementById("statusText");
+      var workerCount = document.getElementById("workerCount");
+      var foodCount = document.getElementById("foodCount");
+      var trailCount = document.getElementById("trailCount");
+
+      var width = 0;
+      var height = 0;
+      var dpr = 1;
+      var surfaceY = 0;
+      var nest = { x: 0, y: 0, r: 38 };
+      var time = 0;
+      var lastFrame = 0;
+      var paused = false;
+      var speed = 1;
+      var foodStored = 184;
+      var signal = 72;
+      var ants = [];
+      var foods = [];
+      var floaters = [];
+      var dust = [];
+      var rootLines = [];
+      var tunnelBranches = [];
+      var pulseRings = [];
+      var showHintTimer = 0;
+      var randomSeed = 62491;
+
+      function seeded() {
+        randomSeed = (randomSeed * 1664525 + 1013904223) >>> 0;
+        return randomSeed / 4294967296;
+      }
+
+      function random(min, max) {
+        return min + Math.random() * (max - min);
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function eased(t) {
+        return t * t * (3 - 2 * t);
+      }
+
+      function rgba(hex, alpha) {
+        return hex + alpha + ")";
+      }
+
+      function pointOnRoute(route, t) {
+        var u = 1 - t;
+        return {
+          x: u * u * u * route.p0.x + 3 * u * u * t * route.p1.x + 3 * u * t * t * route.p2.x + t * t * t * route.p3.x,
+          y: u * u * u * route.p0.y + 3 * u * u * t * route.p1.y + 3 * u * t * t * route.p2.y + t * t * t * route.p3.y
+        };
+      }
+
+      function tangentOnRoute(route, t) {
+        var u = 1 - t;
+        return {
+          x: 3 * u * u * (route.p1.x - route.p0.x) + 6 * u * t * (route.p2.x - route.p1.x) + 3 * t * t * (route.p3.x - route.p2.x),
+          y: 3 * u * u * (route.p1.y - route.p0.y) + 6 * u * t * (route.p2.y - route.p1.y) + 3 * t * t * (route.p3.y - route.p2.y)
+        };
+      }
+
+      function routeLength(route) {
+        var length = 0;
+        var previous = pointOnRoute(route, 0);
+        for (var i = 1; i <= 18; i++) {
+          var current = pointOnRoute(route, i / 18);
+          length += Math.hypot(current.x - previous.x, current.y - previous.y);
+          previous = current;
+        }
+        return length;
+      }
+
+      function makeFood(x, y, amount, color) {
+        var node = {
+          x: x,
+          y: y,
+          amount: amount || Math.round(random(52, 92)),
+          initial: amount || 72,
+          color: color || (Math.random() > .5 ? "#ffbd55" : "#d6df76"),
+          phase: random(0, Math.PI * 2),
+          route: null,
+          glow: 0
+        };
+        node.route = makeRoute(node);
+        foods.push(node);
+        return node;
+      }
+
+      function makeRoute(food) {
+        var outward = food.x < nest.x ? -1 : 1;
+        var mouthOffset = outward * random(11, 24);
+        var p0 = { x: nest.x + mouthOffset, y: nest.y - random(3, 17) };
+        var p3 = { x: food.x, y: food.y };
+        var midY = surfaceY + (nest.y - surfaceY) * random(.36, .62);
+        return {
+          p0: p0,
+          p1: { x: p0.x + outward * random(24, 82), y: p0.y - random(20, 68) },
+          p2: { x: food.x - outward * random(34, 98), y: midY + random(-20, 34) },
+          p3: p3,
+          tone: random(.55, 1),
+          length: 0
+        };
+      }
+
+      function makeAnt(route, offset) {
+        var toFood = Math.random() > .42;
+        return {
+          route: route,
+          t: clamp(offset === undefined ? random(.02, .97) : offset, 0, 1),
+          direction: toFood ? 1 : -1,
+          carrying: !toFood && Math.random() > .35,
+          size: random(1.6, 2.45),
+          speed: random(.13, .22),
+          sway: random(0, Math.PI * 2),
+          lane: random(-3.5, 3.5),
+          hesitation: random(0, 1),
+          opacity: random(.62, 1)
+        };
+      }
+
+      function addWorkers(count) {
+        if (!foods.length) return;
+        for (var i = 0; i < count; i++) {
+          var food = foods[i % foods.length];
+          ants.push(makeAnt(food.route));
+        }
+        showHint("A new worker cohort joins the trail.");
+      }
+
+      function initTerrain() {
+        floaters = [];
+        dust = [];
+        rootLines = [];
+        tunnelBranches = [];
+        randomSeed = 10347;
+
+        for (var i = 0; i < 230; i++) {
+          floaters.push({
+            x: seeded() * width,
+            y: seeded() * surfaceY,
+            r: seeded() * 1.7 + .25,
+            a: seeded() * .23 + .03,
+            drift: seeded() * .24 + .04,
+            phase: seeded() * Math.PI * 2,
+            warm: seeded() > .64
+          });
+        }
+
+        for (var j = 0; j < 360; j++) {
+          dust.push({
+            x: seeded() * width,
+            y: surfaceY + seeded() * (height - surfaceY),
+            r: seeded() * 1.4 + .25,
+            a: seeded() * .18 + .035,
+            warm: seeded() > .76,
+            drift: seeded() * .12 + .025
+          });
+        }
+
+        for (var k = 0; k < 21; k++) {
+          var sx = seeded() * width;
+          var sy = surfaceY - seeded() * 18;
+          var count = 2 + Math.floor(seeded() * 4);
+          var points = [{ x: sx, y: sy }];
+          for (var p = 0; p < count; p++) {
+            var before = points[points.length - 1];
+            points.push({
+              x: before.x + (seeded() - .5) * 50,
+              y: before.y + 16 + seeded() * 45
+            });
+          }
+          rootLines.push({ points: points, alpha: seeded() * .18 + .07, width: seeded() * 1.5 + .35 });
+        }
+
+        for (var n = 0; n < 14; n++) {
+          var direction = n % 2 ? 1 : -1;
+          var start = {
+            x: nest.x + direction * random(8, 33),
+            y: nest.y + random(6, 34)
+          };
+          tunnelBranches.push({
+            p0: start,
+            p1: { x: start.x + direction * random(28, 95), y: start.y + random(12, 55) },
+            p2: { x: start.x + direction * random(45, 135), y: start.y + random(50, 135) },
+            p3: { x: clamp(start.x + direction * random(65, 160), 12, width - 12), y: clamp(start.y + random(80, 215), surfaceY + 30, height - 6) },
+            width: random(5, 12),
+            alpha: random(.12, .28)
+          });
+        }
+      }
+
+      function resetColony() {
+        foods = [];
+        ants = [];
+        pulseRings = [];
+        foodStored = 184;
+        signal = 72;
+
+        makeFood(width * .18, surfaceY - 8, 88, "#ffbd55");
+        makeFood(width * .44, surfaceY + 10, 72, "#d7df7b");
+        makeFood(width * .73, surfaceY - 4, 96, "#ffc467");
+        makeFood(width * .88, surfaceY + 23, 56, "#d7df7b");
+
+        for (var i = 0; i < 86; i++) {
+          ants.push(makeAnt(foods[i % foods.length].route));
+        }
+        showHint("Colony renewed. Fresh trails are forming.");
+      }
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        canvas.style.width = width + "px";
+        canvas.style.height = height + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        surfaceY = Math.round(height * (width < 650 ? .30 : .31));
+        nest.x = width * .535;
+        nest.y = surfaceY + Math.min(height * .32, 270);
+        nest.r = clamp(Math.min(width, height) * .045, 28, 47);
+        initTerrain();
+        if (!foods.length) {
+          resetColony();
+        } else {
+          foods.forEach(function (food) { food.route = makeRoute(food); });
+          ants.forEach(function (ant) {
+            var match = foods.find(function (food) { return food.route === ant.route; });
+            ant.route = (match || foods[0]).route;
+          });
+        }
+      }
+
+      function showHint(message) {
+        hint.textContent = message;
+        hint.classList.add("show");
+        clearTimeout(showHintTimer);
+        showHintTimer = setTimeout(function () {
+          hint.classList.remove("show");
+        }, 2600);
+      }
+
+      function addFoodAt(x, y) {
+        var targetY = clamp(y, surfaceY - 10, height - 95);
+        var targetX = clamp(x, 42, width - 42);
+        var node = makeFood(targetX, targetY, Math.round(random(62, 108)), Math.random() > .5 ? "#ffc263" : "#cce580");
+        for (var i = 0; i < 12; i++) {
+          ants.push(makeAnt(node.route, random(.02, .23)));
+        }
+        pulseRings.push({ x: targetX, y: targetY, age: 0, max: 1 });
+        signal = clamp(signal + 8, 0, 100);
+        showHint("New forage discovered — scouts are converging.");
+      }
+
+      function drawSky() {
+        var sky = ctx.createLinearGradient(0, 0, 0, surfaceY + 38);
+        sky.addColorStop(0, "#0e1b1b");
+        sky.addColorStop(.54, "#24433a");
+        sky.addColorStop(1, "#80684b");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, width, surfaceY + 25);
+
+        var horizonGlow = ctx.createRadialGradient(width * .68, surfaceY * .1, 5, width * .68, surfaceY * .1, Math.max(width, height) * .55);
+        horizonGlow.addColorStop(0, "rgba(237, 190, 100, .23)");
+        horizonGlow.addColorStop(.45, "rgba(176, 144, 92, .08)");
+        horizonGlow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = horizonGlow;
+        ctx.fillRect(0, 0, width, surfaceY + 15);
+
+        floaters.forEach(function (particle) {
+          var x = particle.x + Math.sin(time * particle.drift + particle.phase) * 11;
+          var y = particle.y + Math.cos(time * particle.drift * .8 + particle.phase) * 4;
+          ctx.fillStyle = particle.warm ? "rgba(255,205,122," + particle.a + ")" : "rgba(203,237,177," + particle.a + ")";
+          ctx.beginPath();
+          ctx.arc(x, y, particle.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        ctx.fillStyle = "#262818";
+        for (var x = -10; x < width + 20; x += 8) {
+          var wave = Math.sin(x * .027) * 2 + Math.sin(x * .091) * 1.2;
+          ctx.fillRect(x, surfaceY - 6 + wave, 9, 9);
+        }
+        ctx.fillStyle = "rgba(182, 164, 97, .34)";
+        ctx.fillRect(0, surfaceY - 1, width, 3);
+
+        drawPlants();
+      }
+
+      function drawPlants() {
+        ctx.save();
+        ctx.lineCap = "round";
+        for (var i = 0; i < 34; i++) {
+          var x = (i * 89 + 27) % (width + 20) - 10;
+          var h = 8 + ((i * 19) % 21);
+          var lean = Math.sin(time * .7 + i) * 1.6 + ((i % 3) - 1) * 2;
+          ctx.strokeStyle = i % 5 === 0 ? "rgba(199,188,94,.64)" : "rgba(99,143,74,.72)";
+          ctx.lineWidth = i % 6 === 0 ? 1.35 : .8;
+          ctx.beginPath();
+          ctx.moveTo(x, surfaceY + 1);
+          ctx.quadraticCurveTo(x + lean * .4, surfaceY - h * .55, x + lean, surfaceY - h);
+          ctx.stroke();
+          if (i % 4 === 0) {
+            ctx.fillStyle = "rgba(177,202,102,.52)";
+            ctx.beginPath();
+            ctx.ellipse(x + lean + 2, surfaceY - h * .55, 2, 1, lean * .12, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawSoil() {
+        var soil = ctx.createLinearGradient(0, surfaceY, 0, height);
+        soil.addColorStop(0, "#533525");
+        soil.addColorStop(.08, "#432b1e");
+        soil.addColorStop(.43, "#271a15");
+        soil.addColorStop(1, "#130e0c");
+        ctx.fillStyle = soil;
+        ctx.fillRect(0, surfaceY, width, height - surfaceY);
+
+        var warmBand = ctx.createLinearGradient(0, surfaceY, 0, surfaceY + height * .32);
+        warmBand.addColorStop(0, "rgba(211,118,53,.18)");
+        warmBand.addColorStop(1, "rgba(211,118,53,0)");
+        ctx.fillStyle = warmBand;
+        ctx.fillRect(0, surfaceY, width, height * .36);
+
+        ctx.strokeStyle = "rgba(227, 150, 81, .10)";
+        ctx.lineWidth = 1;
+        for (var layer = 0; layer < 5; layer++) {
+          var baseY = surfaceY + 45 + layer * (height - surfaceY) / 5;
+          ctx.beginPath();
+          for (var x = -20; x <= width + 20; x += 36) {
+            var y = baseY + Math.sin(x * .018 + layer * 2.2) * 7 + Math.sin(x * .051 + layer) * 2;
+            if (x === -20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+
+        dust.forEach(function (particle) {
+          var y = particle.y + Math.sin(time * particle.drift + particle.x) * 1.4;
+          ctx.fillStyle = particle.warm ? "rgba(238,151,81," + particle.a + ")" : "rgba(244,211,161," + particle.a + ")";
+          ctx.beginPath();
+          ctx.arc(particle.x, y, particle.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        rootLines.forEach(function (root) {
+          ctx.beginPath();
+          root.points.forEach(function (point, index) {
+            if (index === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+          });
+          ctx.strokeStyle = "rgba(35, 22, 14, " + root.alpha + ")";
+          ctx.lineWidth = root.width;
+          ctx.stroke();
+        });
+      }
+
+      function drawBezier(route, widthValue, color) {
+        ctx.beginPath();
+        ctx.moveTo(route.p0.x, route.p0.y);
+        ctx.bezierCurveTo(route.p1.x, route.p1.y, route.p2.x, route.p2.y, route.p3.x, route.p3.y);
+        ctx.lineCap = "round";
+        ctx.lineWidth = widthValue;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      }
+
+      function drawTunnels() {
+        tunnelBranches.forEach(function (branch) {
+          drawBezier(branch, branch.width + 3, "rgba(5, 4, 3, " + branch.alpha + ")");
+          drawBezier(branch, branch.width, "rgba(96, 55, 32, " + (branch.alpha * .58) + ")");
+        });
+
+        foods.forEach(function (food) {
+          var route = food.route;
+          var strength = clamp(.16 + (food.amount / food.initial) * .19 + signal * .0017, .13, .39);
+          drawBezier(route, 10, "rgba(11, 7, 5, .36)");
+          drawBezier(route, 5, "rgba(111, 62, 37, " + strength + ")");
+          drawBezier(route, 1.2, "rgba(255, 160, 66, " + (strength * .46) + ")");
+        });
+      }
+
+      function drawNest() {
+        var glow = ctx.createRadialGradient(nest.x, nest.y, 3, nest.x, nest.y, nest.r * 4.1);
+        glow.addColorStop(0, "rgba(255, 140, 47, .16)");
+        glow.addColorStop(.35, "rgba(220, 87, 30, .07)");
+        glow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(nest.x, nest.y, nest.r * 4.1, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.translate(nest.x, nest.y);
+        ctx.fillStyle = "rgba(31, 17, 11, .76)";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, nest.r * 1.32, nest.r * .84, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(253, 164, 71, .54)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255, 195, 101, .22)";
+        ctx.beginPath();
+        ctx.ellipse(-nest.r * .2, -nest.r * .11, nest.r * .38, nest.r * .19, -.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (var i = 0; i < 9; i++) {
+          var angle = i / 9 * Math.PI * 2 + .2;
+          var rx = Math.cos(angle) * nest.r * .76;
+          var ry = Math.sin(angle) * nest.r * .43;
+          ctx.fillStyle = i % 3 === 0 ? "rgba(255,174,78,.75)" : "rgba(222,151,80,.33)";
+          ctx.beginPath();
+          ctx.arc(rx, ry, i % 3 === 0 ? 2 : 1.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "#2a120a";
+        ctx.beginPath();
+        ctx.ellipse(0, 1, nest.r * .48, nest.r * .34, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.fillStyle = "rgba(252, 229, 192, .7)";
+        ctx.font = "600 9px Inter, sans-serif";
+        ctx.letterSpacing = "1.5px";
+        ctx.textAlign = "center";
+        ctx.fillText("THE QUEEN'S CHAMBER", nest.x, nest.y + nest.r + 22);
+        ctx.letterSpacing = "0px";
+      }
+
+      function drawFood(food) {
+        var pulse = Math.sin(time * 2 + food.phase) * .5 + .5;
+        var depleted = clamp(food.amount / food.initial, 0, 1);
+        var r = 5 + depleted * 5.4;
+
+        var glow = ctx.createRadialGradient(food.x, food.y, 1, food.x, food.y, r * 4.5);
+        glow.addColorStop(0, food.color === "#d7df7b" || food.color === "#cce580" ? "rgba(209,234,120,.34)" : "rgba(255,181,76,.34)");
+        glow.addColorStop(1, "rgba(255,180,73,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(food.x, food.y, r * (3.7 + pulse * .6), 0, Math.PI * 2);
+        ctx.fill();
+
+        for (var i = 0; i < Math.ceil(depleted * 7); i++) {
+          var angle = i * 2.27 + food.phase;
+          var distance = (i % 3) * r * .28;
+          ctx.fillStyle = food.color;
+          ctx.beginPath();
+          ctx.arc(food.x + Math.cos(angle) * distance, food.y + Math.sin(angle) * distance, Math.max(1.4, r * (.35 - i * .021)), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.strokeStyle = "rgba(255,244,210,.3)";
+        ctx.lineWidth = .6;
+        ctx.beginPath();
+        ctx.arc(food.x, food.y, r + 4 + pulse * 1.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      function drawPulseRings(delta) {
+        pulseRings.forEach(function (ring) {
+          ring.age += delta;
+          var amount = ring.age / ring.max;
+          ctx.beginPath();
+          ctx.arc(ring.x, ring.y, 10 + amount * 38, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255,202,112," + (1 - amount) * .48 + ")";
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        });
+        pulseRings = pulseRings.filter(function (ring) { return ring.age < ring.max; });
+      }
+
+      function drawAnt(ant) {
+        var p = pointOnRoute(ant.route, ant.t);
+        var tangent = tangentOnRoute(ant.route, ant.t);
+        var angle = Math.atan2(tangent.y, tangent.x);
+        if (ant.direction < 0) angle += Math.PI;
+        var normalX = Math.cos(angle + Math.PI / 2);
+        var normalY = Math.sin(angle + Math.PI / 2);
+        var bob = Math.sin(time * 9 + ant.sway) * .55;
+        p.x += normalX * (ant.lane + bob);
+        p.y += normalY * (ant.lane + bob);
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(angle);
+        var body = ant.carrying ? "#f4a244" : "#e9c189";
+        ctx.globalAlpha = ant.opacity;
+        ctx.strokeStyle = ant.carrying ? "rgba(255,203,116,.8)" : "rgba(58,29,17,.85)";
+        ctx.lineWidth = .55;
+        for (var leg = -1; leg <= 1; leg += 2) {
+          ctx.beginPath();
+          ctx.moveTo(-ant.size, leg * .6);
+          ctx.lineTo(-ant.size * 2.4, leg * (ant.size * 1.35));
+          ctx.moveTo(ant.size * .2, leg * .65);
+          ctx.lineTo(ant.size * 1.9, leg * (ant.size * 1.25));
+          ctx.stroke();
+        }
+        ctx.fillStyle = body;
+        ctx.beginPath();
+        ctx.ellipse(-ant.size * .92, 0, ant.size * .78, ant.size * .63, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, ant.size * .92, ant.size * .72, 0, 0, Math.PI * 2);
+        ctx.ellipse(ant.size * 1.07, 0, ant.size * .67, ant.size * .55, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (ant.carrying) {
+          ctx.fillStyle = "#fff0a5";
+          ctx.beginPath();
+          ctx.arc(ant.size * 2.04, 0, ant.size * .64, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function updateAnts(delta) {
+        var liveFoods = foods.filter(function (food) { return food.amount > 0; });
+        ants.forEach(function (ant, index) {
+          ant.t += ant.direction * ant.speed * delta * speed;
+          if (ant.direction > 0 && ant.t >= 1) {
+            ant.t = 1;
+            ant.direction = -1;
+            ant.carrying = true;
+            var owner = foods.find(function (food) { return food.route === ant.route; });
+            if (owner) {
+              owner.amount = Math.max(0, owner.amount - 1);
+              owner.glow = 1;
+            }
+          } else if (ant.direction < 0 && ant.t <= 0) {
+            ant.t = 0;
+            ant.direction = 1;
+            if (ant.carrying) {
+              foodStored += 1;
+              signal = clamp(signal + .45, 0, 100);
+              ant.carrying = false;
+            }
+            if (liveFoods.length && Math.random() > .72) {
+              ant.route = liveFoods[(index + Math.floor(time * 2)) % liveFoods.length].route;
+            }
+          }
+        });
+
+        foods.forEach(function (food) {
+          food.glow = Math.max(0, food.glow - delta * .9);
+        });
+        foods = foods.filter(function (food) { return food.amount > 0; });
+        if (!foods.length) {
+          addFoodAt(random(width * .22, width * .84), random(surfaceY - 5, surfaceY + 38));
+        }
+        signal = clamp(signal - delta * .06 + ants.length * .0004, 0, 100);
+      }
+
+      function updateUI() {
+        workerCount.textContent = ants.length;
+        foodCount.textContent = Math.floor(foodStored);
+        trailCount.textContent = Math.round(signal) + "%";
+      }
+
+      function draw(delta) {
+        ctx.clearRect(0, 0, width, height);
+        drawSky();
+        drawSoil();
+        drawTunnels();
+        foods.forEach(drawFood);
+        drawNest();
+        ants.forEach(drawAnt);
+        drawPulseRings(delta);
+
+        var softLight = ctx.createRadialGradient(nest.x, nest.y, 0, nest.x, nest.y, Math.max(width, height) * .68);
+        softLight.addColorStop(0, "rgba(255,124,39,.035)");
+        softLight.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = softLight;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      function tick(now) {
+        if (!lastFrame) lastFrame = now;
+        var delta = Math.min((now - lastFrame) / 1000, .05);
+        lastFrame = now;
+        if (!paused) {
+          time += delta;
+          updateAnts(delta);
+        }
+        draw(paused ? 0 : delta);
+        updateUI();
+        requestAnimationFrame(tick);
+      }
+
+      function setPaused(value) {
+        paused = value;
+        pauseButton.setAttribute("aria-label", paused ? "Resume simulation" : "Pause simulation");
+        pauseButton.title = paused ? "Resume simulation" : "Pause simulation";
+        pauseGlyph.className = paused ? "play-glyph" : "pause-glyph";
+        pauseGlyph.innerHTML = paused ? "" : "<i></i><i></i>";
+        statusText.textContent = paused ? "Observation paused" : "Forage cycle active";
+        showHint(paused ? "The colony settles into stillness." : "The colony is moving again.");
+      }
+
+      pauseButton.addEventListener("click", function () {
+        setPaused(!paused);
+      });
+
+      speedSlider.addEventListener("input", function () {
+        speed = Number(speedSlider.value);
+        speedReadout.textContent = speed.toFixed(1) + "×";
+        showHint("Forage tempo set to " + speed.toFixed(1) + "×.");
+      });
+
+      workerButton.addEventListener("click", function () {
+        addWorkers(8);
+      });
+
+      seedButton.addEventListener("click", function () {
+        addFoodAt(random(width * .18, width * .84), random(surfaceY - 8, surfaceY + 28));
+      });
+
+      canvas.addEventListener("click", function (event) {
+        var bounds = canvas.getBoundingClientRect();
+        addFoodAt(event.clientX - bounds.left, event.clientY - bounds.top);
+      });
+
+      window.addEventListener("keydown", function (event) {
+        if (event.code === "Space" && event.target === document.body) {
+          event.preventDefault();
+          setPaused(!paused);
+        }
+        if (event.key && event.key.toLowerCase() === "r") {
+          resetColony();
+        }
+      });
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fireworks — Night Sky</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #edf5ff;
+      --muted: rgba(219, 234, 255, .68);
+      --glass: rgba(8, 14, 35, .43);
+      --line: rgba(215, 232, 255, .14);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      background: #020516;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    .scene { position: relative; width: 100%; height: 100%; isolation: isolate; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+    .vignette {
+      position: absolute; inset: 0; pointer-events: none; z-index: 2;
+      background: radial-gradient(ellipse at 50% 42%, transparent 24%, rgba(0, 3, 17, .12) 64%, rgba(0, 1, 9, .75) 130%);
+    }
+    .grain {
+      position: absolute; inset: -50%; pointer-events: none; z-index: 3; opacity: .045;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.75'/%3E%3C/svg%3E");
+      transform: rotate(7deg); mix-blend-mode: screen;
+    }
+    .hud {
+      position: absolute; top: clamp(22px, 5vh, 58px); left: clamp(22px, 6vw, 84px); z-index: 5;
+      pointer-events: none;
+    }
+    .eyebrow { margin: 0 0 11px; color: #afc8eb; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .26em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(27px, 4.25vw, 66px); font-weight: 360; letter-spacing: -.055em; line-height: .95; text-shadow: 0 4px 30px rgba(76, 116, 255, .25); }
+    .tagline { margin: 15px 0 0; color: var(--muted); font-size: clamp(11px, 1.15vw, 14px); letter-spacing: .035em; }
+
+    .controls {
+      position: absolute; right: clamp(18px, 4vw, 61px); bottom: clamp(18px, 4.3vh, 49px); z-index: 5;
+      display: flex; align-items: center; gap: 10px; padding: 9px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(16px);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, .25); opacity: .82; transition: opacity .25s ease;
+    }
+    .controls:hover { opacity: 1; }
+    button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 33px; padding: 0 15px;
+      border: 1px solid rgba(221, 237, 255, .14); border-radius: 999px; color: #edf5ff; background: rgba(177, 205, 255, .08);
+      font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; cursor: pointer;
+      transition: background .18s ease, border-color .18s ease, transform .18s ease;
+    }
+    button:hover { border-color: rgba(221, 237, 255, .38); background: rgba(177, 205, 255, .18); transform: translateY(-1px); }
+    button:active { transform: translateY(1px); }
+    .hint { padding: 0 7px 0 4px; color: rgba(221, 237, 255, .57); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; white-space: nowrap; }
+    .sound-dot { width: 6px; height: 6px; border-radius: 50%; background: #69d8ff; box-shadow: 0 0 10px #69d8ff; }
+    @media (max-width: 620px) {
+      .hud { top: 25px; left: 22px; }
+      .tagline { max-width: 220px; line-height: 1.45; }
+      .controls { right: 14px; bottom: 14px; }
+      .hint { display: none; }
+      button { padding: 0 13px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="scene" aria-label="Interactive fireworks display">
+    <canvas id="sky" aria-label="Animated night sky fireworks"></canvas>
+    <div class="vignette"></div>
+    <div class="grain"></div>
+    <header class="hud">
+      <p class="eyebrow">midnight celebration · 00:00</p>
+      <h1>Light the sky.</h1>
+      <p class="tagline">Click anywhere to launch a firework.</p>
+    </header>
+    <div class="controls">
+      <span class="hint">SPACE TO IGNITE</span>
+      <button id="pause" type="button" aria-label="Pause animation">Ⅱ&nbsp; Pause</button>
+      <button id="sound" type="button" aria-label="Toggle sound"><span class="sound-dot"></span> Sound</button>
+    </div>
+  </main>
+  <script>
+    (() => {
+      'use strict';
+      const canvas = document.getElementById('sky');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const pauseButton = document.getElementById('pause');
+      const soundButton = document.getElementById('sound');
+      let width = 0, height = 0, dpr = 1, last = 0, elapsed = 0, paused = false, audioOn = false;
+      let nextAuto = 600;
+      let rockets = [], sparks = [], rings = [], stars = [], buildings = [];
+      let audioContext = null;
+
+      const palette = [
+        ['#a7eeff', '#55c9ff', '#5a76ff'],
+        ['#fff7bc', '#ffc65a', '#ff774f'],
+        ['#ffe1ff', '#f578ff', '#8b69ff'],
+        ['#d5ffbc', '#68eeae', '#28bfe7'],
+        ['#fff0c8', '#ff9dd8', '#ff4f87']
+      ];
+      const random = (min, max) => min + Math.random() * (max - min);
+      const pick = array => array[(Math.random() * array.length) | 0];
+      const easeOut = t => 1 - Math.pow(1 - t, 3);
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        width = Math.max(1, rect.width); height = Math.max(1, rect.height);
+        canvas.width = Math.floor(width * dpr); canvas.height = Math.floor(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        makeStars(); makeBuildings();
+      }
+
+      function makeStars() {
+        stars = [];
+        const amount = Math.round(width * height / 6700);
+        for (let i = 0; i < amount; i++) {
+          stars.push({ x: Math.random() * width, y: Math.random() * height * .76, r: random(.25, 1.15), a: random(.18, .76), phase: random(0, Math.PI * 2), drift: random(.45, 1.8) });
+        }
+      }
+
+      function makeBuildings() {
+        buildings = [];
+        let x = -12;
+        while (x < width + 12) {
+          const w = random(25, 72), h = random(17, Math.max(39, height * .11));
+          const windows = [];
+          for (let wx = 9; wx < w - 6; wx += 11) for (let wy = 10; wy < h - 5; wy += 13) {
+            if (Math.random() > .56) windows.push({ x: wx, y: wy, a: random(.18, .64) });
+          }
+          buildings.push({ x, w, h, windows }); x += w + random(3, 10);
+        }
+      }
+
+      function launch(targetX = random(width * .16, width * .84), targetY = random(height * .15, height * .43), hue = null) {
+        const startX = targetX + random(-width * .12, width * .12);
+        const startY = height + 22;
+        const distance = startY - targetY;
+        const speed = random(570, 760);
+        rockets.push({ x: startX, y: startY, px: startX, py: startY, tx: targetX, ty: targetY, speed, distance, life: 0, color: hue || pick(palette), trail: [] });
+      }
+
+      function burst(rocket) {
+        const count = Math.round(random(74, 132));
+        const [bright, mid, deep] = rocket.color;
+        const shape = Math.random();
+        const base = random(1.05, 1.8);
+        for (let i = 0; i < count; i++) {
+          const angle = (Math.PI * 2 * i / count) + random(-.045, .045);
+          let force = random(.74, 1.08) * base;
+          if (shape < .19) force *= i % 2 ? .54 : 1.24;
+          if (shape >= .19 && shape < .32) force *= 0.85 + Math.abs(Math.cos(angle * 5)) * .36;
+          sparks.push({ x: rocket.x, y: rocket.y, px: rocket.x, py: rocket.y, vx: Math.cos(angle) * force * random(150, 250), vy: Math.sin(angle) * force * random(150, 250), age: 0, max: random(1.15, 2.25), size: random(.9, 2.25), color: Math.random() < .58 ? bright : (Math.random() < .65 ? mid : deep), twinkle: Math.random() * 12, drag: random(.967, .985), gravity: random(48, 78) });
+        }
+        rings.push({ x: rocket.x, y: rocket.y, age: 0, max: .55, color: bright, size: random(2.5, 5.5) });
+        if (audioOn) popSound();
+      }
+
+      function update(dt) {
+        elapsed += dt; nextAuto -= dt * 1000;
+        if (nextAuto < 0) { launch(); if (Math.random() > .45) setTimeout(() => launch(), random(140, 380)); nextAuto = random(720, 1580); }
+
+        for (let i = rockets.length - 1; i >= 0; i--) {
+          const r = rockets[i]; r.px = r.x; r.py = r.y;
+          const dx = r.tx - r.x, dy = r.ty - r.y, distance = Math.hypot(dx, dy);
+          const step = r.speed * dt;
+          r.x += dx / distance * step; r.y += dy / distance * step; r.life += dt;
+          r.trail.push({ x: r.x, y: r.y, age: 0 }); if (r.trail.length > 17) r.trail.shift();
+          r.trail.forEach(point => point.age += dt);
+          if (distance < 11 || r.life > 2.7) { burst(r); rockets.splice(i, 1); }
+        }
+        for (let i = sparks.length - 1; i >= 0; i--) {
+          const p = sparks[i]; p.px = p.x; p.py = p.y; p.age += dt;
+          p.vx *= Math.pow(p.drag, dt * 60); p.vy = p.vy * Math.pow(p.drag, dt * 60) + p.gravity * dt;
+          p.x += p.vx * dt; p.y += p.vy * dt;
+          if (p.age > p.max || p.y > height + 20) sparks.splice(i, 1);
+        }
+        for (let i = rings.length - 1; i >= 0; i--) { rings[i].age += dt; if (rings[i].age > rings[i].max) rings.splice(i, 1); }
+      }
+
+      function drawBackground() {
+        const sky = ctx.createLinearGradient(0, 0, 0, height);
+        sky.addColorStop(0, '#03051c'); sky.addColorStop(.43, '#071442'); sky.addColorStop(.74, '#11164a'); sky.addColorStop(1, '#0c0c25');
+        ctx.fillStyle = sky; ctx.fillRect(0, 0, width, height);
+        const glow = ctx.createRadialGradient(width * .5, height * .65, 0, width * .5, height * .65, Math.max(width, height) * .72);
+        glow.addColorStop(0, 'rgba(59, 53, 157, .18)'); glow.addColorStop(.45, 'rgba(30, 52, 138, .07)'); glow.addColorStop(1, 'rgba(8, 7, 31, 0)');
+        ctx.fillStyle = glow; ctx.fillRect(0, 0, width, height);
+        // Moon and its quiet halo.
+        const mx = width * .79, my = height * .18, mr = Math.min(43, width * .055);
+        const moonGlow = ctx.createRadialGradient(mx, my, mr * .4, mx, my, mr * 3.2);
+        moonGlow.addColorStop(0, 'rgba(211, 228, 255, .14)'); moonGlow.addColorStop(1, 'rgba(170, 200, 255, 0)');
+        ctx.fillStyle = moonGlow; ctx.fillRect(mx - mr * 3.2, my - mr * 3.2, mr * 6.4, mr * 6.4);
+        ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fillStyle = '#dce8ff'; ctx.shadowColor = 'rgba(194, 221, 255, .5)'; ctx.shadowBlur = 22; ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(mx + mr * .34, my - mr * .14, mr * .94, 0, Math.PI * 2); ctx.fillStyle = '#07133e'; ctx.fill();
+        // Stars.
+        for (const s of stars) { const alpha = s.a * (.7 + Math.sin(elapsed * s.drift + s.phase) * .3); ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fillStyle = `rgba(207, 225, 255, ${alpha})`; ctx.fill(); }
+      }
+
+      function drawRockets() {
+        for (const r of rockets) {
+          for (let i = 1; i < r.trail.length; i++) { const a = i / r.trail.length * .5; const prev = r.trail[i - 1], point = r.trail[i]; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(point.x, point.y); ctx.lineWidth = 1 + a * 1.5; ctx.strokeStyle = `rgba(255, 218, 157, ${a})`; ctx.stroke(); }
+          ctx.beginPath(); ctx.arc(r.x, r.y, 2.1, 0, Math.PI * 2); ctx.fillStyle = r.color[0]; ctx.shadowColor = r.color[0]; ctx.shadowBlur = 17; ctx.fill(); ctx.shadowBlur = 0;
+        }
+      }
+
+      function drawSparks() {
+        for (const ring of rings) { const t = ring.age / ring.max; ctx.beginPath(); ctx.arc(ring.x, ring.y, ring.size + easeOut(t) * 50, 0, Math.PI * 2); ctx.strokeStyle = `rgba(255, 245, 201, ${(1 - t) * .24})`; ctx.lineWidth = 1.2; ctx.stroke(); }
+        for (const p of sparks) {
+          const t = p.age / p.max, alpha = Math.max(0, Math.pow(1 - t, .72));
+          ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(p.x, p.y); ctx.lineWidth = Math.max(.35, p.size * (1 - t * .35)); ctx.strokeStyle = hexToRgba(p.color, alpha * .72); ctx.stroke();
+          if (Math.sin(p.age * 22 + p.twinkle) > -.25) { ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1 - t * .45), 0, Math.PI * 2); ctx.fillStyle = hexToRgba('#fffce8', alpha); ctx.shadowColor = p.color; ctx.shadowBlur = 8; ctx.fill(); ctx.shadowBlur = 0; }
+        }
+      }
+
+      function drawCity() {
+        const horizon = height * .88;
+        const cityGlow = ctx.createLinearGradient(0, horizon - 44, 0, horizon + 8); cityGlow.addColorStop(0, 'rgba(39, 47, 126, .12)'); cityGlow.addColorStop(1, 'rgba(10, 8, 31, 0)'); ctx.fillStyle = cityGlow; ctx.fillRect(0, horizon - 44, width, 52);
+        ctx.fillStyle = '#050716';
+        for (const b of buildings) { const y = horizon - b.h; ctx.fillRect(b.x, y, b.w, b.h + height * .13); for (const win of b.windows) { ctx.fillStyle = `rgba(255, 212, 132, ${win.a})`; ctx.fillRect(b.x + win.x, y + win.y, 3, 4); } ctx.fillStyle = '#050716'; }
+        ctx.fillRect(0, horizon, width, height - horizon);
+        ctx.fillStyle = 'rgba(114, 131, 212, .12)'; ctx.fillRect(0, horizon, width, 1);
+      }
+
+      function hexToRgba(hex, alpha) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`; }
+
+      function render() { drawBackground(); drawRockets(); drawSparks(); drawCity(); }
+      function frame(now) { const dt = Math.min(.035, (now - last) / 1000 || .016); last = now; if (!paused) update(dt); render(); requestAnimationFrame(frame); }
+
+      function clickLaunch(event) { const rect = canvas.getBoundingClientRect(); launch(event.clientX - rect.left, event.clientY - rect.top, pick(palette)); if (audioOn) launchSound(); }
+      function keyLaunch(event) { if (event.code === 'Space') { event.preventDefault(); launch(); if (audioOn) launchSound(); } }
+      function togglePause() { paused = !paused; pauseButton.innerHTML = paused ? '▶&nbsp; Resume' : 'Ⅱ&nbsp; Pause'; pauseButton.setAttribute('aria-label', paused ? 'Resume animation' : 'Pause animation'); }
+      function toggleSound() { audioOn = !audioOn; soundButton.style.color = audioOn ? '#c4f3ff' : ''; if (audioOn) { audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)(); launchSound(); } }
+      function tone(frequency, duration, type, volume, slide) { if (!audioContext) return; const now = audioContext.currentTime, osc = audioContext.createOscillator(), gain = audioContext.createGain(); osc.type = type; osc.frequency.setValueAtTime(frequency, now); osc.frequency.exponentialRampToValueAtTime(Math.max(50, frequency + slide), now + duration); gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(volume, now + .012); gain.gain.exponentialRampToValueAtTime(.0001, now + duration); osc.connect(gain).connect(audioContext.destination); osc.start(now); osc.stop(now + duration + .02); }
+      function launchSound() { tone(180, .16, 'sine', .018, 100); }
+      function popSound() { tone(random(230, 360), .3, 'triangle', .035, -130); }
+
+      window.addEventListener('resize', resize, { passive: true });
+      canvas.addEventListener('pointerdown', clickLaunch);
+      window.addEventListener('keydown', keyLaunch);
+      pauseButton.addEventListener('click', togglePause);
+      soundButton.addEventListener('click', toggleSound);
+      resize();
+      // Start with a small, composed opening volley.
+      setTimeout(() => launch(width * .28, height * .31, palette[0]), 180);
+      setTimeout(() => launch(width * .63, height * .24, palette[2]), 620);
+      setTimeout(() => launch(width * .48, height * .39, palette[1]), 1100);
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

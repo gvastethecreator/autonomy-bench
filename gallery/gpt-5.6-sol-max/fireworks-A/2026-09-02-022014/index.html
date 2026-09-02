@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#03040f" />
+  <title>Night in Bloom</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #03040f;
+    }
+
+    body {
+      position: relative;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    canvas:focus-visible {
+      outline: 1px solid rgba(255, 224, 158, .62);
+      outline-offset: -5px;
+    }
+
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 38%, transparent 15%, rgba(1, 2, 10, .08) 58%, rgba(0, 0, 5, .56) 115%),
+        linear-gradient(to bottom, rgba(0, 0, 0, .22), transparent 28%, transparent 70%, rgba(0, 0, 0, .34));
+      z-index: 2;
+    }
+
+    .masthead {
+      position: fixed;
+      top: clamp(24px, 5vh, 54px);
+      left: 50%;
+      z-index: 3;
+      width: min(90vw, 760px);
+      transform: translateX(-50%);
+      color: white;
+      text-align: center;
+      pointer-events: none;
+      text-shadow: 0 2px 24px rgba(0, 0, 0, .7);
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 13px;
+      margin: 0 0 10px;
+      color: rgba(255, 229, 170, .7);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .42em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before,
+    .eyebrow::after {
+      width: 32px;
+      height: 1px;
+      content: "";
+      background: linear-gradient(90deg, transparent, rgba(255, 226, 157, .62));
+    }
+
+    .eyebrow::after { transform: scaleX(-1); }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(31px, 5vw, 64px);
+      font-weight: 400;
+      letter-spacing: .06em;
+      line-height: .92;
+    }
+
+    .hint {
+      position: fixed;
+      right: clamp(18px, 3vw, 40px);
+      bottom: clamp(18px, 3vh, 32px);
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(232, 237, 255, .56);
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: .26em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .hint::before {
+      width: 20px;
+      height: 20px;
+      border: 1px solid rgba(255, 220, 147, .48);
+      border-radius: 50%;
+      content: "+";
+      color: rgba(255, 226, 164, .8);
+      font-size: 13px;
+      font-weight: 300;
+      letter-spacing: 0;
+      line-height: 18px;
+      text-align: center;
+      box-shadow: 0 0 14px rgba(255, 196, 87, .08);
+    }
+
+    .grain {
+      position: fixed;
+      inset: -40%;
+      z-index: 4;
+      opacity: .025;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+      animation: grain .28s steps(2) infinite;
+    }
+
+    @keyframes grain {
+      0% { transform: translate3d(-2%, 1%, 0); }
+      25% { transform: translate3d(2%, -1%, 0); }
+      50% { transform: translate3d(1%, 2%, 0); }
+      75% { transform: translate3d(-1%, -2%, 0); }
+      100% { transform: translate3d(-2%, 1%, 0); }
+    }
+
+    @media (max-width: 560px) {
+      .masthead { top: 24px; }
+      .eyebrow { font-size: 8px; letter-spacing: .3em; }
+      .hint { right: 14px; bottom: 14px; font-size: 8px; letter-spacing: .18em; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .grain { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sky" role="button" tabindex="0" aria-label="Animated fireworks above a city. Click, tap, or press Enter to launch a firework."></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <header class="masthead" aria-hidden="true">
+    <p class="eyebrow">A celebration of light</p>
+    <h1>NIGHT IN BLOOM</h1>
+  </header>
+  <div class="hint" aria-hidden="true">Launch a firework</div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('sky');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const TAU = Math.PI * 2;
+      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const palette = [
+        [255, 199, 92],
+        [255, 91, 135],
+        [93, 225, 255],
+        [190, 123, 255],
+        [110, 242, 193],
+        [255, 239, 207]
+      ];
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+      let horizon = 0;
+      let lastTime = performance.now();
+      let launchClock = 0;
+      let launchAfter = 680;
+      let initialised = false;
+      let stars = [];
+      let buildings = [];
+      let rockets = [];
+      let sparks = [];
+      let flashes = [];
+      let rings = [];
+      let embers = [];
+      let reflections = [];
+
+      const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+      const random = (min, max) => min + Math.random() * (max - min);
+      const pick = array => array[(Math.random() * array.length) | 0];
+
+      function seeded(seed) {
+        let value = seed >>> 0;
+        return () => {
+          value = (value * 1664525 + 1013904223) >>> 0;
+          return value / 4294967296;
+        };
+      }
+
+      function makeScene() {
+        const rand = seeded(41723 + Math.round(width));
+        stars = Array.from({ length: Math.min(190, Math.round(width * height / 7800)) }, () => ({
+          x: rand() * width,
+          y: rand() * horizon * .9,
+          size: .35 + rand() * 1.15,
+          phase: rand() * TAU,
+          speed: .35 + rand() * 1.1,
+          alpha: .12 + rand() * .58
+        }));
+
+        buildings = [];
+        let x = -8;
+        while (x < width + 12) {
+          const w = 17 + rand() * 42;
+          const h = 14 + rand() * Math.min(90, height * .105);
+          const roof = rand() > .78 ? 'spire' : rand() > .7 ? 'antenna' : 'flat';
+          const windows = [];
+          for (let wx = 6; wx < w - 4; wx += 8) {
+            for (let wy = 8; wy < h - 5; wy += 10) {
+              if (rand() > .69) windows.push({ x: wx, y: wy, warm: rand() > .18, a: .3 + rand() * .45 });
+            }
+          }
+          buildings.push({ x, w, h, roof, windows });
+          x += w + 2 + rand() * 4;
+        }
+      }
+
+      function resize() {
+        width = innerWidth;
+        height = innerHeight;
+        horizon = height * (width < 600 ? .85 : .82);
+        dpr = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.round(width * dpr);
+        canvas.height = Math.round(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        makeScene();
+        if (!initialised) seedOpeningShow();
+      }
+
+      class Rocket {
+        constructor(x, targetX, targetY, color, delay = 0) {
+          this.x = x;
+          this.y = height + 8;
+          this.targetX = targetX;
+          this.targetY = targetY;
+          this.color = color;
+          this.delay = delay;
+          this.vx = (targetX - x) * random(.008, .012);
+          this.vy = -random(7.6, 10.2);
+          this.trail = [];
+          this.dead = false;
+        }
+
+        update(dt) {
+          if (this.delay > 0) {
+            this.delay -= dt * 16.67;
+            return;
+          }
+          this.trail.unshift({ x: this.x, y: this.y });
+          if (this.trail.length > 11) this.trail.pop();
+          this.x += this.vx * dt;
+          this.y += this.vy * dt;
+          this.vy += .052 * dt;
+          this.vx *= Math.pow(.994, dt);
+          if (this.y <= this.targetY || this.vy > -1.3) {
+            explode(this.x, this.y, this.color);
+            this.dead = true;
+          }
+        }
+
+        draw() {
+          if (this.delay > 0 || this.trail.length < 2) return;
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          for (let i = 1; i < this.trail.length; i++) {
+            const p = this.trail[i - 1];
+            const q = this.trail[i];
+            const a = (1 - i / this.trail.length) * .72;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(q.x, q.y);
+            ctx.strokeStyle = rgba(this.color, a);
+            ctx.lineWidth = Math.max(.3, 2.1 - i * .16);
+            ctx.stroke();
+          }
+          ctx.shadowColor = rgba(this.color, .95);
+          ctx.shadowBlur = 13;
+          ctx.fillStyle = '#fffdf2';
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, 1.7, 0, TAU);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      class Spark {
+        constructor(x, y, vx, vy, color, options = {}) {
+          this.x = x;
+          this.y = y;
+          this.vx = vx;
+          this.vy = vy;
+          this.color = color;
+          this.life = options.life || random(55, 90);
+          this.maxLife = this.life;
+          this.drag = options.drag || .978;
+          this.gravity = options.gravity ?? .055;
+          this.size = options.size || random(.8, 1.7);
+          this.twinkle = options.twinkle ?? Math.random() > .62;
+          this.trailLength = options.trailLength || 7;
+          this.trail = [{ x, y }];
+          this.dead = false;
+          this.crackle = options.crackle || false;
+          this.crackled = false;
+        }
+
+        update(dt) {
+          this.trail.unshift({ x: this.x, y: this.y });
+          if (this.trail.length > this.trailLength) this.trail.pop();
+          this.vx *= Math.pow(this.drag, dt);
+          this.vy = this.vy * Math.pow(this.drag, dt) + this.gravity * dt;
+          this.x += this.vx * dt;
+          this.y += this.vy * dt;
+          this.life -= dt;
+          if (this.crackle && !this.crackled && this.life < this.maxLife * .28) {
+            this.crackled = true;
+            if (Math.random() > .62 && embers.length < 260) {
+              for (let i = 0; i < 3; i++) {
+                const a = Math.random() * TAU;
+                const v = random(.35, 1.45);
+                embers.push(new Ember(this.x, this.y, Math.cos(a) * v, Math.sin(a) * v, this.color));
+              }
+            }
+          }
+          if (this.life <= 0 || this.y > height + 20) this.dead = true;
+        }
+
+        draw() {
+          const progress = Math.max(0, this.life / this.maxLife);
+          let alpha = Math.min(1, progress * 1.7);
+          if (this.twinkle && progress < .55 && Math.sin(this.life * 1.25) > .45) alpha *= .18;
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.lineCap = 'round';
+          for (let i = 1; i < this.trail.length; i++) {
+            const p = this.trail[i - 1];
+            const q = this.trail[i];
+            const fade = (1 - i / this.trail.length) * alpha;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+            ctx.lineTo(q.x, q.y);
+            ctx.strokeStyle = rgba(this.color, fade * .92);
+            ctx.lineWidth = Math.max(.32, this.size * 1.15 * (1 - i / this.trail.length));
+            ctx.stroke();
+          }
+          ctx.shadowColor = rgba(this.color, alpha);
+          ctx.shadowBlur = 10;
+          ctx.fillStyle = rgba(this.color, alpha);
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.size * 1.15 * Math.min(1, progress * 3), 0, TAU);
+          ctx.fill();
+          if (progress > .9) {
+            ctx.fillStyle = `rgba(255,255,255,${alpha * .78})`;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size * .52, 0, TAU);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
+
+      class Ember {
+        constructor(x, y, vx, vy, color) {
+          this.x = x;
+          this.y = y;
+          this.vx = vx;
+          this.vy = vy;
+          this.color = color;
+          this.life = random(12, 24);
+          this.maxLife = this.life;
+          this.dead = false;
+        }
+        update(dt) {
+          this.x += this.vx * dt;
+          this.y += this.vy * dt;
+          this.vy += .035 * dt;
+          this.life -= dt;
+          if (this.life <= 0) this.dead = true;
+        }
+        draw() {
+          const a = Math.max(0, this.life / this.maxLife);
+          ctx.fillStyle = rgba(this.color, a);
+          ctx.fillRect(this.x, this.y, 1, 1);
+        }
+      }
+
+      function addRadialBurst(x, y, color, count, speedMin, speedMax, options = {}) {
+        const offset = Math.random() * TAU;
+        for (let i = 0; i < count; i++) {
+          const angle = offset + (i / count) * TAU + random(-.018, .018);
+          const speed = random(speedMin, speedMax) * (options.oval ? (.74 + Math.abs(Math.cos(angle)) * .26) : 1);
+          sparks.push(new Spark(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, color, options));
+        }
+      }
+
+      function explode(x, y, color, forcedType) {
+        const roll = Math.random();
+        const type = forcedType || (roll < .22 ? 'chrysanthemum' : roll < .4 ? 'ring' : roll < .59 ? 'willow' : roll < .78 ? 'double' : 'palm');
+        const scale = Math.max(.72, Math.min(1.18, width / 1000));
+
+        flashes.push({ x, y, color, life: 14, maxLife: 14 });
+        rings.push({ x, y, color, radius: 2, life: 22, maxLife: 22, speed: 3.4 });
+        reflections.push({ x, color, life: 52, maxLife: 52 });
+
+        if (type === 'chrysanthemum') {
+          addRadialBurst(x, y, color, Math.round(128 * scale), 2.1 * scale, 5.4 * scale, {
+            life: random(66, 84), drag: .977, gravity: .052, trailLength: 8, crackle: true
+          });
+        } else if (type === 'ring') {
+          addRadialBurst(x, y, color, Math.round(78 * scale), 4.25 * scale, 4.55 * scale, {
+            life: 72, drag: .979, gravity: .045, trailLength: 6, twinkle: true
+          });
+          if (Math.random() > .35) {
+            const inner = pick(palette.filter(c => c !== color));
+            addRadialBurst(x, y, inner, Math.round(36 * scale), 1.8 * scale, 2.05 * scale, {
+              life: 54, drag: .976, gravity: .05, trailLength: 5
+            });
+          }
+        } else if (type === 'willow') {
+          const gold = palette[0];
+          addRadialBurst(x, y, gold, Math.round(116 * scale), 1.9 * scale, 4.7 * scale, {
+            life: random(90, 112), drag: .984, gravity: .074, trailLength: 12, twinkle: true
+          });
+        } else if (type === 'double') {
+          addRadialBurst(x, y, color, Math.round(96 * scale), 3 * scale, 5.1 * scale, {
+            life: 76, drag: .976, gravity: .05, trailLength: 7, crackle: true
+          });
+          const second = pick(palette.filter(c => c !== color));
+          addRadialBurst(x, y, second, Math.round(54 * scale), 1.25 * scale, 2.5 * scale, {
+            life: 60, drag: .973, gravity: .047, trailLength: 6
+          });
+        } else {
+          const arms = 15;
+          for (let arm = 0; arm < arms; arm++) {
+            const angle = (arm / arms) * TAU + random(-.06, .06);
+            for (let j = 0; j < 7; j++) {
+              const speed = (2.3 + j * .48) * scale;
+              sparks.push(new Spark(x, y, Math.cos(angle) * speed + random(-.1, .1), Math.sin(angle) * speed + random(-.1, .1), color, {
+                life: random(60, 84), drag: .981, gravity: .062, trailLength: 9, crackle: j > 4
+              }));
+            }
+          }
+        }
+      }
+
+      function launch(targetX = random(width * .12, width * .88), targetY = random(height * .15, height * .55), delay = 0, color = pick(palette)) {
+        const originX = Math.max(20, Math.min(width - 20, targetX + random(-width * .12, width * .12)));
+        rockets.push(new Rocket(originX, targetX, targetY, color, delay));
+      }
+
+      function seedOpeningShow() {
+        initialised = true;
+        const presets = [
+          [.22, .35, palette[0], 'willow', 10],
+          [.51, .26, palette[2], 'double', 6],
+          [.78, .39, palette[1], 'ring', 2]
+        ];
+        for (const [px, py, color, type, age] of presets) {
+          explode(width * px, height * py, color, type);
+          for (let n = 0; n < age; n++) {
+            for (const spark of sparks) if (!spark.dead) spark.update(1);
+          }
+        }
+        launch(width * .37, height * .42, 180, palette[4]);
+        launch(width * .68, height * .28, 610, palette[3]);
+      }
+
+      function drawBackground(time) {
+        const sky = ctx.createLinearGradient(0, 0, 0, height);
+        sky.addColorStop(0, '#02030d');
+        sky.addColorStop(.44, '#070a20');
+        sky.addColorStop(.74, '#10132d');
+        sky.addColorStop(1, '#050711');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, width, height);
+
+        const glow = ctx.createRadialGradient(width * .5, horizon, 0, width * .5, horizon, width * .56);
+        glow.addColorStop(0, 'rgba(66,72,134,.18)');
+        glow.addColorStop(.46, 'rgba(22,28,70,.08)');
+        glow.addColorStop(1, 'rgba(3,4,15,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, width, horizon);
+
+        for (const star of stars) {
+          const a = star.alpha * (.7 + Math.sin(time * .001 * star.speed + star.phase) * .3);
+          ctx.fillStyle = `rgba(213,223,255,${a})`;
+          ctx.beginPath();
+          ctx.arc(star.x, star.y, star.size, 0, TAU);
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(138,151,220,.08)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, horizon - 1);
+        ctx.lineTo(width, horizon - 1);
+        ctx.stroke();
+      }
+
+      function drawReflections() {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, horizon, width, height - horizon);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'lighter';
+        for (const reflection of reflections) {
+          const a = Math.max(0, reflection.life / reflection.maxLife);
+          const grad = ctx.createLinearGradient(0, horizon, 0, height);
+          grad.addColorStop(0, rgba(reflection.color, a * .16));
+          grad.addColorStop(1, rgba(reflection.color, 0));
+          ctx.fillStyle = grad;
+          const spread = 18 + (1 - a) * 58;
+          for (let y = horizon + 5; y < height; y += 7) {
+            const taper = 1 - (y - horizon) / (height - horizon);
+            const wobble = Math.sin(y * .37 + reflection.x) * 7;
+            ctx.fillRect(reflection.x - spread * taper + wobble, y, spread * 2 * taper, 1);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawCity() {
+        const water = ctx.createLinearGradient(0, horizon, 0, height);
+        water.addColorStop(0, 'rgba(7,10,24,.72)');
+        water.addColorStop(1, '#02030a');
+        ctx.fillStyle = water;
+        ctx.fillRect(0, horizon, width, height - horizon);
+        drawReflections();
+
+        ctx.fillStyle = '#04050d';
+        for (const b of buildings) {
+          const y = horizon - b.h;
+          ctx.fillRect(b.x, y, b.w, b.h + 3);
+          if (b.roof === 'spire') {
+            ctx.beginPath();
+            ctx.moveTo(b.x + b.w * .2, y);
+            ctx.lineTo(b.x + b.w * .5, y - Math.min(18, b.h * .36));
+            ctx.lineTo(b.x + b.w * .8, y);
+            ctx.fill();
+          } else if (b.roof === 'antenna') {
+            ctx.fillRect(b.x + b.w * .49, y - 11, 1, 11);
+            ctx.fillStyle = 'rgba(255,75,80,.55)';
+            ctx.fillRect(b.x + b.w * .49, y - 12, 1, 1);
+            ctx.fillStyle = '#04050d';
+          }
+          for (const win of b.windows) {
+            ctx.fillStyle = win.warm ? `rgba(255,207,112,${win.a})` : `rgba(119,176,230,${win.a * .65})`;
+            ctx.fillRect(Math.round(b.x + win.x), Math.round(y + win.y), 2, 2);
+          }
+        }
+
+        ctx.fillStyle = 'rgba(119,135,190,.11)';
+        for (let y = horizon + 5; y < height; y += 8) {
+          ctx.fillRect(0, y, width, 1);
+        }
+      }
+
+      function drawEffects() {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        for (const flash of flashes) {
+          const a = Math.max(0, flash.life / flash.maxLife);
+          const radius = 18 + (1 - a) * 64;
+          const gradient = ctx.createRadialGradient(flash.x, flash.y, 0, flash.x, flash.y, radius);
+          gradient.addColorStop(0, `rgba(255,255,255,${a * .88})`);
+          gradient.addColorStop(.15, rgba(flash.color, a * .42));
+          gradient.addColorStop(1, rgba(flash.color, 0));
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(flash.x, flash.y, radius, 0, TAU);
+          ctx.fill();
+        }
+
+        for (const ring of rings) {
+          const a = Math.max(0, ring.life / ring.maxLife);
+          ctx.strokeStyle = rgba(ring.color, a * .28);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(ring.x, ring.y, ring.radius, 0, TAU);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function updateCollection(collection, dt) {
+        for (let i = collection.length - 1; i >= 0; i--) {
+          collection[i].update(dt);
+          if (collection[i].dead) collection.splice(i, 1);
+        }
+      }
+
+      function frame(time) {
+        const dt = Math.min(2.2, Math.max(.3, (time - lastTime) / 16.667));
+        lastTime = time;
+
+        drawBackground(time);
+
+        launchClock += dt * 16.667;
+        if (!reduceMotion && launchClock > launchAfter) {
+          launchClock = 0;
+          launchAfter = random(620, 1280);
+          launch();
+          if (Math.random() > .66) launch(random(width * .15, width * .85), random(height * .2, height * .48), random(80, 240));
+        }
+
+        updateCollection(rockets, dt);
+        updateCollection(sparks, dt);
+        updateCollection(embers, dt);
+
+        for (let i = flashes.length - 1; i >= 0; i--) {
+          flashes[i].life -= dt;
+          if (flashes[i].life <= 0) flashes.splice(i, 1);
+        }
+        for (let i = rings.length - 1; i >= 0; i--) {
+          rings[i].radius += rings[i].speed * dt;
+          rings[i].life -= dt;
+          if (rings[i].life <= 0) rings.splice(i, 1);
+        }
+        for (let i = reflections.length - 1; i >= 0; i--) {
+          reflections[i].life -= dt;
+          if (reflections[i].life <= 0) reflections.splice(i, 1);
+        }
+
+        drawEffects();
+        for (const rocket of rockets) rocket.draw();
+        for (const spark of sparks) spark.draw();
+        for (const ember of embers) ember.draw();
+        drawCity();
+
+        requestAnimationFrame(frame);
+      }
+
+      function pointLaunch(event) {
+        const point = event.touches ? event.touches[0] : event;
+        const x = point.clientX;
+        const y = Math.min(horizon - 50, Math.max(90, point.clientY));
+        launch(x, y, 0, pick(palette));
+        if (Math.random() > .76) launch(x + random(-65, 65), y + random(-40, 45), 120, pick(palette));
+      }
+
+      canvas.addEventListener('pointerdown', pointLaunch);
+      canvas.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        launch(width * .5 + random(-80, 80), height * .3, 0, pick(palette));
+      });
+      addEventListener('resize', resize, { passive: true });
+      resize();
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

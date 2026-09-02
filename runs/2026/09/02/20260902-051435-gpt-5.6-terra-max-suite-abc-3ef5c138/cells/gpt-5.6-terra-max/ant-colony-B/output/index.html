@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17110d">
+  <title>Ant Colony — Forage Protocol</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f7ead0;
+      --muted: #c2ae8e;
+      --warm: #f6ad57;
+      --moss: #b4d470;
+      --panel: rgba(28, 20, 14, .76);
+      --line: rgba(255, 231, 194, .16);
+      --shadow: rgba(0, 0, 0, .42);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+
+    body {
+      background: #17110d;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: .01em;
+    }
+
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+
+    .grain {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      z-index: 3;
+      opacity: .2;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.45'/%3E%3C/svg%3E");
+      mix-blend-mode: soft-light;
+    }
+
+    .hud {
+      position: fixed;
+      z-index: 5;
+      top: clamp(16px, 3vw, 38px);
+      left: clamp(16px, 3.5vw, 54px);
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      pointer-events: none;
+    }
+
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(255, 220, 166, .5);
+      border-radius: 50%;
+      color: var(--warm);
+      font: 700 15px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      box-shadow: inset 0 0 0 5px rgba(246, 173, 87, .08), 0 7px 20px var(--shadow);
+    }
+
+    .eyebrow, .tiny-label {
+      margin: 0;
+      color: var(--muted);
+      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 4px 0 0;
+      color: #fff2d7;
+      font: 600 clamp(20px, 2.2vw, 31px)/1 Georgia, "Times New Roman", serif;
+      letter-spacing: .07em;
+    }
+
+    .readout {
+      position: fixed;
+      z-index: 5;
+      top: clamp(18px, 3vw, 40px);
+      right: clamp(16px, 3.5vw, 54px);
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 10px 18px;
+      min-width: 205px;
+      padding: 14px 15px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(140deg, rgba(51, 36, 24, .76), rgba(22, 16, 12, .66));
+      box-shadow: 0 12px 32px var(--shadow), inset 0 1px rgba(255,255,255,.04);
+      backdrop-filter: blur(13px);
+    }
+
+    .readout .tiny-label { align-self: center; }
+    .readout strong {
+      color: #fff1d6;
+      font: 600 14px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .04em;
+      text-align: right;
+    }
+
+    .pulse { display: inline-flex; align-items: center; gap: 7px; }
+    .pulse::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--moss);
+      box-shadow: 0 0 0 0 rgba(180, 212, 112, .6);
+      animation: breathe 2s infinite;
+    }
+    .pulse.is-paused::before { background: #d9825c; animation: none; box-shadow: none; }
+    @keyframes breathe { 70% { box-shadow: 0 0 0 7px rgba(180,212,112,0); } 100% { box-shadow: 0 0 0 0 rgba(180,212,112,0); } }
+
+    .field-note {
+      position: fixed;
+      z-index: 5;
+      left: clamp(16px, 3.5vw, 54px);
+      bottom: clamp(122px, 18vh, 155px);
+      width: min(292px, calc(100vw - 32px));
+      padding-left: 14px;
+      border-left: 1px solid rgba(246, 173, 87, .65);
+      text-shadow: 0 2px 16px rgba(0,0,0,.65);
+      pointer-events: none;
+    }
+
+    .field-note p:last-child {
+      margin: 7px 0 0;
+      color: #e4cfad;
+      font: 400 13px/1.5 Georgia, "Times New Roman", serif;
+    }
+
+    .dock {
+      position: fixed;
+      z-index: 6;
+      left: 50%;
+      bottom: clamp(16px, 3.3vw, 42px);
+      transform: translateX(-50%);
+      display: flex;
+      align-items: stretch;
+      min-width: min(775px, calc(100vw - 32px));
+      max-width: calc(100vw - 32px);
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: linear-gradient(120deg, rgba(40, 28, 19, .9), rgba(24, 18, 14, .88));
+      box-shadow: 0 16px 48px rgba(0,0,0,.38), inset 0 1px rgba(255,255,255,.05);
+      overflow: hidden;
+      backdrop-filter: blur(16px);
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      min-height: 68px;
+      padding: 12px 16px;
+      border-right: 1px solid var(--line);
+    }
+    .control-group:last-child { border-right: 0; margin-left: auto; }
+
+    button {
+      appearance: none;
+      border: 0;
+      color: var(--ink);
+      background: transparent;
+      font: 700 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .round-button {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(246, 173, 87, .64);
+      border-radius: 50%;
+      color: #2a170b;
+      background: var(--warm);
+      box-shadow: 0 4px 14px rgba(246, 173, 87, .17);
+      transition: transform .18s ease, background .18s ease;
+    }
+    .round-button:hover { transform: translateY(-1px) scale(1.04); background: #ffc476; }
+    .round-button:focus-visible, .text-button:focus-visible, input:focus-visible { outline: 2px solid #f8d596; outline-offset: 3px; }
+    .play-icon { width: 0; height: 0; margin-left: 3px; border-top: 7px solid transparent; border-bottom: 7px solid transparent; border-left: 10px solid currentColor; }
+    .pause-icon { display: flex; gap: 4px; }
+    .pause-icon i { display: block; width: 3px; height: 13px; border-radius: 2px; background: currentColor; }
+
+    .divider { width: 1px; height: 28px; background: var(--line); }
+    .mode-copy { display: grid; gap: 5px; min-width: 104px; }
+    .mode-copy strong { color: #fff0d4; font: 700 12px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .08em; }
+
+    .range-control { display: grid; gap: 7px; min-width: 118px; }
+    .range-control label { display: flex; justify-content: space-between; gap: 11px; color: var(--muted); font: 600 9px/1 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .range-control output { color: var(--ink); letter-spacing: 0; }
+    input[type="range"] { accent-color: var(--warm); width: 100%; height: 4px; cursor: pointer; }
+    .text-button { padding: 9px 3px; color: var(--muted); transition: color .16s ease; }
+    .text-button:hover { color: #fff0d4; }
+
+    .event {
+      position: fixed;
+      z-index: 5;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 8px 12px;
+      border: 1px solid rgba(246, 173, 87, .32);
+      border-radius: 999px;
+      color: #ffe6bb;
+      background: rgba(37, 24, 16, .68);
+      font: 600 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .35s ease, transform .35s ease;
+      backdrop-filter: blur(8px);
+    }
+    .event.visible { opacity: 1; transform: translate(-50%, calc(-50% - 8px)); }
+
+    .help {
+      position: fixed;
+      z-index: 5;
+      right: clamp(16px, 3.5vw, 54px);
+      bottom: clamp(105px, 14vh, 128px);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: rgba(238, 215, 177, .8);
+      font: 600 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+    .help span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid rgba(238,215,177,.38); border-radius: 50%; color: var(--warm); font-size: 14px; }
+
+    @media (max-width: 700px) {
+      .readout { top: 84px; grid-template-columns: auto auto; min-width: 170px; padding: 10px 11px; }
+      .readout .tiny-label:nth-of-type(3), #cycle { display: none; }
+      .field-note { bottom: 174px; width: 230px; }
+      .field-note p:last-child { font-size: 12px; }
+      .dock { min-width: 0; width: calc(100vw - 24px); bottom: 12px; border-radius: 14px; }
+      .control-group { min-height: 60px; padding: 9px 11px; gap: 10px; }
+      .range-control.population { display: none; }
+      .mode-copy { min-width: 72px; }
+      .control-group:last-child { margin-left: 0; }
+      .help { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="world" aria-label="Live ant colony simulation. Click the ground to place food."></canvas>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="hud">
+    <div class="mark" aria-hidden="true">AC</div>
+    <div>
+      <p class="eyebrow">Terrarium 07 · field study</p>
+      <h1>Ant Colony</h1>
+    </div>
+  </header>
+
+  <section class="readout" aria-label="Colony status">
+    <span class="tiny-label">colony</span><strong id="workerCount">074 workers</strong>
+    <span class="tiny-label">stores</span><strong id="stores">000 grains</strong>
+    <span class="tiny-label">cycle</span><strong id="cycle">00:00</strong>
+    <span class="tiny-label">state</span><strong class="pulse" id="stateText">foraging</strong>
+  </section>
+
+  <aside class="field-note">
+    <p class="tiny-label">Live behavior log</p>
+    <p id="noteText">Workers fan out from the nest, reading the warm scent lines left by successful scouts.</p>
+  </aside>
+
+  <div class="event" id="eventMessage" aria-live="polite"></div>
+  <div class="help"><span>+</span> click soil to introduce a food source</div>
+
+  <nav class="dock" aria-label="Simulation controls">
+    <div class="control-group">
+      <button class="round-button" id="toggle" type="button" aria-label="Pause simulation" aria-pressed="false"><span class="pause-icon" aria-hidden="true"><i></i><i></i></span></button>
+      <div class="mode-copy"><span class="tiny-label">simulation</span><strong id="mode">running</strong></div>
+      <div class="divider" aria-hidden="true"></div>
+      <div class="range-control">
+        <label for="speed">tempo <output id="speedValue">1.0×</output></label>
+        <input id="speed" type="range" min="0.4" max="2.5" step="0.1" value="1">
+      </div>
+    </div>
+    <div class="control-group">
+      <div class="range-control population">
+        <label for="population">workers <output id="populationValue">74</output></label>
+        <input id="population" type="range" min="20" max="160" step="1" value="74">
+      </div>
+      <button class="text-button" id="trails" type="button" aria-pressed="true">trails: on</button>
+      <button class="text-button" id="reset" type="button">reset</button>
+    </div>
+  </nav>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("world");
+      const ctx = canvas.getContext("2d");
+      const ground = document.createElement("canvas");
+      const gctx = ground.getContext("2d");
+      const scentLayer = document.createElement("canvas");
+      const scentCtx = scentLayer.getContext("2d");
+
+      const ui = {
+        toggle: document.getElementById("toggle"),
+        mode: document.getElementById("mode"),
+        state: document.getElementById("stateText"),
+        speed: document.getElementById("speed"),
+        speedValue: document.getElementById("speedValue"),
+        population: document.getElementById("population"),
+        populationValue: document.getElementById("populationValue"),
+        workers: document.getElementById("workerCount"),
+        stores: document.getElementById("stores"),
+        cycle: document.getElementById("cycle"),
+        trails: document.getElementById("trails"),
+        reset: document.getElementById("reset"),
+        note: document.getElementById("noteText"),
+        event: document.getElementById("eventMessage")
+      };
+
+      const palette = {
+        soil: "#24170f",
+        tunnel: "#110c09",
+        amber: "#f6ad57",
+        pale: "#fff0d3",
+        moss: "#b5d771",
+        rust: "#df8051",
+        trail: "#ed9a42"
+      };
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+      let paused = false;
+      let showTrails = true;
+      let simulationTime = 0;
+      let collection = 0;
+      let lastFrame = performance.now();
+      let statsTimer = 0;
+      let food = [];
+      let ants = [];
+      let soilMarks = [];
+      let nest = { x: 0, y: 0, radius: 38, glow: 0 };
+      let messageTimer = 0;
+
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const lerp = (from, to, amount) => from + (to - from) * amount;
+      const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const angleDelta = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+      const steerAngle = (from, to, amount) => from + angleDelta(from, to) * amount;
+      const random = (min, max) => min + Math.random() * (max - min);
+      const choose = (items) => items[Math.floor(Math.random() * items.length)];
+
+      function resizeCanvas(target, targetCtx) {
+        target.width = Math.round(width * dpr);
+        target.height = Math.round(height * dpr);
+        targetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        resizeCanvas(canvas, ctx);
+        resizeCanvas(ground, gctx);
+        resizeCanvas(scentLayer, scentCtx);
+        nest.x = width * 0.515;
+        nest.y = height * 0.555;
+        nest.radius = clamp(Math.min(width, height) * 0.057, 31, 48);
+        makeGround();
+        if (!food.length) seedWorld();
+        else {
+          ants.forEach((ant) => {
+            ant.x = clamp(ant.x, 28, width - 28);
+            ant.y = clamp(ant.y, 28, height - 28);
+          });
+        }
+      }
+
+      function makeGround() {
+        const base = gctx.createRadialGradient(width * .49, height * .43, 30, width * .5, height * .52, Math.max(width, height) * .78);
+        base.addColorStop(0, "#513421");
+        base.addColorStop(.47, "#342116");
+        base.addColorStop(1, "#17100c");
+        gctx.fillStyle = base;
+        gctx.fillRect(0, 0, width, height);
+
+        const lowerGlow = gctx.createRadialGradient(nest.x, nest.y + nest.radius * 1.2, 1, nest.x, nest.y, Math.min(width, height) * .37);
+        lowerGlow.addColorStop(0, "rgba(246, 154, 66, .12)");
+        lowerGlow.addColorStop(1, "rgba(246, 154, 66, 0)");
+        gctx.fillStyle = lowerGlow;
+        gctx.fillRect(0, 0, width, height);
+
+        soilMarks = [];
+        const specks = Math.round((width * height) / 3150);
+        for (let i = 0; i < specks; i++) {
+          const x = Math.random() * width;
+          const y = Math.random() * height;
+          const size = Math.random() < .82 ? random(.35, 1.35) : random(1.5, 3.2);
+          const alpha = random(.045, .17);
+          soilMarks.push({ x, y, size, alpha, warm: Math.random() > .78 });
+        }
+        soilMarks.forEach((mark) => {
+          gctx.beginPath();
+          gctx.fillStyle = mark.warm ? `rgba(238, 166, 91, ${mark.alpha})` : `rgba(255, 230, 183, ${mark.alpha})`;
+          gctx.arc(mark.x, mark.y, mark.size, 0, Math.PI * 2);
+          gctx.fill();
+        });
+
+        gctx.strokeStyle = "rgba(213, 142, 79, .06)";
+        gctx.lineWidth = 1;
+        for (let i = 0; i < 14; i++) {
+          const side = i % 2;
+          const startX = side ? width : 0;
+          const startY = random(0, height);
+          gctx.beginPath();
+          gctx.moveTo(startX, startY);
+          for (let j = 0; j < 4; j++) {
+            const toward = side ? -1 : 1;
+            gctx.quadraticCurveTo(startX + toward * random(40, 180), startY + random(-100, 100), startX + toward * random(120, 290), startY + random(-150, 150));
+          }
+          gctx.stroke();
+        }
+
+        const vignette = gctx.createRadialGradient(width * .5, height * .5, Math.min(width, height) * .23, width * .5, height * .5, Math.max(width, height) * .77);
+        vignette.addColorStop(.54, "rgba(0,0,0,0)");
+        vignette.addColorStop(1, "rgba(5,3,2,.61)");
+        gctx.fillStyle = vignette;
+        gctx.fillRect(0, 0, width, height);
+      }
+
+      function source(x, y, amount, kind, hue) {
+        return { x, y, amount, max: amount, kind, hue, pulse: random(0, Math.PI * 2), id: Math.random().toString(36).slice(2) };
+      }
+
+      function seedWorld() {
+        food = [
+          source(width * .205, height * .293, 124, "amber seed", 37),
+          source(width * .785, height * .285, 148, "lichen cache", 92),
+          source(width * .787, height * .74, 104, "fallen fruit", 12),
+          source(width * .20, height * .736, 80, "dry grain", 45)
+        ];
+      }
+
+      function sourceFor(ant) {
+        const viable = food.filter((item) => item.amount > 0);
+        if (!viable.length) return null;
+        if (!ant.target || ant.target.amount <= 0 || Math.random() < .0026) {
+          ant.target = choose(viable);
+        }
+        return ant.target;
+      }
+
+      function createAnt(index) {
+        const direction = Math.random() * Math.PI * 2;
+        const distanceFromNest = random(nest.radius * .14, nest.radius * .72);
+        return {
+          id: index + Math.random(),
+          x: nest.x + Math.cos(direction) * distanceFromNest,
+          y: nest.y + Math.sin(direction) * distanceFromNest,
+          angle: direction,
+          speed: random(27, 44),
+          size: random(1.5, 2.3),
+          sway: random(0, Math.PI * 2),
+          state: "outbound",
+          target: null,
+          carrying: false,
+          scentClock: random(0, .3),
+          route: [],
+          discoveryGrace: random(.25, 2.1),
+          turnBias: random(-1, 1)
+        };
+      }
+
+      function resetColony() {
+        collection = 0;
+        simulationTime = 0;
+        food = [];
+        seedWorld();
+        ants = Array.from({ length: Number(ui.population.value) }, (_, index) => createAnt(index));
+        scentCtx.clearRect(0, 0, width, height);
+        announce("colony reset · four sources detected");
+        ui.note.textContent = "A new cycle begins. Scouts are tracing fresh routes through the soil.";
+        updateHud();
+      }
+
+      function syncPopulation() {
+        const desired = Number(ui.population.value);
+        while (ants.length < desired) ants.push(createAnt(ants.length));
+        while (ants.length > desired) ants.pop();
+        ui.populationValue.textContent = desired;
+      }
+
+      function paintScent(ant, intensity) {
+        if (!showTrails) return;
+        const radius = ant.carrying ? 4.4 : 2.8;
+        const alpha = ant.carrying ? .12 : .045;
+        scentCtx.beginPath();
+        scentCtx.fillStyle = ant.carrying ? `rgba(246, 158, 64, ${alpha * intensity})` : `rgba(180, 215, 113, ${alpha * intensity})`;
+        scentCtx.arc(ant.x, ant.y, radius, 0, Math.PI * 2);
+        scentCtx.fill();
+      }
+
+      function fadeScent(dt) {
+        scentCtx.save();
+        scentCtx.globalCompositeOperation = "source-over";
+        scentCtx.fillStyle = `rgba(24, 16, 11, ${Math.min(.028, dt * .5)})`;
+        scentCtx.fillRect(0, 0, width, height);
+        scentCtx.restore();
+      }
+
+      function emitDust(ant, x, y) {
+        scentCtx.beginPath();
+        scentCtx.fillStyle = ant.carrying ? "rgba(255, 204, 118, .22)" : "rgba(183, 215, 106, .10)";
+        scentCtx.arc(x, y, ant.carrying ? 7 : 4, 0, Math.PI * 2);
+        scentCtx.fill();
+      }
+
+      function updateAnt(ant, dt) {
+        ant.sway += dt * (ant.carrying ? 3.4 : 2.25);
+        const activeSource = sourceFor(ant);
+        if (!activeSource && ant.state === "outbound") {
+          ant.angle += ant.turnBias * dt;
+        }
+
+        let intended;
+        if (ant.state === "outbound") {
+          const target = activeSource;
+          if (target) {
+            const toTarget = Math.atan2(target.y - ant.y, target.x - ant.x);
+            const targetDistance = Math.hypot(target.x - ant.x, target.y - ant.y);
+            const meander = Math.sin(simulationTime * (1.7 + ant.size * .2) + ant.sway) * clamp(targetDistance / 260, .15, 1) * .43;
+            intended = toTarget + meander + ant.turnBias * .07;
+            ant.angle = steerAngle(ant.angle, intended, clamp(dt * 1.5, 0, .09));
+            if (targetDistance < 15 + target.amount / target.max * 8 && ant.discoveryGrace <= 0) {
+              ant.state = "homebound";
+              ant.carrying = true;
+              target.amount = Math.max(0, target.amount - 1);
+              ant.route = [];
+              emitDust(ant, target.x, target.y);
+              if (Math.random() < .12) announce(`scout found ${target.kind}`);
+            }
+          }
+          ant.discoveryGrace -= dt;
+        } else {
+          const toNest = Math.atan2(nest.y - ant.y, nest.x - ant.x);
+          const nestDistance = Math.hypot(nest.x - ant.x, nest.y - ant.y);
+          const sway = Math.sin(simulationTime * 3 + ant.sway) * .11;
+          ant.angle = steerAngle(ant.angle, toNest + sway, clamp(dt * 2.4, 0, .16));
+          if (nestDistance < nest.radius * .63) {
+            collection += 1;
+            ant.carrying = false;
+            ant.state = "outbound";
+            ant.target = null;
+            ant.discoveryGrace = random(.25, 1.5);
+            ant.angle += Math.PI + random(-.8, .8);
+            nest.glow = 1;
+          }
+        }
+
+        const stride = ant.speed * (ant.carrying ? .82 : 1) * Number(ui.speed.value);
+        ant.x += Math.cos(ant.angle) * stride * dt;
+        ant.y += Math.sin(ant.angle) * stride * dt;
+        const margin = 18;
+        if (ant.x < margin || ant.x > width - margin || ant.y < margin || ant.y > height - margin) {
+          ant.angle += Math.PI + random(-.45, .45);
+          ant.x = clamp(ant.x, margin, width - margin);
+          ant.y = clamp(ant.y, margin, height - margin);
+        }
+
+        ant.scentClock -= dt;
+        if (ant.scentClock <= 0) {
+          paintScent(ant, 1);
+          ant.scentClock = ant.carrying ? random(.085, .14) : random(.16, .28);
+        }
+      }
+
+      function update(dt) {
+        simulationTime += dt * Number(ui.speed.value);
+        fadeScent(dt);
+        ants.forEach((ant) => updateAnt(ant, dt));
+        nest.glow = Math.max(0, nest.glow - dt * 1.4);
+        food = food.filter((item) => item.amount > 0);
+        statsTimer -= dt;
+        if (statsTimer <= 0) {
+          updateHud();
+          statsTimer = .2;
+        }
+      }
+
+      function drawFood(item) {
+        const fullness = item.amount / item.max;
+        const radius = 7 + fullness * 9;
+        const wave = 1 + Math.sin(simulationTime * 2 + item.pulse) * .06;
+        const glow = ctx.createRadialGradient(item.x, item.y, 1, item.x, item.y, radius * 3.5);
+        glow.addColorStop(0, item.hue === 92 ? "rgba(184,217,111,.3)" : "rgba(255,179,88,.29)");
+        glow.addColorStop(1, "rgba(255,160,60,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, radius * 3.5 * wave, 0, Math.PI * 2);
+        ctx.fill();
+
+        const dots = Math.max(5, Math.floor(fullness * 12));
+        for (let i = 0; i < dots; i++) {
+          const theta = i * 2.3999632297 + item.pulse;
+          const r = radius * (.25 + ((i * 13) % 7) / 10);
+          const x = item.x + Math.cos(theta) * r;
+          const y = item.y + Math.sin(theta) * r * .72;
+          ctx.beginPath();
+          ctx.fillStyle = item.hue === 92 ? `hsla(85, 50%, ${57 + i % 3 * 6}%, .94)` : `hsla(${item.hue}, 86%, ${53 + i % 3 * 7}%, .94)`;
+          ctx.arc(x, y, 2.2 + (i % 3) * .42, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "rgba(255,234,199,.66)";
+        ctx.font = "600 9px ui-monospace, SFMono-Regular, Consolas, monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(item.kind.toUpperCase(), item.x, item.y - radius - 11);
+      }
+
+      function drawNest() {
+        const r = nest.radius;
+        const halo = ctx.createRadialGradient(nest.x, nest.y, r * .42, nest.x, nest.y, r * 2.55);
+        halo.addColorStop(0, `rgba(252, 164, 70, ${.13 + nest.glow * .16})`);
+        halo.addColorStop(.55, "rgba(202, 108, 45, .045)");
+        halo.addColorStop(1, "rgba(202, 108, 45, 0)");
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(nest.x, nest.y, r * 2.55, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.fillStyle = "#100b08";
+        ctx.arc(nest.x, nest.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = "rgba(252,194,111,.46)";
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.fillStyle = "#24140c";
+        ctx.arc(nest.x, nest.y, r * .68, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(105,65,36,.72)";
+        ctx.stroke();
+        for (let i = 0; i < 7; i++) {
+          const a = i * Math.PI * 2 / 7 + simulationTime * .08;
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(240,164,84,.16)";
+          ctx.moveTo(nest.x + Math.cos(a) * r * .2, nest.y + Math.sin(a) * r * .2);
+          ctx.lineTo(nest.x + Math.cos(a) * r * .55, nest.y + Math.sin(a) * r * .55);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "rgba(255,230,190,.68)";
+        ctx.font = "700 9px ui-monospace, SFMono-Regular, Consolas, monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("NEST", nest.x, nest.y + 1);
+      }
+
+      function drawAnt(ant) {
+        ctx.save();
+        ctx.translate(ant.x, ant.y);
+        ctx.rotate(ant.angle);
+        const s = ant.size;
+        const legPulse = Math.sin(simulationTime * 17 + ant.sway) * .42;
+        ctx.lineWidth = .56;
+        ctx.strokeStyle = "rgba(20, 10, 5, .92)";
+        for (const side of [-1, 1]) {
+          for (let i = -1; i <= 1; i++) {
+            ctx.beginPath();
+            ctx.moveTo(0, side * s * .42);
+            ctx.lineTo(i * s * 1.05 + s * .2, side * s * (1.05 + legPulse * .26 * (i + 2)));
+            ctx.stroke();
+          }
+        }
+        ctx.fillStyle = "#110a06";
+        ctx.beginPath();
+        ctx.ellipse(-s * .72, 0, s * .78, s * .68, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(0, 0, s * .7, s * .53, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(s * .7, 0, s * .48, s * .43, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(13, 6, 4, .94)";
+        ctx.beginPath();
+        ctx.moveTo(s * 1.02, -s * .19);
+        ctx.lineTo(s * 1.55, -s * .74);
+        ctx.moveTo(s * 1.02, s * .19);
+        ctx.lineTo(s * 1.55, s * .74);
+        ctx.stroke();
+        if (ant.carrying) {
+          ctx.fillStyle = "#f3b960";
+          ctx.beginPath();
+          ctx.arc(s * 1.18, 0, s * .43, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(ground, 0, 0, width, height);
+        if (showTrails) {
+          ctx.save();
+          ctx.globalCompositeOperation = "screen";
+          ctx.globalAlpha = .95;
+          ctx.drawImage(scentLayer, 0, 0, width, height);
+          ctx.restore();
+        }
+        food.forEach(drawFood);
+        drawNest();
+        ants.forEach(drawAnt);
+      }
+
+      function formatTime(seconds) {
+        const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+        const remaining = Math.floor(seconds % 60).toString().padStart(2, "0");
+        return `${minutes}:${remaining}`;
+      }
+
+      function updateHud() {
+        const outbound = ants.filter((ant) => ant.state === "outbound").length;
+        ui.workers.textContent = `${String(ants.length).padStart(3, "0")} workers`;
+        ui.stores.textContent = `${String(collection).padStart(3, "0")} grains`;
+        ui.cycle.textContent = formatTime(simulationTime);
+        ui.state.textContent = paused ? "paused" : `${outbound} scouting`;
+        ui.state.classList.toggle("is-paused", paused);
+      }
+
+      function announce(text) {
+        clearTimeout(messageTimer);
+        ui.event.textContent = text;
+        ui.event.classList.add("visible");
+        messageTimer = setTimeout(() => ui.event.classList.remove("visible"), 2200);
+      }
+
+      function setPause(next) {
+        paused = next;
+        ui.mode.textContent = paused ? "paused" : "running";
+        ui.toggle.setAttribute("aria-label", paused ? "Resume simulation" : "Pause simulation");
+        ui.toggle.setAttribute("aria-pressed", String(paused));
+        ui.toggle.innerHTML = paused ? '<span class="play-icon" aria-hidden="true"></span>' : '<span class="pause-icon" aria-hidden="true"><i></i><i></i></span>';
+        updateHud();
+        announce(paused ? "forage protocol paused" : "forage protocol resumed");
+      }
+
+      function addFood(x, y) {
+        const tooNearNest = Math.hypot(x - nest.x, y - nest.y) < nest.radius * 2.2;
+        if (tooNearNest) {
+          announce("place the food beyond the nest boundary");
+          return;
+        }
+        const types = [
+          ["wild crumb", 30], ["moss cluster", 95], ["nectar drop", 11], ["seed cache", 47]
+        ];
+        const [kind, hue] = choose(types);
+        food.push(source(x, y, Math.round(random(72, 138)), kind, hue));
+        ui.note.textContent = `A ${kind} has entered the field. Nearby scouts are correcting their routes.`;
+        announce(`${kind} introduced`);
+      }
+
+      canvas.addEventListener("pointerdown", (event) => {
+        const rect = canvas.getBoundingClientRect();
+        addFood(event.clientX - rect.left, event.clientY - rect.top);
+      });
+
+      ui.toggle.addEventListener("click", () => setPause(!paused));
+      ui.reset.addEventListener("click", resetColony);
+      ui.speed.addEventListener("input", () => { ui.speedValue.textContent = `${Number(ui.speed.value).toFixed(1)}×`; });
+      ui.population.addEventListener("input", syncPopulation);
+      ui.trails.addEventListener("click", () => {
+        showTrails = !showTrails;
+        ui.trails.textContent = `trails: ${showTrails ? "on" : "off"}`;
+        ui.trails.setAttribute("aria-pressed", String(showTrails));
+        if (!showTrails) scentCtx.clearRect(0, 0, width, height);
+      });
+      window.addEventListener("resize", resize, { passive: true });
+      window.addEventListener("keydown", (event) => {
+        if (event.target instanceof HTMLInputElement) return;
+        if (event.code === "Space") { event.preventDefault(); setPause(!paused); }
+        if (event.key === "r" || event.key === "R") resetColony();
+      });
+
+      function frame(now) {
+        const elapsed = Math.min(.05, Math.max(0, (now - lastFrame) / 1000));
+        lastFrame = now;
+        if (!paused) update(elapsed);
+        render();
+        requestAnimationFrame(frame);
+      }
+
+      resize();
+      resetColony();
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

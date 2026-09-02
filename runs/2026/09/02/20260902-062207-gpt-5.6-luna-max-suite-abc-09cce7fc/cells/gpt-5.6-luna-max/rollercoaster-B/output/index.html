@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Night Run // Coaster 07</title>
+  <style>
+    :root {
+      --ink: #e8f5ff;
+      --muted: #8ca3b8;
+      --cyan: #71e6ff;
+      --amber: #ffb86b;
+      --glass: rgba(7, 15, 27, .62);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #030711; }
+    body { color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: clamp(18px, 3vw, 42px); }
+    .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; gap: 14px; align-items: center; }
+    .mark { width: 34px; height: 34px; border: 1px solid rgba(113, 230, 255, .7); display: grid; place-items: center; color: var(--cyan); font-size: 17px; transform: skew(-12deg); box-shadow: 0 0 20px rgba(113, 230, 255, .15); }
+    .eyebrow { color: var(--cyan); font-size: 10px; letter-spacing: .25em; font-weight: 700; text-transform: uppercase; }
+    .title { margin-top: 5px; font-size: clamp(13px, 1.7vw, 19px); letter-spacing: .13em; font-weight: 650; text-transform: uppercase; }
+    .status { display: flex; align-items: center; gap: 9px; color: #a8bfce; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; }
+    .dot { width: 7px; height: 7px; background: #87ffb1; border-radius: 50%; box-shadow: 0 0 14px #87ffb1; animation: blink 1.8s ease-in-out infinite; }
+    @keyframes blink { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+    .readout { align-self: flex-start; padding: 14px 17px 15px; min-width: 160px; background: linear-gradient(135deg, rgba(6, 16, 30, .78), rgba(4, 8, 19, .32)); border-left: 2px solid var(--cyan); backdrop-filter: blur(7px); }
+    .readout-label { color: var(--muted); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; }
+    .speed { margin-top: 2px; font-variant-numeric: tabular-nums; font-size: clamp(30px, 4vw, 52px); line-height: .95; letter-spacing: -.06em; font-weight: 300; }
+    .speed small { margin-left: 4px; font-size: 10px; color: var(--cyan); letter-spacing: .18em; }
+    .bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+    .guide { max-width: 300px; color: rgba(218, 235, 247, .64); font-size: 10px; line-height: 1.65; letter-spacing: .1em; text-transform: uppercase; }
+    .guide kbd { display: inline-block; margin-right: 6px; padding: 3px 6px; border: 1px solid rgba(214, 235, 248, .25); color: var(--ink); font-size: 9px; letter-spacing: .1em; }
+    .progress-wrap { width: min(340px, 37vw); }
+    .progress-head { display: flex; justify-content: space-between; margin-bottom: 8px; color: rgba(219, 237, 249, .58); font-size: 9px; letter-spacing: .18em; text-transform: uppercase; }
+    .progress-track { height: 2px; background: rgba(202, 232, 246, .2); overflow: hidden; }
+    .progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--amber)); box-shadow: 0 0 14px var(--cyan); transition: width .1s linear; }
+    .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 45%, rgba(1, 4, 12, .38) 100%); }
+    .crosshair { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%); opacity: .7; pointer-events: none; }
+    .crosshair::before, .crosshair::after { content: ""; position: absolute; background: rgba(220, 247, 255, .68); }
+    .crosshair::before { width: 1px; height: 20px; left: 9px; top: 0; }
+    .crosshair::after { width: 20px; height: 1px; left: 0; top: 9px; }
+    @media (max-width: 560px) { .status { display: none; } .progress-wrap { width: 45vw; } .guide { max-width: 180px; font-size: 9px; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="hud" aria-hidden="true">
+    <div class="topline">
+      <div class="brand">
+        <div class="mark">✦</div>
+        <div><div class="eyebrow">Live attraction / 07</div><div class="title">Night Run</div></div>
+      </div>
+      <div class="status"><span class="dot"></span><span id="statusText">Continuous playback</span></div>
+    </div>
+    <div class="readout"><div class="readout-label">Velocity</div><div class="speed"><span id="speedValue">00</span><small>KM/H</small></div></div>
+    <div class="bottom">
+      <div class="guide"><kbd>SPACE</kbd> pause / resume&nbsp;&nbsp; <kbd>R</kbd> reset run</div>
+      <div class="progress-wrap"><div class="progress-head"><span>Loop distance</span><span id="lapValue">00%</span></div><div class="progress-track"><div id="progressFill" class="progress-fill"></div></div></div>
+    </div>
+  </div>
+  <div class="crosshair"></div><div class="vignette"></div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+    const app = document.getElementById('app');
+    const speedValue = document.getElementById('speedValue');
+    const lapValue = document.getElementById('lapValue');
+    const progressFill = document.getElementById('progressFill');
+    const statusText = document.getElementById('statusText');
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x080d1d, 0.0062);
+    scene.background = new THREE.Color(0x080d1d);
+
+    const camera = new THREE.PerspectiveCamera(76, innerWidth / innerHeight, .1, 700);
+    camera.position.set(0, 10, 0);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.8));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    app.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0x6c96c9, 0x090b14, 1.35));
+    const moon = new THREE.DirectionalLight(0x99c7ff, 2.0);
+    moon.position.set(-70, 110, 35); scene.add(moon);
+    const warm = new THREE.DirectionalLight(0xff8d62, .48);
+    warm.position.set(110, 28, -90); scene.add(warm);
+
+    function makeSky() {
+      const sky = new THREE.Mesh(new THREE.SphereGeometry(360, 32, 16), new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        uniforms: { top: { value: new THREE.Color('#071126') }, horizon: { value: new THREE.Color('#4f385e') }, sun: { value: new THREE.Color('#ff9c68') } },
+        vertexShader: 'varying vec3 vWorld; void main(){vWorld=(modelMatrix*vec4(position,1.0)).xyz;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+        fragmentShader: 'uniform vec3 top;uniform vec3 horizon;uniform vec3 sun;varying vec3 vWorld;void main(){float h=normalize(vWorld).y;float f=smoothstep(-.18,.6,h);vec3 c=mix(horizon,top,f);float glow=pow(max(0.0,1.0-length(normalize(vWorld)-vec3(.28,.11,-.95))),5.0);c+=sun*glow*.75;gl_FragColor=vec4(c,1.0);}'
+      }));
+      sky.renderOrder = -10; scene.add(sky);
+    }
+    makeSky();
+
+    function seeded(seed) { const x = Math.sin(seed * 12.9898) * 43758.5453; return x - Math.floor(x); }
+
+    // Stars are intentionally sparse near the horizon, leaving a readable silhouette.
+    const starPositions = [];
+    for (let i = 0; i < 700; i++) {
+      const a = seeded(i + 3) * Math.PI * 2;
+      const y = 48 + seeded(i + 70) * 190;
+      const r = 230 + seeded(i + 130) * 90;
+      starPositions.push(Math.cos(a) * r, y, Math.sin(a) * r);
+    }
+    const stars = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xc5e8ff, size: 1.1, sizeAttenuation: true, transparent: true, opacity: .78 }));
+    stars.geometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3)); scene.add(stars);
+
+    function createMountains() {
+      const group = new THREE.Group();
+      const palettes = [0x13192b, 0x1b1d34, 0x24213e];
+      for (let i = 0; i < 32; i++) {
+        const angle = (i / 32) * Math.PI * 2 + seeded(i) * .11;
+        const radius = 155 + seeded(i + 300) * 70;
+        const h = 32 + seeded(i + 500) * 54;
+        const w = 26 + seeded(i + 800) * 34;
+        const mountain = new THREE.Mesh(new THREE.ConeGeometry(w, h, 6), new THREE.MeshLambertMaterial({ color: palettes[i % palettes.length], flatShading: true }));
+        mountain.position.set(Math.cos(angle) * radius, h * .48 - 3, Math.sin(angle) * radius);
+        mountain.rotation.y = seeded(i + 17) * 1.3; group.add(mountain);
+      }
+      scene.add(group);
+    }
+    createMountains();
+
+    // The closed spline is the ride's constantly advancing spine.
+    const points = [
+      new THREE.Vector3(-58, 20, 10), new THREE.Vector3(-42, 22, -23), new THREE.Vector3(-15, 16, -39),
+      new THREE.Vector3(18, 12, -36), new THREE.Vector3(48, 17, -18), new THREE.Vector3(62, 29, 8),
+      new THREE.Vector3(48, 42, 34), new THREE.Vector3(16, 48, 38), new THREE.Vector3(-9, 38, 27),
+      new THREE.Vector3(-18, 28, 8), new THREE.Vector3(-3, 23, -7), new THREE.Vector3(25, 21, 1),
+      new THREE.Vector3(31, 13, 25), new THREE.Vector3(13, 9, 50), new THREE.Vector3(-17, 11, 57),
+      new THREE.Vector3(-44, 15, 42), new THREE.Vector3(-58, 20, 10)
+    ];
+    const trackCurve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', .48);
+    const sampleCount = 900;
+    const sampled = [], tangents = [], laterals = [], distances = [0];
+    let totalLength = 0;
+    for (let i = 0; i <= sampleCount; i++) {
+      const t = i / sampleCount;
+      const p = trackCurve.getPointAt(t);
+      let tangent = trackCurve.getTangentAt(t).normalize();
+      let lateral = new THREE.Vector3().crossVectors(tangent, new THREE.Vector3(0, 1, 0));
+      if (lateral.lengthSq() < .0001) lateral.set(1, 0, 0); else lateral.normalize();
+      sampled.push(p); tangents.push(tangent); laterals.push(lateral);
+      if (i > 0) { totalLength += p.distanceTo(sampled[i - 1]); distances.push(totalLength); }
+    }
+
+    function makeRail(offset, color, glow) {
+      const verts = [];
+      for (let i = 0; i < sampleCount; i++) {
+        const p = sampled[i], side = laterals[i];
+        verts.push(p.x + side.x * offset, p.y + side.y * offset + .05, p.z + side.z * offset);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: .95 });
+      const line = new THREE.LineLoop(geo, mat); scene.add(line);
+      if (glow) {
+        const glowMat = new THREE.LineBasicMaterial({ color: 0x3ee7ff, transparent: true, opacity: .17, linewidth: 1 });
+        const glowLine = new THREE.LineLoop(geo, glowMat); glowLine.scale.setScalar(1.012); scene.add(glowLine);
+      }
+    }
+    makeRail(-2.2, 0x9fbac7, true); makeRail(2.2, 0x9fbac7, true);
+
+    function cylinderBetween(a, b, radius, material, radial = 6) {
+      const direction = new THREE.Vector3().subVectors(b, a);
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, direction.length(), radial), material);
+      mesh.position.copy(a).add(b).multiplyScalar(.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+      return mesh;
+    }
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x282f3b, roughness: .77, metalness: .5 });
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x3e4d62, roughness: .5, metalness: .8 });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x59e7ff, transparent: true, opacity: .75 });
+    const trackDetails = new THREE.Group();
+    for (let i = 0; i < sampleCount; i += 13) {
+      const p = sampled[i], side = laterals[i];
+      const left = p.clone().addScaledVector(side, -2.2), right = p.clone().addScaledVector(side, 2.2);
+      const tie = cylinderBetween(left, right, .23, tieMat, 6); trackDetails.add(tie);
+      if (i % 26 === 0) {
+        const ground = new THREE.Vector3(p.x, 0, p.z);
+        const h = Math.max(1.2, p.y - .7);
+        const support = cylinderBetween(new THREE.Vector3(p.x, .1, p.z), new THREE.Vector3(p.x, p.y - .45, p.z), .27, supportMat, 7); trackDetails.add(support);
+        const braceA = new THREE.Vector3(p.x - side.x * 2.5, .25, p.z - side.z * 2.5);
+        const braceB = new THREE.Vector3(p.x + side.x * 2.5, .25, p.z + side.z * 2.5);
+        trackDetails.add(cylinderBetween(braceA, new THREE.Vector3(p.x, p.y - .45, p.z), .12, supportMat, 5));
+        trackDetails.add(cylinderBetween(braceB, new THREE.Vector3(p.x, p.y - .45, p.z), .12, supportMat, 5));
+        if (i % 78 === 0) {
+          const beacon = new THREE.Mesh(new THREE.SphereGeometry(.24, 8, 8), glowMat);
+          beacon.position.set(p.x, p.y + .6, p.z); trackDetails.add(beacon);
+        }
+      }
+    }
+    scene.add(trackDetails);
+
+    function createTree(x, y, z, scale, hue = 0) {
+      const g = new THREE.Group(); g.position.set(x, y, z); g.scale.setScalar(scale);
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.22, .38, 3.6, 6), new THREE.MeshStandardMaterial({ color: 0x211c23, roughness: 1 }));
+      trunk.position.y = 1.8; g.add(trunk);
+      const foliageMat = new THREE.MeshStandardMaterial({ color: hue ? 0x194049 : 0x172d3a, roughness: .94, flatShading: true });
+      const b1 = new THREE.Mesh(new THREE.ConeGeometry(2.5, 4.5, 7), foliageMat); b1.position.y = 4.1; g.add(b1);
+      const b2 = new THREE.Mesh(new THREE.ConeGeometry(1.85, 3.7, 7), foliageMat); b2.position.y = 6.7; g.add(b2);
+      const b3 = new THREE.Mesh(new THREE.ConeGeometry(1.1, 3.1, 7), foliageMat); b3.position.y = 8.8; g.add(b3);
+      return g;
+    }
+    const scenery = new THREE.Group();
+    for (let i = 0; i < 64; i++) {
+      const angle = seeded(i + 20) * Math.PI * 2;
+      const radius = 27 + seeded(i + 90) * 50;
+      const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
+      // Keep the near-track corridor clear so the ride remains readable.
+      if (Math.abs(x) < 18 && Math.abs(z) < 42) continue;
+      scenery.add(createTree(x, 0, z, .65 + seeded(i + 130) * .75, i % 3 === 0 ? 1 : 0));
+    }
+    scene.add(scenery);
+
+    function createCity() {
+      const city = new THREE.Group();
+      const buildingMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: .82, metalness: .14 });
+      const windowMat = new THREE.MeshBasicMaterial({ color: 0xffc36b });
+      for (let i = 0; i < 50; i++) {
+        const a = seeded(i + 1000) * Math.PI * 2, r = 84 + seeded(i + 1020) * 55;
+        const w = 3 + seeded(i + 1030) * 6, d = 3 + seeded(i + 1040) * 6, h = 3 + seeded(i + 1050) * 22;
+        const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buildingMat);
+        b.position.set(Math.cos(a) * r, h / 2 - 1, Math.sin(a) * r); b.rotation.y = seeded(i + 1060) * 1.5; city.add(b);
+        if (i % 2 === 0) {
+          const light = new THREE.PointLight(0xff9e5b, .35, 13, 2); light.position.copy(b.position).add(new THREE.Vector3(0, h * .35, 0)); city.add(light);
+        }
+      }
+      scene.add(city);
+    }
+    createCity();
+
+    function createCloud(x, y, z, scale) {
+      const cloud = new THREE.Group(); cloud.position.set(x, y, z); cloud.scale.setScalar(scale);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x333455, transparent: true, opacity: .28, depthWrite: false });
+      for (let i = 0; i < 5; i++) {
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(4 + (i % 2) * 2, 12, 8), mat);
+        puff.position.set((i - 2) * 4.2, Math.sin(i) * .55, (i % 2) * 1.3); cloud.add(puff);
+      }
+      scene.add(cloud); return cloud;
+    }
+    const clouds = [createCloud(-84, 57, -75, 1.5), createCloud(81, 72, 17, 1.2), createCloud(-32, 66, 105, 1.8)];
+
+    // A luminous portal marks the mid-run crest and gives the forward view a goal.
+    const portal = new THREE.Group();
+    const portalMat = new THREE.MeshStandardMaterial({ color: 0x55dcff, emissive: 0x0f7198, emissiveIntensity: 4.5, metalness: .6, roughness: .2 });
+    const portalP = sampled[225], portalSide = laterals[225];
+    const portalCenter = portalP.clone().add(new THREE.Vector3(0, 5.3, 0));
+    const portalLeft = portalP.clone().addScaledVector(portalSide, -5.2).add(new THREE.Vector3(0, 5.3, 0));
+    const portalRight = portalP.clone().addScaledVector(portalSide, 5.2).add(new THREE.Vector3(0, 5.3, 0));
+    const portalTop = portalP.clone().add(new THREE.Vector3(0, 10.6, 0));
+    portal.add(cylinderBetween(portalLeft, portalTop, .28, portalMat, 8), cylinderBetween(portalTop, portalRight, .28, portalMat, 8), cylinderBetween(portalRight, portalP.clone().addScaledVector(portalSide, 5.2), .28, portalMat, 8));
+    const portalLight = new THREE.PointLight(0x43ddff, 10, 32, 2); portalLight.position.copy(portalCenter); portal.add(portalLight); scene.add(portal);
+
+    const clock = new THREE.Clock();
+    let distanceTravelled = 0;
+    let playing = true;
+    let lastT = 0;
+    const rideSpeed = 17.5;
+    const cameraTarget = new THREE.Vector3();
+    const cameraUp = new THREE.Vector3(0, 1, 0);
+
+    function distanceToT(distance) {
+      const d = ((distance % totalLength) + totalLength) % totalLength;
+      let lo = 0, hi = sampleCount;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (distances[mid] < d) lo = mid + 1; else hi = mid; }
+      const i = Math.max(1, lo), span = distances[i] - distances[i - 1] || 1;
+      return ((i - 1) + (d - distances[i - 1]) / span) / sampleCount;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), .05);
+      if (playing) distanceTravelled += dt * rideSpeed * (1 + .17 * Math.sin(distanceTravelled / 34) + .09 * Math.sin(distanceTravelled / 11));
+      const t = distanceToT(distanceTravelled);
+      const p = trackCurve.getPointAt(t);
+      const tangent = trackCurve.getTangentAt(t).normalize();
+      const lateral = new THREE.Vector3().crossVectors(tangent, cameraUp);
+      if (lateral.lengthSq() < .001) lateral.set(1, 0, 0); else lateral.normalize();
+      const bob = playing ? Math.sin(distanceTravelled * .31) * .065 : 0;
+      const lean = Math.sin(distanceTravelled * .012) * .035;
+      const eye = p.clone().addScaledVector(cameraUp, 2.15 + bob).addScaledVector(lateral, lean);
+      camera.position.lerp(eye, .23);
+      const lookAhead = trackCurve.getPointAt(distanceToT(distanceTravelled + 16));
+      cameraTarget.copy(lookAhead).addScaledVector(cameraUp, 2.35);
+      camera.lookAt(cameraTarget);
+      const pct = (distanceTravelled % totalLength) / totalLength;
+      const speed = Math.round(rideSpeed * 3.6 * (1 + .17 * Math.sin(distanceTravelled / 34) + .09 * Math.sin(distanceTravelled / 11)));
+      speedValue.textContent = String(speed).padStart(2, '0');
+      const pctText = String(Math.round(pct * 100)).padStart(2, '0');
+      lapValue.textContent = pctText + '%'; progressFill.style.width = (pct * 100).toFixed(2) + '%';
+      statusText.textContent = playing ? 'Continuous playback' : 'Playback paused';
+      portal.rotation.y += dt * .12;
+      clouds.forEach((cloud, i) => { cloud.position.x += dt * (i % 2 ? .35 : -.22); if (cloud.position.x > 150) cloud.position.x = -150; if (cloud.position.x < -150) cloud.position.x = 150; });
+      renderer.render(scene, camera);
+      lastT = t;
+    }
+    animate();
+
+    addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+    addEventListener('keydown', (event) => {
+      if (event.code === 'Space') { event.preventDefault(); playing = !playing; clock.getDelta(); }
+      if (event.key.toLowerCase() === 'r') { distanceTravelled = 0; camera.position.copy(trackCurve.getPointAt(0)).add(new THREE.Vector3(0, 2.15, 0)); }
+    });
+    renderer.domElement.addEventListener('pointerdown', () => { playing = true; });
+  </script>
+</body>
+</html>

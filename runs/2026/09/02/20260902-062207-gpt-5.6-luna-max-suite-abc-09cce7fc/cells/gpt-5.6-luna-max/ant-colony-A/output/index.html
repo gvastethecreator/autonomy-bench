@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ANTWORKS // Colony Field Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f5e7cf;
+      --muted: #a8967a;
+      --faint: #756958;
+      --line: rgba(241, 199, 137, .17);
+      --panel: rgba(26, 26, 22, .83);
+      --panel-strong: rgba(29, 27, 22, .94);
+      --amber: #e9a94c;
+      --amber-bright: #ffd68b;
+      --sage: #91af82;
+      --red: #c76a4c;
+      --soil: #221813;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: #0f181c;
+      color: var(--ink);
+      font: 500 12px/1.4 "Inter", "Segoe UI", system-ui, sans-serif;
+      letter-spacing: .02em;
+    }
+
+    .app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      isolation: isolate;
+      overflow: hidden;
+    }
+
+    #world {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .grain, .vignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+    .grain {
+      opacity: .055;
+      mix-blend-mode: screen;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.48'/%3E%3C/svg%3E");
+    }
+    .vignette { background: radial-gradient(ellipse at 50% 40%, transparent 45%, rgba(4, 8, 8, .47) 100%); z-index: 1; }
+
+    .topbar {
+      position: absolute;
+      z-index: 5;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 24px 28px 0;
+      pointer-events: none;
+    }
+    .brand, .top-actions { pointer-events: auto; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-shadow: 0 2px 18px rgba(0,0,0,.35);
+    }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border: 1px solid rgba(236, 174, 84, .52);
+      border-radius: 50%;
+      color: var(--amber-bright);
+      font-size: 18px;
+      background: rgba(30, 26, 18, .64);
+      box-shadow: 0 0 0 5px rgba(236,174,84,.05), 0 0 28px rgba(236,174,84,.12);
+    }
+    .brand-title { margin: 0; font-size: 13px; font-weight: 750; letter-spacing: .21em; }
+    .brand-sub { margin: 2px 0 0; color: var(--muted); font-size: 9px; letter-spacing: .18em; text-transform: uppercase; }
+    .top-actions { display: flex; gap: 8px; align-items: center; }
+
+    button, input { font: inherit; }
+    button {
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: rgba(25, 25, 21, .78);
+      border-radius: 6px;
+      padding: 9px 13px;
+      cursor: pointer;
+      letter-spacing: .08em;
+      font-size: 10px;
+      text-transform: uppercase;
+      transition: border-color .18s ease, background .18s ease, color .18s ease, transform .18s ease;
+    }
+    button:hover { border-color: rgba(244,190,102,.7); background: rgba(67, 49, 27, .82); color: #ffe4ab; }
+    button:active { transform: translateY(1px); }
+    button.primary { border-color: rgba(240, 173, 77, .58); color: #ffd184; }
+    button[aria-pressed="true"] { background: rgba(195, 120, 54, .26); color: #ffe2a6; }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 16px 50px rgba(0,0,0,.17), inset 0 1px rgba(255,255,255,.025);
+      backdrop-filter: blur(12px);
+      border-radius: 9px;
+    }
+    .telemetry {
+      position: absolute;
+      z-index: 4;
+      left: 28px;
+      top: 104px;
+      width: 212px;
+      padding: 15px 15px 13px;
+    }
+    .panel-kicker {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 9px;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+    }
+    .live {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--sage);
+      font-size: 8px;
+      letter-spacing: .13em;
+    }
+    .live::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #a8cc87;
+      box-shadow: 0 0 10px #a8cc87;
+      animation: breathe 1.7s ease-in-out infinite;
+    }
+    @keyframes breathe { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+    .readout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 15px;
+      margin-top: 16px;
+    }
+    .metric { min-width: 0; }
+    .metric-label { display:block; color:var(--faint); font-size: 9px; letter-spacing: .09em; text-transform: uppercase; }
+    .metric-value { display:block; margin-top: 3px; color: #f6d08d; font: 600 23px/1 "Arial Narrow", "Roboto Condensed", sans-serif; letter-spacing: -.02em; }
+    .metric-value small { color: var(--muted); font-size: 10px; font-family: inherit; letter-spacing: .04em; }
+    .meter { height: 4px; margin-top: 5px; overflow: hidden; background: rgba(240,190,108,.1); border-radius: 5px; }
+    .meter > i { display:block; height:100%; width: 63%; border-radius: inherit; background: linear-gradient(90deg, #a55e34, #efbf68); box-shadow: 0 0 9px rgba(239,191,104,.48); transition: width .35s ease; }
+    .telemetry-foot { display:flex; justify-content:space-between; gap:10px; margin-top: 15px; padding-top: 10px; border-top:1px solid rgba(241,199,137,.11); color: var(--faint); font-size:9px; }
+    .telemetry-foot strong { color: #b7c79a; font-weight: 600; }
+
+    .queen-card {
+      position: absolute;
+      z-index: 4;
+      right: 28px;
+      top: 104px;
+      width: 214px;
+      padding: 15px;
+    }
+    .queen-card h2 { margin: 14px 0 3px; font: 600 22px/1 "Arial Narrow", "Roboto Condensed", sans-serif; letter-spacing: .02em; }
+    .queen-card p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+    .queen-meta { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
+    .queen-meta div { padding: 8px; background: rgba(255,209,133,.05); border:1px solid rgba(255,209,133,.08); border-radius: 5px; }
+    .queen-meta b { display:block; color: #efd08f; font-size:12px; }
+    .queen-meta span { color: var(--faint); font-size:8px; letter-spacing:.09em; text-transform:uppercase; }
+    .pulse-line { height: 1px; margin: 15px 0 11px; background: linear-gradient(90deg, rgba(228,162,70,.6), transparent); }
+    .queen-status { display:flex; align-items:center; gap: 7px; color:#bdc998; font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
+    .queen-status::before { content:""; width:7px; height:7px; border:1px solid #9fbe81; border-radius:50%; box-shadow:0 0 8px rgba(159,190,129,.7); }
+
+    .hint {
+      position: absolute;
+      z-index: 4;
+      left: 50%;
+      bottom: 27px;
+      transform: translateX(-50%);
+      color: rgba(244, 220, 178, .64);
+      text-align:center;
+      font-size: 10px;
+      letter-spacing: .08em;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .hint kbd { display:inline-block; padding:2px 5px; margin:0 3px; border:1px solid rgba(242,208,154,.23); border-radius:3px; color:rgba(249,221,162,.8); background:rgba(0,0,0,.18); font-size:9px; }
+    .legend {
+      position: absolute;
+      z-index: 4;
+      right: 28px;
+      bottom: 24px;
+      display:flex;
+      align-items:center;
+      gap: 12px;
+      padding: 9px 11px;
+      border: 1px solid rgba(241,199,137,.12);
+      border-radius: 6px;
+      color: var(--faint);
+      background: rgba(26,24,20,.56);
+      font-size:8px;
+      letter-spacing:.1em;
+      text-transform:uppercase;
+    }
+    .legend span { display:inline-flex; align-items:center; gap:5px; }
+    .dot { width:7px; height:7px; display:inline-block; border-radius:50%; }
+    .dot.trail { background:#e6ad5e; box-shadow:0 0 7px #e6ad5e; }
+    .dot.food { background:#d5ca8b; }
+    .dot.nest { background:#be7d4f; }
+    .north { color:rgba(244,219,176,.38); font-size:8px; letter-spacing:.15em; }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      top: 83px;
+      z-index: 10;
+      transform: translate(-50%, -8px);
+      padding: 8px 12px;
+      color: #f7d99e;
+      border: 1px solid rgba(240,174,76,.38);
+      border-radius: 5px;
+      background: rgba(39,29,18,.89);
+      opacity: 0;
+      pointer-events:none;
+      transition: opacity .25s ease, transform .25s ease;
+      font-size: 10px;
+      letter-spacing: .08em;
+      text-transform:uppercase;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @media (max-width: 720px) {
+      .topbar { padding: 16px 16px 0; }
+      .telemetry { left: 16px; top: 78px; width: 190px; padding: 12px; }
+      .queen-card { right: 16px; top: 78px; width: 177px; padding:12px; }
+      .queen-card h2 { font-size:19px; }
+      .queen-card p { font-size:9px; }
+      .brand-sub { display:none; }
+      .brand-title { font-size:11px; }
+      .mark { width:32px; height:32px; font-size:15px; }
+      .legend { right:16px; bottom:16px; }
+      .hint { bottom: 64px; width:90%; white-space:normal; }
+    }
+    @media (max-width: 480px) {
+      .queen-card { display:none; }
+      .telemetry { top:68px; width:176px; }
+      .readout { gap:9px 10px; }
+      .metric-value { font-size:20px; }
+      .top-actions button { padding:8px 9px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app" aria-label="Ant colony field lab simulation">
+    <canvas id="world" aria-label="Animated cutaway view of an ant colony"></canvas>
+    <div class="grain"></div>
+    <div class="vignette"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">✳</div>
+        <div>
+          <p class="brand-title">ANTWORKS / FIELD LAB</p>
+          <p class="brand-sub">myrmecology observation deck · sector 04</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="foodButton" class="primary" type="button">+ drop food</button>
+        <button id="pauseButton" type="button" aria-pressed="false">pause</button>
+        <button id="resetButton" type="button">reset</button>
+      </div>
+    </header>
+
+    <section class="telemetry panel" aria-label="Colony telemetry">
+      <div class="panel-kicker"><span>colony telemetry</span><span class="live">live</span></div>
+      <div class="readout">
+        <div class="metric"><span class="metric-label">population</span><span id="population" class="metric-value">42</span></div>
+        <div class="metric"><span class="metric-label">foragers</span><span id="foragers" class="metric-value">22</span></div>
+        <div class="metric"><span class="metric-label">stored food</span><span id="stored" class="metric-value">68<small>%</small></span><div class="meter"><i id="foodMeter"></i></div></div>
+        <div class="metric"><span class="metric-label">activity</span><span id="activity" class="metric-value">81<small>%</small></span><div class="meter"><i id="activityMeter"></i></div></div>
+      </div>
+      <div class="telemetry-foot"><span>cycle <strong id="cycle">0148</strong></span><span>temp <strong>21.4°c</strong></span></div>
+    </section>
+
+    <aside class="queen-card panel" aria-label="Queen and brood status">
+      <div class="panel-kicker"><span>queen's chamber</span><span class="north">N 04°</span></div>
+      <h2>Her Majesty</h2>
+      <p>Egg-laying rhythm remains steady. Nurse workers are rotating the brood bed.</p>
+      <div class="queen-meta"><div><b id="brood">126</b><span>brood</span></div><div><b id="eggs">38</b><span>new eggs</span></div></div>
+      <div class="pulse-line"></div>
+      <div class="queen-status">stable · well fed</div>
+    </aside>
+
+    <div id="toast" class="toast" role="status" aria-live="polite">food marker placed</div>
+    <div class="hint"><kbd>click</kbd> surface to place a food marker <span aria-hidden="true">·</span> <kbd>space</kbd> pause <span aria-hidden="true">·</span> <kbd>1–3</kbd> simulation speed</div>
+    <div class="legend" aria-label="Legend"><span><i class="dot trail"></i> pheromone</span><span><i class="dot food"></i> food</span><span><i class="dot nest"></i> chambers</span></div>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const canvas = document.getElementById("world");
+      const ctx = canvas.getContext("2d");
+      const WORLD_W = 1000;
+      const WORLD_H = 650;
+      const SURFACE = 178;
+      const TAU = Math.PI * 2;
+      const rand = (min, max) => min + Math.random() * (max - min);
+      const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+      let cssWidth = 1000;
+      let cssHeight = 650;
+      let dpr = 1;
+      let scale = 1;
+      let paused = false;
+      let simSpeed = 1;
+      let elapsed = 0;
+      let lastFrame = performance.now();
+      let cycle = 148;
+      let toastTimer = 0;
+      let nextTrail = 0;
+      let storedFood = 68;
+      let activity = 81;
+      let brood = 126;
+      let eggs = 38;
+
+      const trails = [];
+      const ants = [];
+      const foodSources = [];
+      const stars = [];
+      const pebbles = [];
+      const roots = [];
+
+      const nestDoor = { x: 466, y: 347 };
+      const exit = { x: 466, y: 184 };
+      const chambers = [
+        { id: "nursery", label: "NURSERY", x: 294, y: 369, rx: 127, ry: 61 },
+        { id: "queen", label: "QUEEN'S CHAMBER", x: 548, y: 420, rx: 144, ry: 81 },
+        { id: "pantry", label: "PANTRY", x: 759, y: 334, rx: 127, ry: 60 },
+        { id: "deep", label: "WINTER STORE", x: 455, y: 545, rx: 119, ry: 46 }
+      ];
+      const tunnels = [
+        [[exit.x, exit.y], [466, 247], [430, 303], [350, 339]],
+        [[exit.x, exit.y], [466, 247], [514, 301], [548, 342]],
+        [[416, 369], [475, 378], [464, 407]],
+        [[632, 370], [699, 345], [708, 332]],
+        [[522, 480], [482, 510], [459, 523]],
+        [[465, 438], [464, 475], [455, 511]]
+      ];
+
+      function resetWorld() {
+        elapsed = 0;
+        cycle = 148;
+        storedFood = 68;
+        activity = 81;
+        brood = 126;
+        eggs = 38;
+        trails.length = 0;
+        ants.length = 0;
+        foodSources.length = 0;
+        foodSources.push(
+          { x: 128, y: 143, amount: 82, label: "MAPLE CRUMB", hue: 37 },
+          { x: 821, y: 132, amount: 64, label: "SEED CLUSTER", hue: 49 },
+          { x: 690, y: 166, amount: 43, label: "NECTAR DROP", hue: 29 }
+        );
+        for (let i = 0; i < 22; i++) ants.push(makeForager(i));
+        for (let i = 0; i < 12; i++) ants.push(makeNestWorker(i));
+        for (let i = 0; i < 8; i++) ants.push(makeNurse(i));
+        updateReadout();
+      }
+
+      function makeForager(index) {
+        const source = foodSources[index % foodSources.length];
+        const path = makePathTo(source);
+        const ant = {
+          role: "forager", index, leg: "out", carrying: false,
+          source, path, t: (index * .047) % .44, pace: rand(25, 38),
+          x: exit.x, y: exit.y, angle: 0, trailClock: rand(0, .55), wiggle: rand(0, TAU),
+          size: rand(0.82, 1.08)
+        };
+        setPathPosition(ant);
+        return ant;
+      }
+
+      function makeNestWorker(index) {
+        const room = chambers[index % 3];
+        const a = rand(0, TAU);
+        const r = rand(.1, .72);
+        return {
+          role: "worker", index, room, x: room.x + Math.cos(a) * room.rx * r, y: room.y + Math.sin(a) * room.ry * r,
+          tx: room.x, ty: room.y, angle: a + Math.PI / 2, pace: rand(12, 23), size: rand(.68, .95),
+          turn: rand(1, 4), phase: rand(0, TAU)
+        };
+      }
+
+      function makeNurse(index) {
+        const room = chambers[0];
+        const a = rand(0, TAU);
+        return {
+          role: "nurse", index, room, x: room.x + Math.cos(a) * rand(15, 74), y: room.y + Math.sin(a) * rand(10, 34),
+          tx: room.x, ty: room.y, angle: a + Math.PI / 2, pace: rand(10, 19), size: rand(.67, .92),
+          turn: rand(1, 3), phase: rand(0, TAU)
+        };
+      }
+
+      function makePathTo(source) {
+        return [
+          { x: nestDoor.x, y: nestDoor.y },
+          { x: 466, y: 303 },
+          { x: exit.x, y: exit.y },
+          { x: source.x, y: source.y }
+        ];
+      }
+
+      function reversePath(points) { return points.slice().reverse().map(p => ({ x: p.x, y: p.y })); }
+
+      function pathLength(points) {
+        let total = 0;
+        for (let i = 1; i < points.length; i++) total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+        return total;
+      }
+
+      function setPathPosition(ant) {
+        const points = ant.path;
+        const total = pathLength(points);
+        let distance = clamp(ant.t, 0, 1) * total;
+        for (let i = 1; i < points.length; i++) {
+          const a = points[i - 1];
+          const b = points[i];
+          const segment = Math.hypot(b.x - a.x, b.y - a.y);
+          if (distance <= segment) {
+            const k = segment ? distance / segment : 0;
+            ant.x = lerp(a.x, b.x, k);
+            ant.y = lerp(a.y, b.y, k);
+            ant.angle = Math.atan2(b.y - a.y, b.x - a.x);
+            return;
+          }
+          distance -= segment;
+        }
+        const end = points[points.length - 1];
+        ant.x = end.x; ant.y = end.y;
+      }
+
+      function updateForager(ant, dt) {
+        const total = pathLength(ant.path);
+        ant.t += (ant.pace * dt) / total;
+        ant.trailClock -= dt;
+        if (ant.trailClock <= 0) {
+          trails.push({ x: ant.x + rand(-2, 2), y: ant.y + rand(-2, 2), life: 1, max: 1, strong: ant.carrying ? .8 : .46 });
+          ant.trailClock = rand(.08, .2);
+        }
+        if (ant.t >= 1) {
+          if (ant.leg === "out") {
+            ant.carrying = true;
+            ant.leg = "in";
+            ant.path = reversePath(makePathTo(ant.source));
+            ant.t = 0;
+            ant.source.amount = Math.max(0, ant.source.amount - 1.6);
+          } else {
+            ant.carrying = false;
+            ant.leg = "out";
+            storedFood = clamp(storedFood + .42, 0, 99);
+            ant.source = chooseFoodSource();
+            ant.path = makePathTo(ant.source);
+            ant.t = 0;
+          }
+        }
+        setPathPosition(ant);
+        ant.x += Math.sin(elapsed * 7 + ant.wiggle) * .45;
+        ant.y += Math.cos(elapsed * 5.3 + ant.wiggle) * .3;
+      }
+
+      function chooseFoodSource() {
+        const available = foodSources.filter(s => s.amount > 4);
+        return (available.length ? available : foodSources)[Math.floor(Math.random() * (available.length || foodSources.length))];
+      }
+
+      function updateWanderer(ant, dt) {
+        ant.turn -= dt;
+        if (ant.turn <= 0 || Math.hypot(ant.tx - ant.x, ant.ty - ant.y) < 5) {
+          const room = ant.room;
+          const a = rand(0, TAU);
+          const radius = ant.role === "nurse" ? rand(.12, .82) : rand(.16, .88);
+          ant.tx = room.x + Math.cos(a) * room.rx * radius;
+          ant.ty = room.y + Math.sin(a) * room.ry * radius;
+          ant.turn = rand(1.5, 4.7);
+        }
+        const dx = ant.tx - ant.x;
+        const dy = ant.ty - ant.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const oldX = ant.x, oldY = ant.y;
+        ant.x += (dx / len) * ant.pace * dt;
+        ant.y += (dy / len) * ant.pace * dt;
+        ant.x += Math.sin(elapsed * 4.4 + ant.phase) * dt * 2.4;
+        ant.y += Math.cos(elapsed * 3.7 + ant.phase) * dt * 1.5;
+        ant.angle = Math.atan2(ant.y - oldY, ant.x - oldX);
+        if (ant.role === "worker" && Math.random() < dt * .32) trails.push({ x: ant.x, y: ant.y, life: .38, max: .38, strong: .18 });
+      }
+
+      function update(dt) {
+        if (paused) return;
+        const tick = dt * simSpeed;
+        elapsed += tick;
+        cycle += tick * .08;
+        nextTrail -= tick;
+        if (nextTrail <= 0) {
+          nextTrail = .16;
+          if (trails.length > 720) trails.splice(0, trails.length - 720);
+        }
+        ants.forEach(ant => ant.role === "forager" ? updateForager(ant, tick) : updateWanderer(ant, tick));
+        trails.forEach(t => t.life -= tick * .22);
+        while (trails.length && trails[0].life <= 0) trails.shift();
+        storedFood = clamp(storedFood - tick * .015, 0, 99);
+        activity = clamp(77 + Math.sin(elapsed * .53) * 11 + Math.sin(elapsed * .13) * 4, 52, 98);
+        brood = Math.round(124 + Math.sin(elapsed * .11) * 4 + storedFood * .05);
+        eggs = Math.round(36 + Math.sin(elapsed * .19 + 1) * 4);
+        updateReadout();
+      }
+
+      function updateReadout() {
+        document.getElementById("population").textContent = ants.length;
+        document.getElementById("foragers").textContent = ants.filter(a => a.role === "forager").length;
+        document.getElementById("stored").innerHTML = `${Math.round(storedFood)}<small>%</small>`;
+        document.getElementById("activity").innerHTML = `${Math.round(activity)}<small>%</small>`;
+        document.getElementById("foodMeter").style.width = `${storedFood}%`;
+        document.getElementById("activityMeter").style.width = `${activity}%`;
+        document.getElementById("brood").textContent = brood;
+        document.getElementById("eggs").textContent = eggs;
+        document.getElementById("cycle").textContent = String(Math.floor(cycle)).padStart(4, "0");
+      }
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        cssWidth = Math.max(1, rect.width);
+        cssHeight = Math.max(1, rect.height);
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(cssWidth * dpr);
+        canvas.height = Math.round(cssHeight * dpr);
+        scale = Math.min(cssWidth / WORLD_W, cssHeight / WORLD_H);
+      }
+
+      function frameTransform() {
+        const offsetX = (cssWidth - WORLD_W * scale) / 2;
+        const offsetY = (cssHeight - WORLD_H * scale) / 2;
+        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offsetX, dpr * offsetY);
+      }
+
+      function draw() {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        frameTransform();
+        drawBackdrop();
+        drawTrails();
+        drawNest();
+        drawSurfaceDetails();
+        drawFoodSources();
+        drawQueenAndBrood();
+        ants.forEach(drawAnt);
+        drawMarkers();
+        if (paused) drawPaused();
+      }
+
+      function drawBackdrop() {
+        const sky = ctx.createLinearGradient(0, 0, 0, SURFACE + 35);
+        sky.addColorStop(0, "#0f2028");
+        sky.addColorStop(.68, "#172c31");
+        sky.addColorStop(1, "#1b2c2b");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, WORLD_W, SURFACE + 20);
+
+        const glow = ctx.createRadialGradient(780, 58, 2, 780, 58, 120);
+        glow.addColorStop(0, "rgba(237,182,100,.22)");
+        glow.addColorStop(1, "rgba(237,182,100,0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(630, 0, 300, 180);
+        ctx.beginPath(); ctx.arc(781, 56, 21, 0, TAU); ctx.fillStyle = "rgba(248,210,145,.88)"; ctx.fill();
+        ctx.beginPath(); ctx.arc(789, 49, 20, 0, TAU); ctx.fillStyle = "#12242b"; ctx.fill();
+
+        if (!stars.length) for (let i = 0; i < 44; i++) stars.push({ x: rand(22, 978), y: rand(18, 157), r: rand(.3, 1.5), a: rand(.16, .62), phase: rand(0, TAU) });
+        stars.forEach(s => {
+          ctx.globalAlpha = s.a * (.66 + .34 * Math.sin(elapsed * .5 + s.phase));
+          ctx.fillStyle = "#d8d5b7";
+          ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+
+        const soil = ctx.createLinearGradient(0, SURFACE, 0, WORLD_H);
+        soil.addColorStop(0, "#3a291d");
+        soil.addColorStop(.34, "#2d2019");
+        soil.addColorStop(1, "#171314");
+        ctx.fillStyle = soil;
+        ctx.fillRect(0, SURFACE, WORLD_W, WORLD_H - SURFACE);
+        ctx.fillStyle = "rgba(209,148,76,.08)";
+        ctx.fillRect(0, SURFACE, WORLD_W, 8);
+        ctx.fillStyle = "rgba(13,22,22,.58)";
+        ctx.fillRect(0, SURFACE + 9, WORLD_W, 2);
+
+        for (let i = 0; i < 11; i++) {
+          const y = SURFACE + 42 + i * 37;
+          ctx.strokeStyle = `rgba(116,75,48,${.07 + i % 3 * .018})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          for (let x = 0; x <= WORLD_W; x += 40) ctx.lineTo(x, y + Math.sin(x * .024 + i * 2.2) * 5);
+          ctx.stroke();
+        }
+        if (!pebbles.length) for (let i = 0; i < 170; i++) pebbles.push({ x: rand(7, 993), y: rand(SURFACE + 18, 642), r: rand(.35, 1.7), a: rand(.08, .28), warm: Math.random() > .72 });
+        pebbles.forEach(p => {
+          ctx.fillStyle = p.warm ? `rgba(185,122,70,${p.a})` : `rgba(11,10,10,${p.a + .05})`;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+        });
+      }
+
+      function drawSurfaceDetails() {
+        if (!roots.length) {
+          roots.push(
+            [[94, SURFACE], [112, 208], [111, 257], [91, 289]],
+            [[181, SURFACE], [196, 213], [226, 250], [224, 287], [245, 320]],
+            [[873, SURFACE], [861, 220], [871, 265], [846, 310]],
+            [[917, SURFACE], [907, 215], [928, 247], [921, 291], [939, 326]],
+            [[744, SURFACE], [734, 217], [749, 246]]
+          );
+        }
+        roots.forEach((root, ri) => {
+          ctx.strokeStyle = ri % 2 ? "rgba(83,54,38,.65)" : "rgba(102,62,39,.72)";
+          ctx.lineWidth = ri % 2 ? 3 : 5;
+          ctx.lineCap = "round";
+          ctx.beginPath(); ctx.moveTo(root[0][0], root[0][1]); root.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.stroke();
+          ctx.strokeStyle = "rgba(178,112,60,.12)"; ctx.lineWidth = 1;
+          ctx.stroke();
+        });
+        ctx.strokeStyle = "rgba(132,163,119,.67)";
+        ctx.lineWidth = 2;
+        for (let x = 12; x < WORLD_W; x += 23) {
+          const h = 4 + ((x * 17) % 11);
+          ctx.beginPath(); ctx.moveTo(x, SURFACE + 1); ctx.lineTo(x - 2, SURFACE - h); ctx.moveTo(x, SURFACE + 1); ctx.lineTo(x + 3, SURFACE - h * .74); ctx.stroke();
+        }
+        // A few restrained plants make the soil line legible.
+        drawPlant(67, 161, 1.0, -1);
+        drawPlant(927, 158, .85, 1);
+        drawPlant(721, 163, .66, -1);
+        ctx.fillStyle = "rgba(231,203,139,.55)";
+        ctx.font = "9px system-ui, sans-serif";
+        ctx.letterSpacing = ".15em";
+        ctx.fillText("SURFACE / 00 CM", 30, SURFACE - 17);
+        ctx.fillStyle = "rgba(199,157,101,.38)";
+        ctx.fillText("SUBSTRATE / ACTIVE CUTAWAY", 30, SURFACE + 25);
+      }
+
+      function drawPlant(x, y, s, flip) {
+        ctx.save(); ctx.translate(x, y); ctx.scale(flip * s, s);
+        ctx.strokeStyle = "rgba(125,163,113,.86)"; ctx.lineWidth = 1.7; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(0, 17); ctx.quadraticCurveTo(-1, 4, 0, -13); ctx.stroke();
+        ctx.fillStyle = "rgba(144,177,120,.78)";
+        ctx.beginPath(); ctx.ellipse(-6, 0, 7, 3, -.33, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(6, -6, 7, 3, .33, 0, TAU); ctx.fill();
+        ctx.restore();
+      }
+
+      function drawNest() {
+        // Tunnels first, then chamber cavities on top.
+        tunnels.forEach((points, i) => drawTunnel(points, i === 0));
+        chambers.forEach((room, i) => drawChamber(room, i));
+        // Central entrance lip and measurement ticks.
+        ctx.strokeStyle = "rgba(246,195,108,.36)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(exit.x, exit.y, 10 + Math.sin(elapsed * 1.8) * 1.4, Math.PI, TAU); ctx.stroke();
+        ctx.fillStyle = "rgba(229,172,94,.54)"; ctx.font = "9px system-ui, sans-serif"; ctx.fillText("MAIN SHAFT", exit.x + 15, exit.y + 10);
+        ctx.strokeStyle = "rgba(224,169,90,.22)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(877, 406); ctx.lineTo(877, 491); ctx.stroke();
+        for (let y = 412; y < 491; y += 12) { ctx.beginPath(); ctx.moveTo(873, y); ctx.lineTo(881, y); ctx.stroke(); }
+        ctx.fillStyle = "rgba(226,176,102,.36)"; ctx.save(); ctx.translate(889, 458); ctx.rotate(-Math.PI / 2); ctx.fillText("DEPTH 42 CM", 0, 0); ctx.restore();
+      }
+
+      function drawTunnel(points, main) {
+        ctx.save();
+        ctx.lineCap = "round"; ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(11,10,10,.94)"; ctx.lineWidth = main ? 28 : 22;
+        ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]); points.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.stroke();
+        ctx.strokeStyle = "rgba(106,63,40,.78)"; ctx.lineWidth = main ? 17 : 13;
+        ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]); points.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.stroke();
+        ctx.strokeStyle = "rgba(235,159,80,.15)"; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]); points.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawChamber(room, index) {
+        ctx.save();
+        ctx.translate(room.x, room.y);
+        const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, Math.max(room.rx, room.ry));
+        glow.addColorStop(0, index === 1 ? "rgba(181,104,47,.19)" : "rgba(143,87,50,.16)");
+        glow.addColorStop(1, "rgba(63,36,26,.04)");
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.ellipse(0, 0, room.rx + 12, room.ry + 12, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = index === 1 ? "rgba(69,40,27,.84)" : "rgba(56,35,26,.78)";
+        ctx.strokeStyle = "rgba(174,106,58,.5)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(0, 0, room.rx, room.ry, 0, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = "rgba(233,159,81,.16)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(0, 0, room.rx - 7, room.ry - 7, 0, 0, TAU); ctx.stroke();
+        // chamber strata / tiny scallops
+        ctx.strokeStyle = "rgba(213,137,73,.12)"; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = -room.rx + 15; x < room.rx - 10; x += 20) {
+          const y = Math.sin(x * .07 + index) * (room.ry * .54);
+          if (x === -room.rx + 15) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.fillStyle = "rgba(237,184,106,.58)"; ctx.font = "600 9px system-ui, sans-serif";
+        ctx.fillText(room.label, -room.rx + 13, -room.ry + 18);
+        ctx.fillStyle = "rgba(235,184,109,.3)"; ctx.font = "8px system-ui, sans-serif";
+        ctx.fillText(`${String(index + 1).padStart(2, "0")} / ACTIVE`, room.rx - 71, room.ry - 12);
+        ctx.restore();
+      }
+
+      function drawTrails() {
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        trails.forEach(t => {
+          const alpha = clamp(t.life / t.max, 0, 1) * t.strong;
+          ctx.fillStyle = `rgba(225,164,76,${alpha * .28})`;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 5.5 + alpha * 2, 0, TAU); ctx.fill();
+          ctx.fillStyle = `rgba(247,195,105,${alpha * .88})`;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 1.05 + alpha * .55, 0, TAU); ctx.fill();
+        });
+        // A few dashes sit on the main highway even when ants are between frames.
+        tunnels.slice(0, 2).forEach((points, pi) => {
+          ctx.strokeStyle = `rgba(224,167,81,${.12 + .05 * Math.sin(elapsed * 1.4 + pi)})`;
+          ctx.lineWidth = 1.4; ctx.setLineDash([2, 13]); ctx.lineDashOffset = -elapsed * 10;
+          ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]); points.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.stroke();
+        });
+        ctx.setLineDash([]); ctx.restore();
+      }
+
+      function drawFoodSources() {
+        foodSources.forEach((source, si) => {
+          const depleted = source.amount < 6;
+          const pulse = 1 + Math.sin(elapsed * 2 + si) * .08;
+          ctx.save(); ctx.translate(source.x, source.y);
+          if (!depleted) {
+            const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 26);
+            glow.addColorStop(0, "rgba(240,187,104,.18)"); glow.addColorStop(1, "rgba(240,187,104,0)");
+            ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, 26, 0, TAU); ctx.fill();
+            for (let i = 0; i < Math.max(3, Math.floor(source.amount / 13)); i++) {
+              const a = i * 2.41 + si; const r = (7 + (i * 5) % 9) * pulse;
+              ctx.fillStyle = i % 3 ? "#d4c98d" : "#f0d495";
+              ctx.beginPath(); ctx.ellipse(Math.cos(a) * r, Math.sin(a) * r * .58, 5, 2.8, a, 0, TAU); ctx.fill();
+              ctx.strokeStyle = "rgba(91,69,40,.5)"; ctx.lineWidth = .7; ctx.stroke();
+            }
+          } else {
+            ctx.strokeStyle = "rgba(221,172,94,.26)"; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+            ctx.beginPath(); ctx.arc(0, 0, 12, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+          }
+          ctx.fillStyle = depleted ? "rgba(228,194,126,.28)" : "rgba(243,207,140,.68)";
+          ctx.font = "8px system-ui, sans-serif"; ctx.letterSpacing = ".13em";
+          ctx.fillText(source.label, -25, 28);
+          ctx.fillStyle = "rgba(237,184,106,.37)"; ctx.font = "8px system-ui, sans-serif";
+          ctx.fillText(`${Math.round(source.amount)} UNITS`, -25, 40);
+          ctx.restore();
+        });
+      }
+
+      function drawQueenAndBrood() {
+        const room = chambers[1];
+        ctx.save();
+        // warm queen aura
+        const glow = ctx.createRadialGradient(551, 423, 3, 551, 423, 58);
+        glow.addColorStop(0, `rgba(244,179,76,${.16 + Math.sin(elapsed * 2) * .035})`);
+        glow.addColorStop(1, "rgba(244,179,76,0)");
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(551, 423, 58, 0, TAU); ctx.fill();
+        ctx.fillStyle = "rgba(230,185,114,.62)";
+        for (let i = 0; i < 18; i++) {
+          const a = i * 2.4; const r = 19 + (i % 4) * 6;
+          ctx.beginPath(); ctx.ellipse(515 + Math.cos(a) * r, 442 + Math.sin(a) * r * .45, 5, 2.2, a, 0, TAU); ctx.fill();
+        }
+        // queen body, larger than workers
+        ctx.translate(551, 423); ctx.rotate(-.15 + Math.sin(elapsed * .45) * .015);
+        ctx.fillStyle = "#171313"; ctx.strokeStyle = "rgba(239,181,89,.7)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(-14, 0, 19, 13, -.08, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = "#0f1110"; ctx.beginPath(); ctx.ellipse(10, 0, 14, 11, .08, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = "#c97b39"; ctx.beginPath(); ctx.ellipse(23, -1, 7, 7, 0, 0, TAU); ctx.fill();
+        ctx.strokeStyle = "rgba(250,201,117,.55)"; ctx.lineWidth = 1.2;
+        for (let x = -8; x <= 8; x += 8) { ctx.beginPath(); ctx.moveTo(x, -9); ctx.lineTo(x - 2, 9); ctx.stroke(); }
+        ctx.strokeStyle = "rgba(222,157,78,.55)"; ctx.lineWidth = .8;
+        ctx.beginPath(); ctx.moveTo(26, -5); ctx.quadraticCurveTo(36, -17, 43, -11); ctx.moveTo(27, 2); ctx.quadraticCurveTo(38, 12, 44, 7); ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawAnt(ant) {
+        const bob = Math.sin(elapsed * 10 + (ant.index || 0)) * .55;
+        const scaleAnt = ant.size || 1;
+        ctx.save(); ctx.translate(ant.x, ant.y + bob); ctx.rotate(ant.angle || 0); ctx.scale(scaleAnt, scaleAnt);
+        ctx.lineCap = "round";
+        // legs
+        ctx.strokeStyle = "rgba(19,14,12,.96)"; ctx.lineWidth = 1.25;
+        for (let side of [-1, 1]) {
+          for (let i = -1; i <= 1; i++) {
+            const sway = Math.sin(elapsed * 12 + i * .9 + side) * 2;
+            ctx.beginPath(); ctx.moveTo(i * 4, side * 1); ctx.quadraticCurveTo(i * 6 + sway, side * 5, i * 8 + sway, side * 7); ctx.stroke();
+          }
+        }
+        // body
+        ctx.fillStyle = ant.role === "nurse" ? "#241916" : "#161314";
+        ctx.strokeStyle = ant.role === "nurse" ? "rgba(190,142,82,.54)" : "rgba(224,159,77,.55)"; ctx.lineWidth = .8;
+        ctx.beginPath(); ctx.ellipse(-5, 0, 4.8, 4.2, 0, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(1.5, 0, 4.2, 3.7, 0, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(7, 0, 3.25, 3.1, 0, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = "rgba(242,181,88,.58)"; ctx.lineWidth = .75;
+        ctx.beginPath(); ctx.moveTo(8, -2); ctx.quadraticCurveTo(12, -7, 16, -5); ctx.moveTo(8, 2); ctx.quadraticCurveTo(13, 7, 16, 5); ctx.stroke();
+        if (ant.carrying) {
+          ctx.fillStyle = "#e0cf91"; ctx.strokeStyle = "#5e4b2e"; ctx.lineWidth = .7;
+          ctx.beginPath(); ctx.ellipse(13, -4.7, 3.7, 2.4, -.25, 0, TAU); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawMarkers() {
+        // entrance beacon
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        const beacon = 12 + Math.sin(elapsed * 2.2) * 2;
+        ctx.strokeStyle = `rgba(225,171,87,${.13 + Math.sin(elapsed * 2.2) * .04})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(exit.x, exit.y, beacon, 0, TAU); ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawPaused() {
+        ctx.save();
+        ctx.fillStyle = "rgba(10,11,10,.12)"; ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+        ctx.fillStyle = "rgba(246,206,136,.9)"; ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.letterSpacing = ".2em";
+        ctx.fillText("SIMULATION PAUSED", WORLD_W / 2, WORLD_H - 40);
+        ctx.restore();
+      }
+
+      function canvasPoint(event) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: (event.clientX - rect.left - (cssWidth - WORLD_W * scale) / 2) / scale, y: (event.clientY - rect.top - (cssHeight - WORLD_H * scale) / 2) / scale };
+      }
+
+      function addFoodAt(x, y) {
+        if (y > SURFACE + 7) return;
+        foodSources.push({ x: clamp(x, 26, 974), y: clamp(y, 45, SURFACE - 8), amount: 55, label: "NEW DROP", hue: 40 });
+        const source = foodSources[foodSources.length - 1];
+        ants.filter(a => a.role === "forager").slice(0, 4).forEach(a => { a.source = source; a.leg = "out"; a.carrying = false; a.path = makePathTo(source); a.t = 0; });
+        showToast("food marker placed");
+      }
+
+      function showToast(message) {
+        const toast = document.getElementById("toast");
+        toast.textContent = message; toast.classList.add("show");
+        clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove("show"), 1800);
+      }
+
+      document.getElementById("pauseButton").addEventListener("click", () => {
+        paused = !paused;
+        const button = document.getElementById("pauseButton");
+        button.textContent = paused ? "resume" : "pause";
+        button.setAttribute("aria-pressed", String(paused));
+        showToast(paused ? "observation frozen" : "observation resumed");
+      });
+      document.getElementById("resetButton").addEventListener("click", () => { resetWorld(); showToast("colony reset"); });
+      document.getElementById("foodButton").addEventListener("click", () => addFoodAt(rand(90, 910), rand(98, 158)));
+      canvas.addEventListener("click", event => { const point = canvasPoint(event); addFoodAt(point.x, point.y); });
+      window.addEventListener("keydown", event => {
+        if (event.code === "Space") { event.preventDefault(); document.getElementById("pauseButton").click(); }
+        if (event.key === "1" || event.key === "2" || event.key === "3") { simSpeed = Number(event.key); showToast(`${simSpeed}x time scale`); }
+        if (event.key.toLowerCase() === "f") addFoodAt(rand(90, 910), rand(98, 158));
+      });
+      window.addEventListener("resize", resize, { passive: true });
+
+      function loop(now) {
+        const dt = Math.min(.05, (now - lastFrame) / 1000 || 0);
+        lastFrame = now;
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      resetWorld();
+      resize();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+</body>
+</html>
