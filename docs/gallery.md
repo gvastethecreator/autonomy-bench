@@ -36,15 +36,15 @@ Compare fills the available stage height with 2 or 3 takes side by side. A compa
 
 ## Ranking
 
-The gallery generator writes deterministic `quality-v2` results into `catalog.json`. It reads `evaluation.json` beside every playable published take and binds each evaluation to the SHA-256 of that exact HTML artifact.
+The gallery generator reads artifact-bound `quality-v2` reviews and writes deterministic `tiered-evidence-v3` results into `catalog.json`. Each `evaluation.json` stays bound to the SHA-256 of the exact published HTML artifact.
 
-The review has two stages. First, a fixed 1440×900 browser run records load success, errors, automatic motion, interaction response, and viewport fit. Required task gates must pass. Second, a blind reviewer compares the initial, automatic, and interaction samples only against current takes from the same benchmark and level. That ordinal placement becomes an experience percentile. Clarity, motion and interaction, composition, and craft remain diagnostic facets; they are not averaged into a hidden score.
+The review has two stages. First, a fixed 1440×900 browser run records load success, errors, automatic motion, interaction response, and viewport fit. Required task gates must pass. Second, a blind reviewer compares the initial, automatic, and interaction samples only against current takes from the same benchmark and level. The review records an ordinal preference plus separate clarity, motion and interaction, composition, and craft facets.
 
-The deterministic order is: required task gates, experience percentile, task score, motion and interaction, craft, composition, clarity, then model id. Historical attempts are reviewed in a separate cohort. Incomplete takes with playable HTML are reviewed normally, while their delivery status stays separate.
+Eligible models are grouped into Pareto tiers across task success and the four quality facets. A model moves above another only when it is no worse on every signal and better on at least one. Equal or differently strong profiles remain in the same tier. Blind ordinal preference stays available for audit but cannot change the tier or row order. Stable model id makes tied rows deterministic. Historical attempts are reviewed separately. Incomplete takes with playable HTML are reviewed normally, while delivery stays separate.
 
-One review produces a provisional result. Two independent reviews, including one human review, confirm it. A model receives an aggregate scope result only after every current slot in that scope has a review. Individual leaders are recalculated from the saved evidence whenever the gallery is rebuilt.
+One review produces a provisional result. Two independent reviews, including one human review, confirm it. A model receives an aggregate tier only after every current slot in that scope has a review. A winner is published only when every current candidate is confirmed and exactly one eligible model occupies Tier 1.
 
-Task success, experience percentile, generation time, output size, delivery coverage, showcase repair status, and community votes remain separate columns and sort options. No combined quality score is published. If no reviewed takes exist, the gallery does not manufacture a podium from delivery metadata.
+Task success, quality facets, blind preference, generation time, output size, delivery coverage, showcase repair status, and community votes remain separate. The compact ranking table shows only tier, model, average generation time, audience signal, and action; the quality profile is available from the tier. No combined score or provisional podium is published.
 
 See [the evaluation protocol](../SKILLS/autonomy-bench/references/evaluation.md) and [the cell evaluation schema](../schemas/cell-evaluation.schema.json).
 

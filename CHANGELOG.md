@@ -4,10 +4,10 @@
 
 - The gallery opens on a Landing home view. A query without `mode` means landing; the brand mark returns to it, and landing is not an entry in the View picker. Quick Start rolls a random benchmark with 2 models (Compare) or 4 models (Models shootout), and benchmark cards jump into Single, Models, ABC, or Compare.
 - New Compare view: 2 or 3 takes side by side, each slot with its own model, benchmark, and A/B/C level pickers. Slots serialize to the `slots` query key, so comparisons are shareable URLs.
-- Ranking now uses artifact-bound `quality-v2` evidence. Fixed browser task gates run before blind within-cohort experience placement; task success, experience percentile, delivery, time, output size, repairs, and votes stay separate. All 157 playable takes, including incomplete and historical takes, have fresh provisional reviews. Confirmation still requires two reviewers including one human.
+- Ranking now aggregates artifact-bound `quality-v2` evidence with `tiered-evidence-v3`. Required task gates come first, non-dominated quality profiles share a tier, and blind preference remains audit-only. The compact table removes the repeated podium and winner cards. A winner now requires one unique Tier 1 plus confirmed human-inclusive reviews for the whole cohort. All 157 playable takes, including incomplete and historical takes, keep their fresh provisional reviews.
 - New Charts view: per-model token, duration, A→B→C expansion, and completion charts with a benchmark filter.
 - Models view gains an All / Only toggle above the model list plus a visible/total counter.
-- A gold NEW badge marks models and benchmarks whose first playable take landed within the last 7 days (sidebar model list, Landing bench cards, Ranking podium and table). The badge hides in compact sidebar mode.
+- A gold NEW badge marks models and benchmarks whose first playable take landed within the last 7 days (sidebar model list, Landing bench cards, and Ranking table). The badge hides in compact sidebar mode.
 - `show-take` WebMCP tool accepts the new modes. Viewer docs describe the landing default, the new views, and the `slots` key.
 - Anime.js now sequences every view exit and entrance, including eligible headings, labels, controls, and summaries. Every iframe stays on `data-src` until the current transition finishes; reload waits for its loader animation too.
 

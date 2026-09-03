@@ -48,17 +48,17 @@ Store evaluator scores separately from worker receipts. Include concise evidence
 
 Put `evaluation.json` beside the published take. Bind the evaluation to the exact `index.html` bytes with `artifactSha256`. Use `schemas/cell-evaluation.schema.json`.
 
-The public `quality-v2` ranking follows these rules:
+The public ranking reads artifact-bound `quality-v2` reviews and aggregates them with `tiered-evidence-v3`:
 
 1. Capture every playable take with the same browser viewport and observation sequence: initial state, two automatic samples, one deterministic interaction, page errors, console errors, failed requests, motion deltas, and viewport fit.
 2. Apply four required task gates before comparative ranking: the page loads, the core experience exists, the prompt's expected behavior is visible, and no blocking runtime error occurs. Viewport fit contributes to the separate task score but is not a winner gate.
-3. Compare only current takes from the same benchmark and level. Record an ordinal placement and convert it to a cohort percentile. Do not compare unlike tasks with an absolute visual grade.
-4. Keep clarity, motion and interaction, composition, and craft as 0–4 diagnostic facets. They explain a placement; they are not added into a hidden quality score.
-5. Rank deterministically by required task gates, cohort percentile, task score, motion and interaction, craft, composition, clarity, then stable model id.
+3. Compare only current takes from the same benchmark and level. Record both an ordinal preference and clarity, motion and interaction, composition, and craft as separate 0–4 facets.
+4. Assign Pareto tiers across task success and the four quality facets. One model can move above another only when it is no worse on every signal and better on at least one. This preserves real ties and avoids hidden weights.
+5. Keep blind ordinal preference in the audit record, but do not let it change a tier or the order inside one. Stable model id makes tied rows deterministic without presenting a finer quality judgment.
 6. Review historical and incomplete playable takes too, but do not let historical attempts enter the current winner cohort. Delivery status remains visible and does not change the experience review.
 7. Mark one review as provisional. Require two independent reviews, including one human review, for a confirmed result.
-8. Do not calculate an aggregate scope percentile until the model has a reviewed current take for every slot in that scope. An individual winner is the first eligible deterministic row and remains provisional until the cohort is confirmed.
+8. Do not assign an aggregate tier until the model has a reviewed current take for every slot in that scope. Publish a winner only when the whole cohort is confirmed and exactly one eligible model occupies Tier 1.
 
-Task success, experience percentile, generation time, output size, public votes, delivery coverage, and showcase repairs remain separate fields. No combined score is published.
+Task success, quality facets, blind preference, generation time, output size, public votes, delivery coverage, and showcase repairs remain separate fields. No combined score is published.
 
 This method follows two useful findings from published benchmark work. Functional browser tests provide reproducible evidence for requested behavior. Human review remains necessary to validate visual ranking. See [WebGen-Bench](https://arxiv.org/abs/2505.03733) and [Design2Code](https://arxiv.org/abs/2403.03163). Recent judge studies also show that open-ended web and visual judgments still differ from expert review. See [WebDevJudge](https://arxiv.org/abs/2510.18560) and [Visual Aesthetic Benchmark](https://arxiv.org/abs/2605.12684).

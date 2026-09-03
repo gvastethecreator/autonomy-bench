@@ -41,6 +41,12 @@ function qualityV2Evaluation(
   placement = 1,
   candidateCount = 2,
   reviewCount = 1,
+  facets = {
+    clarity: placement === 1 ? 4 : 1,
+    motionInteraction: placement === 1 ? 4 : 1,
+    composition: placement === 1 ? 4 : 1,
+    craft: placement === 1 ? 4 : 1,
+  },
 ) {
   return {
     schemaVersion: 2,
@@ -67,12 +73,7 @@ function qualityV2Evaluation(
       cohortId: 'current::bench::A::prompt-r1',
       candidateCount,
       placement,
-      facets: {
-        clarity: placement === 1 ? 4 : 1,
-        motionInteraction: placement === 1 ? 4 : 1,
-        composition: placement === 1 ? 4 : 1,
-        craft: placement === 1 ? 4 : 1,
-      },
+      facets: { ...facets },
       evidence: ['Compared the fixed samples inside the same cohort.'],
     })),
   };
@@ -381,11 +382,11 @@ describe('catalog', () => {
     const allA = catalog.evaluation.scopes.find((scope) => scope.id === 'all::A');
     expect(
       allA?.rankings.map(
-        (row: { rank: number | null; model: string; experienceScore: number | null }) => [
-          row.rank,
-          row.model,
-          row.experienceScore,
-        ],
+        (row: {
+          qualityTier: number | null;
+          model: string;
+          preferencePercentile: number | null;
+        }) => [row.qualityTier, row.model, row.preferencePercentile],
       ),
     ).toEqual([
       [1, 'model-slow-but-strong', 100],
@@ -409,6 +410,47 @@ describe('catalog', () => {
     expect(catalog.cells[0].evaluation).toBeUndefined();
   });
 
+  it('preserves a non-dominated quality tier instead of manufacturing precision', () => {
+    const makeCell = (model: string, placement: number) => {
+      const outputSha256 = model === 'model-a' ? 'a'.repeat(64) : 'b'.repeat(64);
+      const facets =
+        model === 'model-a'
+          ? { clarity: 3, motionInteraction: 3, composition: 4, craft: 4 }
+          : { clarity: 4, motionInteraction: 4, composition: 3, craft: 3 };
+      return {
+        cellId: `bench--a--${model}`,
+        model,
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-03-010000',
+        promptSha256: 'prompt',
+        outputSha256,
+        status: 'complete',
+        src: `${model}/index.html`,
+        evaluation: qualityV2Evaluation(outputSha256, placement, 2, 2, facets),
+        glance: { durationMs: 1000, showcaseFixed: false },
+      };
+    };
+    const catalog = buildCatalogFromCells([makeCell('model-z', 1), makeCell('model-a', 2)]);
+    const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
+
+    expect(
+      scope?.rankings.map(
+        (row: {
+          model: string;
+          qualityTier: number | null;
+          preferencePercentile: number | null;
+        }) => [row.model, row.qualityTier, row.preferencePercentile],
+      ),
+    ).toEqual([
+      ['model-a', 1, 0],
+      ['model-z', 1, 100],
+    ]);
+    expect(scope?.topTierCount).toBe(2);
+    expect(catalog.evaluation.winners).toEqual([]);
+  });
+
   it('leaves unreviewed takes unranked instead of using delivery metadata as quality', () => {
     const catalog = buildCatalogFromCells([
       {
@@ -428,8 +470,8 @@ describe('catalog', () => {
     const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
     expect(scope?.rankings[0]).toMatchObject({
       model: 'model-a',
-      rank: null,
-      experienceScore: null,
+      qualityTier: null,
+      preferencePercentile: null,
       reviewState: 'unreviewed',
     });
     expect(catalog.evaluation.winners).toEqual([]);
@@ -472,11 +514,19 @@ describe('catalog', () => {
     ]);
 
     const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
-    expect(scope?.rankings.map((row) => [row.rank, row.model, row.winnerEligible])).toEqual([
+    expect(
+      scope?.rankings.map(
+        (row: { qualityTier: number | null; model: string; winnerEligible: boolean }) => [
+          row.qualityTier,
+          row.model,
+          row.winnerEligible,
+        ],
+      ),
+    ).toEqual([
       [1, 'model-passing', true],
-      [2, 'model-failing', false],
+      [null, 'model-failing', false],
     ]);
-    expect(catalog.evaluation.winners[0]).toMatchObject({ model: 'model-passing' });
+    expect(catalog.evaluation.winners).toEqual([]);
   });
 
   it('ranks a reviewed playable take while keeping incomplete delivery visible', () => {
@@ -502,8 +552,8 @@ describe('catalog', () => {
     const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
     expect(scope?.rankings[0]).toMatchObject({
       model: 'model-pending',
-      rank: 1,
-      experienceScore: 100,
+      qualityTier: 1,
+      preferencePercentile: 100,
       taskScore: 100,
       completed: 0,
       possible: 1,
@@ -513,12 +563,7 @@ describe('catalog', () => {
       cellId: 'bench--a--model-pending',
       evaluationSrc: 'model-pending/bench-A/evaluation.json',
     });
-    expect(catalog.evaluation.winners[0]).toMatchObject({
-      experiment: 'bench',
-      level: 'A',
-      model: 'model-pending',
-      status: 'provisional',
-    });
+    expect(catalog.evaluation.winners).toEqual([]);
   });
 
   it('rejects a quality review when the published HTML hash changes', () => {
@@ -531,7 +576,7 @@ describe('catalog', () => {
           artifactSha256: 'b'.repeat(64),
         },
       }),
-    ).toMatchObject({ state: 'stale', experienceScore: null });
+    ).toMatchObject({ state: 'stale', preferencePercentile: null });
   });
 
   it('rejects the removed quality-v1 contract', () => {
@@ -544,7 +589,7 @@ describe('catalog', () => {
           artifactSha256: 'a'.repeat(64),
         },
       }),
-    ).toMatchObject({ state: 'invalid', experienceScore: null });
+    ).toMatchObject({ state: 'invalid', preferencePercentile: null });
   });
 
   it('evaluates only the latest prompt revision for each slot', () => {
@@ -579,12 +624,6 @@ describe('catalog', () => {
 
     const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
     expect(scope?.rankings.map((row: { model: string }) => row.model)).toEqual(['model-b']);
-    expect(catalog.evaluation.winners[0]).toMatchObject({
-      experiment: 'bench',
-      level: 'A',
-      model: 'model-b',
-      promptRevision: 2,
-      status: 'provisional',
-    });
+    expect(catalog.evaluation.winners).toEqual([]);
   });
 });

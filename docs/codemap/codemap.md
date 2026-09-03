@@ -1,18 +1,18 @@
 # Code map · autonomy-bench
 
-generated: 2026-09-03T04:57:33.2192210Z
-commit: fae036e3f7fd
+generated: 2026-09-03T19:56:34Z
+commit: 38371a561124
 scope: .
 
-counts: 6 nodes · 3 edges · 0 flows · 0 unknown
+counts: 6 nodes · 4 edges · 0 flows · 0 unknown
 
 ## Modules
 
-- `external-dependencies` · `vite.config.ts` · external · External
-  callers: vite-config (imports)
+- `external-dependencies` · `scripts/gallery-review-capture.mjs` · external · External
+  callers: scripts (imports), vite-config (imports)
   callees: (none)
   tests: (none)
-  entry: vite.config.ts:vite-plus
+  entry: scripts/gallery-review-capture.mjs:playwright-core
 
 - `repository` · `package.json` · module · Repository
   callers: (none)
@@ -22,7 +22,7 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
 
 - `scripts` · `scripts` · service · Scripts
   callers: repository (calls), workers (imports)
-  callees: (none)
+  callees: external-dependencies (imports)
   tests: test/agent-pack.test.ts, test/brands.test.ts, test/catalog.test.ts, test/cell-id.test.ts, test/cli-args.test.ts
   entry: scripts/agent-pack.mjs:buildAgentPack
 
@@ -47,6 +47,7 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
 ## Edges
 
 - repository -> scripts · calls
+- scripts -> external-dependencies · imports
 - vite-config -> external-dependencies · imports
 - workers -> scripts · imports
 

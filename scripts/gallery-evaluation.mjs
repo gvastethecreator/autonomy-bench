@@ -13,28 +13,32 @@ export const EXPERIENCE_FACETS = [
   { id: 'craft', label: 'Craft' },
 ];
 
-export const GALLERY_EVALUATION_METHOD = {
+export const CELL_EVALUATION_RUBRIC = {
+  schemaVersion: 2,
   id: 'quality-v2',
-  label: 'Comparative quality review v2',
+};
+
+export const GALLERY_EVALUATION_METHOD = {
+  id: 'tiered-evidence-v3',
+  label: 'Tiered evidence ranking',
   summary:
-    'Applies observable task gates, then ranks the experience only against current takes for the same benchmark and level.',
+    'Preserves ties between non-dominated quality profiles instead of turning one reviewer placement into a precise score.',
+  inputRubric: CELL_EVALUATION_RUBRIC,
   minimumIndependentReviews: 2,
   minimumHumanReviews: 1,
   taskChecks: TASK_CHECKS,
   experienceFacets: EXPERIENCE_FACETS,
   rankingOrder: [
     'All required task gates pass',
-    'Blind within-cohort experience percentile',
-    'Task success',
-    'Motion & interaction',
-    'Craft',
-    'Composition',
-    'Clarity',
+    'Pareto tier across task success and the four quality facets',
     'Stable model id',
   ],
+  preferenceRule: 'Blind within-cohort preference is stored for audit and never changes a tier.',
+  winnerRule: 'A winner needs a unique Tier 1 and confirmed reviews for the whole cohort.',
   keptSeparate: [
     'Task success',
-    'Experience quality',
+    'Quality facets',
+    'Blind reviewer preference',
     'Delivery coverage',
     'Generation time',
     'Output size',
@@ -45,7 +49,6 @@ export const GALLERY_EVALUATION_METHOD = {
 const LEVELS = ['A', 'B', 'C'];
 const REQUIRED_TASK_CHECKS = TASK_CHECKS.filter((check) => check.gate).map((check) => check.id);
 const CONFIRMED_REVIEW_COUNT = GALLERY_EVALUATION_METHOD.minimumIndependentReviews;
-const FACET_TIE_BREAKS = ['motionInteraction', 'craft', 'composition', 'clarity'];
 
 function roundOne(value) {
   return Math.round((Number(value) || 0) * 10) / 10;
@@ -128,7 +131,7 @@ function invalidEvaluation(state, reason) {
   return {
     state,
     reason,
-    experienceScore: null,
+    preferencePercentile: null,
     taskScore: null,
     taskPassRate: null,
     reviewCount: 0,
@@ -176,7 +179,7 @@ function validCapture(capture) {
   );
 }
 
-function experiencePercentile(review) {
+function preferencePercentile(review) {
   const count = review.candidateCount;
   if (count === 1) return 100;
   return roundOne((100 * (count - review.placement)) / (count - 1));
@@ -186,7 +189,10 @@ export function summarizeCellEvaluation(cell) {
   const evaluation = cell && cell.evaluation;
   if (cell?.evaluationError) return invalidEvaluation('invalid', cell.evaluationError);
   if (!evaluation) return invalidEvaluation('unreviewed', 'No evaluation.json file.');
-  if (evaluation.schemaVersion !== 2 || evaluation.rubric !== GALLERY_EVALUATION_METHOD.id) {
+  if (
+    evaluation.schemaVersion !== CELL_EVALUATION_RUBRIC.schemaVersion ||
+    evaluation.rubric !== CELL_EVALUATION_RUBRIC.id
+  ) {
     return invalidEvaluation('invalid', 'Unsupported evaluation schema or rubric.');
   }
 
@@ -270,7 +276,7 @@ export function summarizeCellEvaluation(cell) {
     }
   }
 
-  const experienceScore = roundOne(median(reviews.map((review) => experiencePercentile(review))));
+  const reviewPreference = roundOne(median(reviews.map((review) => preferencePercentile(review))));
   const experienceFacets = Object.fromEntries(
     EXPERIENCE_FACETS.map((facet) => [
       facet.id,
@@ -286,7 +292,7 @@ export function summarizeCellEvaluation(cell) {
         ? 'confirmed'
         : 'provisional',
     reason: '',
-    experienceScore,
+    preferencePercentile: reviewPreference,
     taskScore,
     taskPassRate,
     reviewCount: reviews.length,
@@ -297,29 +303,39 @@ export function summarizeCellEvaluation(cell) {
   };
 }
 
-function compareRankRows(a, b) {
-  if (a.winnerEligible !== b.winnerEligible) return a.winnerEligible ? -1 : 1;
-  const aExperience = Number.isFinite(a.experienceScore) ? a.experienceScore : -Infinity;
-  const bExperience = Number.isFinite(b.experienceScore) ? b.experienceScore : -Infinity;
-  if (bExperience !== aExperience) return bExperience - aExperience;
-  const aTask = Number.isFinite(a.taskScore) ? a.taskScore : -Infinity;
-  const bTask = Number.isFinite(b.taskScore) ? b.taskScore : -Infinity;
-  if (bTask !== aTask) return bTask - aTask;
-  for (const facet of FACET_TIE_BREAKS) {
-    const delta = (b.experienceFacets[facet] || 0) - (a.experienceFacets[facet] || 0);
-    if (delta) return delta;
-  }
-  return a.model.localeCompare(b.model);
+function qualityMetrics(row) {
+  return [row.taskScore, ...EXPERIENCE_FACETS.map((facet) => row.experienceFacets[facet.id])];
 }
 
-function rankSignature(row) {
-  if (!Number.isFinite(row.experienceScore)) return '';
-  return [
-    row.winnerEligible ? 1 : 0,
-    row.experienceScore,
-    row.taskScore,
-    ...FACET_TIE_BREAKS.map((facet) => row.experienceFacets[facet] || 0),
-  ].join('|');
+function dominates(a, b) {
+  const aMetrics = qualityMetrics(a);
+  const bMetrics = qualityMetrics(b);
+  return (
+    aMetrics.every((value, index) => value >= bMetrics[index]) &&
+    aMetrics.some((value, index) => value > bMetrics[index])
+  );
+}
+
+function assignQualityTiers(rows) {
+  let remaining = rows.filter((row) => row.winnerEligible);
+  let qualityTier = 1;
+  while (remaining.length) {
+    const front = remaining.filter(
+      (candidate) => !remaining.some((other) => other !== candidate && dominates(other, candidate)),
+    );
+    for (const row of front) row.qualityTier = qualityTier;
+    const frontSet = new Set(front);
+    remaining = remaining.filter((row) => !frontSet.has(row));
+    qualityTier += 1;
+  }
+}
+
+function compareRankRows(a, b) {
+  if (a.winnerEligible !== b.winnerEligible) return a.winnerEligible ? -1 : 1;
+  const aTier = Number.isFinite(a.qualityTier) ? a.qualityTier : Infinity;
+  const bTier = Number.isFinite(b.qualityTier) ? b.qualityTier : Infinity;
+  if (aTier !== bTier) return aTier - bTier;
+  return a.model.localeCompare(b.model);
 }
 
 function buildScope(cells, modelIds, experimentIds, experiment, level) {
@@ -349,11 +365,13 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
       slot,
       summary: summarizeCellEvaluation(slot.cell),
     }));
-    const reviewed = evaluations.filter(({ summary }) => Number.isFinite(summary.experienceScore));
+    const reviewed = evaluations.filter(({ summary }) =>
+      Number.isFinite(summary.preferencePercentile),
+    );
     const completeScope = verified.length === slots.length;
     const reviewedScope = reviewed.length === slots.length;
-    const experienceScore = reviewedScope
-      ? roundOne(average(reviewed.map(({ summary }) => summary.experienceScore)))
+    const preferencePercentile = reviewedScope
+      ? roundOne(average(reviewed.map(({ summary }) => summary.preferencePercentile)))
       : null;
     const taskScore = reviewedScope
       ? roundOne(average(reviewed.map(({ summary }) => summary.taskScore)))
@@ -382,6 +400,10 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
       ]),
     );
     const reviewCount = reviewed.reduce((sum, { summary }) => sum + summary.reviewCount, 0);
+    const humanReviewCount = reviewed.reduce(
+      (sum, { summary }) => sum + summary.humanReviewCount,
+      0,
+    );
     const minimumReviewCount = reviewed.length
       ? Math.min(...reviewed.map(({ summary }) => summary.reviewCount))
       : 0;
@@ -413,6 +435,7 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
       reviewed: reviewed.length,
       reviewCoveragePct: slots.length ? roundOne((reviewed.length / slots.length) * 100) : 0,
       reviewCount,
+      humanReviewCount,
       minimumReviewCount,
       reviewState,
       invalidReviewCount,
@@ -420,9 +443,10 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
       winnerEligible: reviewedScope && taskGatesPassed,
       experienceFacets,
       taskChecks,
-      experienceScore,
+      preferencePercentile,
       taskScore,
       taskPassRate,
+      qualityTier: null,
       cellId: slots.length === 1 && reviewable.length === 1 ? reviewable[0].cell.cellId || '' : '',
       evaluationSrc:
         slots.length === 1 && reviewable.length === 1
@@ -432,26 +456,16 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
     };
   });
 
+  assignQualityTiers(rows);
   const rankings = rows
     .filter((row) => row.completed > 0 || row.reviewed > 0)
-    .sort(compareRankRows)
-    .map((row) => ({ ...row, rank: null }));
-  let scoredPosition = 0;
-  let previousSignature = '';
-  let previousRank = 0;
-  for (const row of rankings) {
-    if (!Number.isFinite(row.experienceScore)) continue;
-    scoredPosition += 1;
-    const signature = rankSignature(row);
-    if (signature !== previousSignature) previousRank = scoredPosition;
-    row.rank = previousRank;
-    previousSignature = signature;
-  }
+    .sort(compareRankRows);
 
   const candidateCount = rankings.length;
   const reviewedCandidates = rankings.filter((row) => row.reviewed > 0).length;
-  const scoredCandidates = rankings.filter((row) => Number.isFinite(row.experienceScore)).length;
+  const tieredCandidates = rankings.filter((row) => Number.isFinite(row.qualityTier)).length;
   const confirmedCandidates = rankings.filter((row) => row.reviewState === 'confirmed').length;
+  const topTierCount = rankings.filter((row) => row.qualityTier === 1).length;
   return {
     id: scopeKey(experiment, level),
     experiment,
@@ -459,8 +473,9 @@ function buildScope(cells, modelIds, experimentIds, experiment, level) {
     possible: slots.length,
     candidateCount,
     reviewedCandidates,
-    scoredCandidates,
+    tieredCandidates,
     confirmedCandidates,
+    topTierCount,
     reviewComplete: candidateCount > 0 && confirmedCandidates === candidateCount,
     rankings,
   };
@@ -488,19 +503,17 @@ export function buildGalleryEvaluation(cells, experiments, models) {
   const winners = scopes
     .filter((scope) => scope.experiment !== 'all' && scope.level !== 'all')
     .map((scope) => {
-      const winner = scope.rankings.find((row) => row.rank === 1 && row.winnerEligible);
-      if (!winner) return null;
+      const topTier = scope.rankings.filter((row) => row.qualityTier === 1 && row.winnerEligible);
+      if (!scope.reviewComplete || topTier.length !== 1) return null;
+      const winner = topTier[0];
       return {
         experiment: scope.experiment,
         level: scope.level,
         model: winner.model,
-        rank: winner.rank,
-        experienceScore: winner.experienceScore,
+        qualityTier: winner.qualityTier,
+        preferencePercentile: winner.preferencePercentile,
         taskScore: winner.taskScore,
-        status:
-          scope.reviewComplete && winner.completed === winner.possible
-            ? 'confirmed'
-            : 'provisional',
+        status: 'confirmed',
         reviewedCandidates: scope.reviewedCandidates,
         candidateCount: scope.candidateCount,
         reviewCount: winner.reviewCount,
