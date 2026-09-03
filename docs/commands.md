@@ -75,6 +75,19 @@ Production votes need the same command with `--remote` after the first deploy th
 
 `--viewer` rebuilds `catalog.json` from the published gallery tree, then rewrites the viewer, helper `.mjs` files, and the Anime.js bundle.
 
+### Local quality review
+
+With the local gallery already running at `http://127.0.0.1:8093/`:
+
+```powershell
+vp run gallery:review:capture
+vp run gallery:review:sheets
+vp run gallery:review:write
+vp run gallery -- --viewer
+```
+
+Capture uses the fixed `browser-runtime-v2` sequence for every playable take. Sheets hide model names and separate current candidates from historical attempts. Write validates that every blind id appears exactly once in its benchmark-level order before it writes artifact-bound `quality-v2` files. Saved machine reviews are provisional until an independent human review is added.
+
 The viewer fetches `catalog.json`. It does not inline the catalog. Catalog cells are an index plus a short `glance` (duration, harness, contributor, limitations). Prompt text lives on `promptRevisions`. The receipt panel loads `receipt.json` on demand. Prompt revisions come from each cell's frozen `promptSha256`. Cells without a hash are not a separate revision. Dates are folder stamps. Defaults are the latest prompt revision across every month. Month is an optional filter.
 
 Do not publish folders that have only `prompt.md` or a receipt and no `index.html`. The gallery command removes those folders when it rebuilds.

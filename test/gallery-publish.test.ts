@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,62 @@ const suite = {
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), 'ab-gal-'));
+}
+
+function qualityV2Evaluation(artifactSha256: string) {
+  return {
+    schemaVersion: 2,
+    rubric: 'quality-v2',
+    artifactSha256,
+    capture: {
+      protocol: 'browser-runtime-v2',
+      capturedAt: '2026-09-03T00:00:00.000Z',
+      viewport: { width: 1440, height: 900 },
+      observationMs: 5000,
+      runtime: {
+        loads: true,
+        canvasCount: 1,
+        viewportFit: true,
+        pageErrors: [],
+        consoleErrors: [],
+        failedRequests: [],
+        document: { width: 1440, height: 900 },
+      },
+      motion: {
+        automaticChangePct: 12,
+        interactionChangePct: 6,
+        sustainedIntervals: 2,
+        sampledIntervals: 2,
+      },
+      samples: [
+        { id: 'initial', atMs: 500, imageSha256: '1'.repeat(64), nonBlankPct: 90 },
+        { id: 'automatic', atMs: 2500, imageSha256: '2'.repeat(64), nonBlankPct: 90 },
+      ],
+      evidence: ['Rendered in Chromium with a fixed observation sequence.'],
+    },
+    task: {
+      checks: {
+        loads: true,
+        coreExperience: true,
+        expectedBehavior: true,
+        runtimeStability: true,
+        viewportFit: true,
+      },
+      evidence: ['All observable task checks passed.'],
+    },
+    experienceReviews: [
+      {
+        reviewer: { id: 'blind-1', type: 'human' },
+        blind: true,
+        reviewedAt: '2026-09-03T00:00:00.000Z',
+        cohortId: 'current::rollercoaster::A::prompt-r1',
+        candidateCount: 1,
+        placement: 1,
+        facets: { clarity: 4, motionInteraction: 4, composition: 4, craft: 4 },
+        evidence: ['Compared the fixed samples inside the same cohort.'],
+      },
+    ],
+  };
 }
 
 describe('parseGalleryArgs', () => {
@@ -87,16 +144,25 @@ describe('publishRun', () => {
         avatarUrl: 'https://github.com/gvastethecreator.png',
       },
     });
+    const outputSha256 = createHash('sha256').update('<html></html>').digest('hex');
+    writeJson(
+      join(runDir, 'cells/grok-4.6/rollercoaster-A/evaluation.json'),
+      qualityV2Evaluation(outputSha256),
+    );
     const published = publishRun({ runDir, galleryDir, suite });
     expect(published.copiedHtml).toBe(1);
     expect(published.copiedReceipts).toBe(1);
     expect(published.copiedPrompts).toBe(1);
+    expect(published.copiedEvaluations).toBe(1);
     const cells = indexPublishedCells(galleryDir, suite);
     expect(cells).toHaveLength(1);
     expect(cells[0].src).toContain('index.html');
     expect(cells[0].glance.durationMs).toBe(1200);
     expect(cells[0].glance.harness).toBe('cursor');
     expect(cells[0].glance.showcaseFixed).toBe(false);
+    expect(cells[0].outputSha256).toBe(outputSha256);
+    expect(cells[0].evaluationSrc).toContain('evaluation.json');
+    expect(cells[0].evaluation.rubric).toBe('quality-v2');
     const catalog = writeCatalogFile(galleryDir, suite);
     expect(catalog.cells[0].prompt).toBeUndefined();
     expect(catalog.cells[0].receipt).toBeUndefined();

@@ -1,5 +1,5 @@
 const LEVELS = ['A', 'B', 'C'];
-const MODES = ['single', 'models', 'ladder', 'table'];
+const MODES = ['single', 'models', 'ladder', 'table', 'compare', 'landing', 'ranking', 'charts'];
 
 export function mcpText(value) {
   const structured = value && typeof value === 'object' ? value : { text: String(value ?? '') };

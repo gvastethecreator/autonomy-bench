@@ -66,9 +66,11 @@ export function yieldMain(ms = IFRAME_STAGGER_GAP_MS) {
 
 export function waitIframeSettled(iframe, options = {}) {
   const isCurrent = options.isCurrent || (() => true);
+  const canStart = options.canStart || (() => true);
   const timeoutMs = options.timeoutMs == null ? IFRAME_LOAD_TIMEOUT_MS : options.timeoutMs;
   const src = iframe.getAttribute('data-src');
   if (!src) return Promise.resolve('skip');
+  if (!canStart()) return Promise.resolve('deferred');
   return new Promise((resolve) => {
     if (!isCurrent()) {
       resolve('aborted');

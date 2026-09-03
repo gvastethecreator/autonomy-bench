@@ -197,6 +197,13 @@ describe('waitIframeSettled', () => {
     expect(await waitIframeSettled(fakeIframe(null))).toBe('skip');
   });
 
+  it('keeps src cold until the caller allows loading', async () => {
+    const iframe = fakeIframe('take/index.html');
+    expect(await waitIframeSettled(iframe, { canStart: () => false })).toBe('deferred');
+    expect(iframe.src).toBe('');
+    expect(iframe.getAttribute('data-src')).toBe('take/index.html');
+  });
+
   it('returns load when the iframe fires load', async () => {
     const iframe = fakeIframe('take/index.html');
     const pending = waitIframeSettled(iframe, { timeoutMs: 200 });

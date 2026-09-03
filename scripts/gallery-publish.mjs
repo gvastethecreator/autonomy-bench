@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { attemptFromDateFolder, cellId } from './cell-id.mjs';
 import { buildCatalogFromCells, glanceFromReceipt } from './catalog.mjs';
 import { fallbackGithubForReceipt, stampContributor } from './contributor.mjs';
@@ -142,6 +142,7 @@ export function indexPublishedCells(galleryDir, suite) {
         const htmlPath = join(cellDir, 'index.html');
         const recPath = join(cellDir, 'receipt.json');
         const promptPath = join(cellDir, 'prompt.md');
+        const evaluationPath = join(cellDir, 'evaluation.json');
         let receipt = existsSync(recPath) ? readJson(recPath) : null;
         if (receipt) {
           const stamped = stampContributor(receipt, fallbackGithubForReceipt(receipt));
@@ -150,15 +151,24 @@ export function indexPublishedCells(galleryDir, suite) {
         }
         const hasHtml = existsSync(htmlPath);
         if (!hasHtml) continue;
+        const html = readFileSync(htmlPath);
+        const outputSha256 = createHash('sha256').update(html).digest('hex');
+        let evaluation = null;
+        let evaluationError = '';
+        if (existsSync(evaluationPath)) {
+          try {
+            evaluation = readJson(evaluationPath);
+          } catch {
+            evaluationError = 'evaluation.json is not valid JSON.';
+          }
+        }
         const status = publishStatus(receipt, hasHtml);
         const rel = `${modelName}/${promptV}/${date}`;
         const experiment = receipt?.benchmarkId || parsed.benchmarkId;
         if (titles.size && experiment && !titles.has(experiment)) continue;
         const attempt = receipt?.attempt || attemptFromDateFolder(date);
         const promptSha = receipt?.promptSha256 || '';
-        const size = hasHtml
-          ? outputSizeFromHtml(readFileSync(htmlPath, 'utf8'))
-          : outputSizeFromHtml('');
+        const size = outputSizeFromHtml(html.toString('utf8'));
         cells.push({
           cellId:
             receipt?.cellId ||
@@ -181,6 +191,10 @@ export function indexPublishedCells(galleryDir, suite) {
           src: isPlayable(hasHtml, status) ? `${rel}/index.html` : null,
           receiptSrc: receipt ? `${rel}/receipt.json` : null,
           promptSrc: existsSync(promptPath) ? `${rel}/prompt.md` : null,
+          evaluationSrc: existsSync(evaluationPath) ? `${rel}/evaluation.json` : null,
+          evaluation,
+          evaluationError,
+          outputSha256,
           glance: glanceFromReceipt(receipt),
           prompt: existsSync(promptPath) ? readFileSync(promptPath, 'utf8') : '',
           outputChars: size.outputChars,
@@ -202,6 +216,7 @@ export function publishRun({ runDir, galleryDir, suite }) {
   let copiedHtml = 0;
   let copiedReceipts = 0;
   let copiedPrompts = 0;
+  let copiedEvaluations = 0;
 
   for (const cell of m.cells || []) {
     const level = String(cellField(cell, 'promptLevel')).toUpperCase();
@@ -217,6 +232,9 @@ export function publishRun({ runDir, galleryDir, suite }) {
     const htmlPath = join(runDir, cellField(cell, 'outputPath'), 'index.html');
     const recPath = join(runDir, cellField(cell, 'receiptPath'));
     const promptPath = join(runDir, cellField(cell, 'promptPath'));
+    const evaluationPath = cellField(cell, 'evaluationPath')
+      ? join(runDir, cellField(cell, 'evaluationPath'))
+      : join(dirname(recPath), 'evaluation.json');
     const hasHtml = existsSync(htmlPath);
     const receipt = existsSync(recPath) ? readJson(recPath) : null;
     const status = publishStatus(receipt, hasHtml);
@@ -245,9 +263,20 @@ export function publishRun({ runDir, galleryDir, suite }) {
       copyFileSync(promptPath, join(destDir, 'prompt.md'));
       copiedPrompts++;
     }
+    if (existsSync(evaluationPath)) {
+      copyFileSync(evaluationPath, join(destDir, 'evaluation.json'));
+      copiedEvaluations++;
+    }
   }
 
-  return { manifest: m, experimentOrder, copiedHtml, copiedReceipts, copiedPrompts };
+  return {
+    manifest: m,
+    experimentOrder,
+    copiedHtml,
+    copiedReceipts,
+    copiedPrompts,
+    copiedEvaluations,
+  };
 }
 
 export function experimentTitlesFromSuite(suite) {
@@ -290,6 +319,7 @@ export function writeCatalogFile(galleryDir, suite, extras = {}) {
 export const VIEWER_MODULES = [
   'layout.mjs',
   'cell-id.mjs',
+  'gallery-evaluation.mjs',
   'catalog.mjs',
   'model-meta.mjs',
   'run-month.mjs',

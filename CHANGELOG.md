@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- The gallery opens on a Landing home view. A query without `mode` means landing; the brand mark returns to it, and landing is not an entry in the View picker. Quick Start rolls a random benchmark with 2 models (Compare) or 4 models (Models shootout), and benchmark cards jump into Single, Models, ABC, or Compare.
+- New Compare view: 2 or 3 takes side by side, each slot with its own model, benchmark, and A/B/C level pickers. Slots serialize to the `slots` query key, so comparisons are shareable URLs.
+- Ranking now uses artifact-bound `quality-v2` evidence. Fixed browser task gates run before blind within-cohort experience placement; task success, experience percentile, delivery, time, output size, repairs, and votes stay separate. All 157 playable takes, including incomplete and historical takes, have fresh provisional reviews. Confirmation still requires two reviewers including one human.
+- New Charts view: per-model token, duration, A→B→C expansion, and completion charts with a benchmark filter.
+- Models view gains an All / Only toggle above the model list plus a visible/total counter.
+- A gold NEW badge marks models and benchmarks whose first playable take landed within the last 7 days (sidebar model list, Landing bench cards, Ranking podium and table). The badge hides in compact sidebar mode.
+- `show-take` WebMCP tool accepts the new modes. Viewer docs describe the landing default, the new views, and the `slots` key.
+- Anime.js now sequences every view exit and entrance, including eligible headings, labels, controls, and summaries. Every iframe stays on `data-src` until the current transition finishes; reload waits for its loader animation too.
+
 ## 0.7.6 — 2026-09-01
 
 - Browser Autonomy Suite v2.2.0: add two live benches with new ids: Ant Colony (`ant-colony`, `physics-simulation`) and Fireworks (`fireworks`, `minimal-creative`). Each Raw A prompt is a minimum task statement. B and C use the fixed suite-wide suffixes. Rollercoaster A stays byte-for-byte unchanged. The 31 shelved v2.0.0 benches stay shelved.

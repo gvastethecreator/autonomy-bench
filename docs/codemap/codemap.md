@@ -1,7 +1,7 @@
 # Code map · autonomy-bench
 
-generated: 2026-08-27T05:15:29Z
-commit: 7e2ba3bcf3aa
+generated: 2026-09-03T04:57:33.2192210Z
+commit: fae036e3f7fd
 scope: .
 
 counts: 6 nodes · 3 edges · 0 flows · 0 unknown
@@ -23,8 +23,8 @@ counts: 6 nodes · 3 edges · 0 flows · 0 unknown
 - `scripts` · `scripts` · service · Scripts
   callers: repository (calls), workers (imports)
   callees: (none)
-  tests: test/brands.test.ts, test/catalog.test.ts, test/cell-id.test.ts, test/contributor.test.ts, test/gallery-publish.test.ts
-  entry: scripts/bench.mjs:isoNow
+  tests: test/agent-pack.test.ts, test/brands.test.ts, test/catalog.test.ts, test/cell-id.test.ts, test/cli-args.test.ts
+  entry: scripts/agent-pack.mjs:buildAgentPack
 
 - `skills` · `SKILLS` · module · Skills
   callers: (none)

@@ -50,11 +50,69 @@ describe('gallery query', () => {
     expect([...read.hiddenModels]).toEqual(['composer-2.5']);
   });
 
-  it('defaults level to A and mode to single', () => {
+  it('defaults level to A and mode to landing', () => {
     const read = readQuery('', { filmDefault: false });
     expect(read.level).toBe('A');
-    expect(read.mode).toBe('single');
+    expect(read.mode).toBe('landing');
     expect(read.filmCompact).toBe(false);
+    expect(read.compareSlots).toEqual([]);
+  });
+
+  it('drops the mode key for the default landing view', () => {
+    const qs = writeQuery(
+      {
+        mode: 'landing',
+        experiment: 'rollercoaster',
+        level: 'A',
+        arrange: 'columns',
+        scale: 'fill',
+      },
+      { filmDefault: false },
+    );
+    expect(qs).not.toContain('mode=');
+    expect(qs).not.toContain('arrange=');
+    expect(readQuery(qs, { filmDefault: false }).mode).toBe('landing');
+  });
+
+  it('keeps an explicit single mode shareable', () => {
+    const qs = writeQuery(
+      { mode: 'single', experiment: 'rollercoaster', level: 'B', model: 'grok-4.6' },
+      { filmDefault: false },
+    );
+    expect(qs).toContain('mode=single');
+    expect(readQuery(qs, { filmDefault: false }).mode).toBe('single');
+  });
+
+  it('round-trips compare slots', () => {
+    const state = {
+      experiment: 'rollercoaster',
+      level: 'A',
+      model: 'grok-4.6',
+      mode: 'compare',
+      arrange: 'columns',
+      scale: 'fit',
+      filmCompact: false,
+      compareSlots: [
+        { model: 'grok-4.6', experiment: 'rollercoaster', level: 'A' },
+        { model: 'glm-5.3-max', experiment: 'fireworks', level: 'C' },
+        { model: 'opus-4.6', experiment: 'ant-colony', level: 'B' },
+      ],
+    };
+    const qs = writeQuery(state, { filmDefault: false });
+    expect(new URLSearchParams(qs).get('slots')).toBe(
+      'grok-4.6~rollercoaster~A,glm-5.3-max~fireworks~C,opus-4.6~ant-colony~B',
+    );
+    const read = readQuery(qs, { filmDefault: false });
+    expect(read.mode).toBe('compare');
+    expect(read.compareSlots).toEqual(state.compareSlots);
+  });
+
+  it('caps parsed compare slots at three', () => {
+    const read = readQuery(
+      'mode=compare&slots=a~rollercoaster~A,b~rollercoaster~A,c~rollercoaster~A,d~rollercoaster~A',
+      { filmDefault: false },
+    );
+    expect(read.compareSlots).toHaveLength(3);
   });
 
   it('does not leave a bare q.get in the viewer template', () => {
@@ -70,5 +128,7 @@ describe('gallery query', () => {
     expect(html).toContain('rel="alternate"');
     expect(html.includes('>Agent pack<')).toBe(false);
     expect(html).toContain('registerGalleryWebMcp');
+    expect(html).toContain('new-badge');
+    expect(html).toContain('isNewModel');
   });
 });

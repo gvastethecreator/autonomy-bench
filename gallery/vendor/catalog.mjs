@@ -1,4 +1,5 @@
 import { compareDateStamp } from './layout.mjs';
+import { buildGalleryEvaluation } from './gallery-evaluation.mjs';
 import { applyModelThinking } from './model-meta.mjs';
 import { isShowcaseFixed } from './receipt.mjs';
 import { pickCellForMonth, pickLatestCell } from './run-month.mjs';
@@ -180,6 +181,7 @@ export function buildCatalogFromCells(cells, extras = {}) {
       playable: mine.filter((cell) => cell.src).length,
     };
   });
+  const evaluation = buildGalleryEvaluation(keyed, experiments, models);
 
   return {
     generatedAt: extras.generatedAt || new Date().toISOString(),
@@ -196,8 +198,11 @@ export function buildCatalogFromCells(cells, extras = {}) {
       const next = { ...cell };
       delete next.prompt;
       delete next.receipt;
+      delete next.evaluation;
+      delete next.evaluationError;
       return next;
     }),
+    evaluation,
     staffPicks: staffPicksFromCells(keyed),
   };
 }

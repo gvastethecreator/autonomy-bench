@@ -7,6 +7,76 @@ import {
   latestDateFor,
   maxPromptRevision,
 } from '../scripts/catalog.mjs';
+import { summarizeCellEvaluation } from '../scripts/gallery-evaluation.mjs';
+
+const capturedRuntime = {
+  protocol: 'browser-runtime-v2',
+  capturedAt: '2026-09-03T00:00:00.000Z',
+  viewport: { width: 1440, height: 900 },
+  observationMs: 5000,
+  runtime: {
+    loads: true,
+    canvasCount: 1,
+    viewportFit: true,
+    pageErrors: [],
+    consoleErrors: [],
+    failedRequests: [],
+    document: { width: 1440, height: 900 },
+  },
+  motion: {
+    automaticChangePct: 12,
+    interactionChangePct: 6,
+    sustainedIntervals: 2,
+    sampledIntervals: 2,
+  },
+  samples: [
+    { id: 'initial', atMs: 500, imageSha256: '1'.repeat(64), nonBlankPct: 90 },
+    { id: 'automatic', atMs: 2500, imageSha256: '2'.repeat(64), nonBlankPct: 90 },
+  ],
+  evidence: ['Rendered in Chromium with a fixed observation sequence.'],
+};
+
+function qualityV2Evaluation(
+  artifactSha256: string,
+  placement = 1,
+  candidateCount = 2,
+  reviewCount = 1,
+) {
+  return {
+    schemaVersion: 2,
+    rubric: 'quality-v2',
+    artifactSha256,
+    capture: capturedRuntime,
+    task: {
+      checks: {
+        loads: true,
+        coreExperience: true,
+        expectedBehavior: true,
+        runtimeStability: true,
+        viewportFit: true,
+      },
+      evidence: ['All observable task checks passed.'],
+    },
+    experienceReviews: Array.from({ length: reviewCount }, (_, index) => ({
+      reviewer: {
+        id: 'reviewer-' + (index + 1),
+        type: index === 0 ? 'human' : 'multimodal-model',
+      },
+      blind: true,
+      reviewedAt: '2026-09-03T0' + index + ':00:00.000Z',
+      cohortId: 'current::bench::A::prompt-r1',
+      candidateCount,
+      placement,
+      facets: {
+        clarity: placement === 1 ? 4 : 1,
+        motionInteraction: placement === 1 ? 4 : 1,
+        composition: placement === 1 ? 4 : 1,
+        craft: placement === 1 ? 4 : 1,
+      },
+      evidence: ['Compared the fixed samples inside the same cohort.'],
+    })),
+  };
+}
 
 describe('catalog', () => {
   it('assigns prompt revisions from sha + first-seen date', () => {
@@ -239,5 +309,282 @@ describe('catalog', () => {
       })?.showcaseFixed,
     ).toBe(true);
     expect(glanceFromReceipt({ durationMs: 10 })?.showcaseFixed).toBe(false);
+  });
+
+  it('builds a deterministic quality ranking from blind artifact reviews', () => {
+    const evaluation = (artifactSha256: string, placement: number, reviewCount = 2) =>
+      qualityV2Evaluation(artifactSha256, placement, 2, reviewCount);
+    const makeCell = ({
+      model,
+      experiment,
+      level,
+      durationMs,
+      placement,
+      reviewCount = 2,
+    }: {
+      model: string;
+      experiment: string;
+      level: string;
+      durationMs: number;
+      placement: number;
+      reviewCount?: number;
+    }) => {
+      const outputSha256 = 'a'.repeat(64);
+      return {
+        cellId: `${experiment}--${level.toLowerCase()}--${model}`,
+        model,
+        experiment,
+        title: experiment,
+        level,
+        date: '2026-09-02-010000',
+        promptSha256: `${experiment}-${level}`,
+        outputSha256,
+        status: 'complete',
+        src: `${model}/${experiment}-${level}/index.html`,
+        evaluationSrc: `${model}/${experiment}-${level}/evaluation.json`,
+        evaluation: evaluation(outputSha256, placement, reviewCount),
+        receipt: { durationMs },
+        glance: { durationMs, showcaseFixed: false },
+      };
+    };
+    const catalog = buildCatalogFromCells([
+      makeCell({
+        model: 'model-fast-but-weak',
+        experiment: 'bench-one',
+        level: 'A',
+        durationMs: 1000,
+        placement: 2,
+      }),
+      makeCell({
+        model: 'model-slow-but-strong',
+        experiment: 'bench-one',
+        level: 'A',
+        durationMs: 9000,
+        placement: 1,
+      }),
+      makeCell({
+        model: 'model-fast-but-weak',
+        experiment: 'bench-two',
+        level: 'A',
+        durationMs: 1500,
+        placement: 2,
+      }),
+      makeCell({
+        model: 'model-slow-but-strong',
+        experiment: 'bench-two',
+        level: 'A',
+        durationMs: 8000,
+        placement: 1,
+      }),
+    ]);
+
+    const allA = catalog.evaluation.scopes.find((scope) => scope.id === 'all::A');
+    expect(
+      allA?.rankings.map(
+        (row: { rank: number | null; model: string; experienceScore: number | null }) => [
+          row.rank,
+          row.model,
+          row.experienceScore,
+        ],
+      ),
+    ).toEqual([
+      [1, 'model-slow-but-strong', 100],
+      [2, 'model-fast-but-weak', 0],
+    ]);
+    expect(catalog.evaluation.winners).toEqual([
+      expect.objectContaining({
+        experiment: 'bench-one',
+        level: 'A',
+        model: 'model-slow-but-strong',
+        status: 'confirmed',
+      }),
+      expect.objectContaining({
+        experiment: 'bench-two',
+        level: 'A',
+        model: 'model-slow-but-strong',
+        status: 'confirmed',
+      }),
+    ]);
+    expect(catalog.evaluation.method.keptSeparate).toContain('Generation time');
+    expect(catalog.cells[0].evaluation).toBeUndefined();
+  });
+
+  it('leaves unreviewed takes unranked instead of using delivery metadata as quality', () => {
+    const catalog = buildCatalogFromCells([
+      {
+        cellId: 'bench--a--model-a',
+        model: 'model-a',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-02-010000',
+        promptSha256: 'prompt',
+        status: 'complete',
+        src: 'model-a/bench-A/index.html',
+        glance: { durationMs: 10, showcaseFixed: false },
+      },
+    ]);
+
+    const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
+    expect(scope?.rankings[0]).toMatchObject({
+      model: 'model-a',
+      rank: null,
+      experienceScore: null,
+      reviewState: 'unreviewed',
+    });
+    expect(catalog.evaluation.winners).toEqual([]);
+  });
+
+  it('puts required task gates ahead of a higher experience placement', () => {
+    const passingHash = 'a'.repeat(64);
+    const failingHash = 'b'.repeat(64);
+    const failingEvaluation = qualityV2Evaluation(failingHash, 1, 2);
+    failingEvaluation.task.checks.expectedBehavior = false;
+    const catalog = buildCatalogFromCells([
+      {
+        cellId: 'passing',
+        model: 'model-passing',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-03-010000',
+        promptSha256: 'prompt',
+        outputSha256: passingHash,
+        status: 'complete',
+        src: 'passing/index.html',
+        evaluation: qualityV2Evaluation(passingHash, 2, 2),
+        glance: { durationMs: 2000, showcaseFixed: false },
+      },
+      {
+        cellId: 'failing',
+        model: 'model-failing',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-03-010000',
+        promptSha256: 'prompt',
+        outputSha256: failingHash,
+        status: 'complete',
+        src: 'failing/index.html',
+        evaluation: failingEvaluation,
+        glance: { durationMs: 1000, showcaseFixed: false },
+      },
+    ]);
+
+    const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
+    expect(scope?.rankings.map((row) => [row.rank, row.model, row.winnerEligible])).toEqual([
+      [1, 'model-passing', true],
+      [2, 'model-failing', false],
+    ]);
+    expect(catalog.evaluation.winners[0]).toMatchObject({ model: 'model-passing' });
+  });
+
+  it('ranks a reviewed playable take while keeping incomplete delivery visible', () => {
+    const outputSha256 = 'a'.repeat(64);
+    const catalog = buildCatalogFromCells([
+      {
+        cellId: 'bench--a--model-pending',
+        model: 'model-pending',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-02-010000',
+        promptSha256: 'prompt',
+        outputSha256,
+        status: 'pending',
+        src: 'model-pending/bench-A/index.html',
+        evaluationSrc: 'model-pending/bench-A/evaluation.json',
+        evaluation: qualityV2Evaluation(outputSha256, 1, 1),
+        glance: { durationMs: 10, showcaseFixed: false },
+      },
+    ]);
+
+    const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
+    expect(scope?.rankings[0]).toMatchObject({
+      model: 'model-pending',
+      rank: 1,
+      experienceScore: 100,
+      taskScore: 100,
+      completed: 0,
+      possible: 1,
+      completionPct: 0,
+      reviewState: 'provisional',
+      winnerEligible: true,
+      cellId: 'bench--a--model-pending',
+      evaluationSrc: 'model-pending/bench-A/evaluation.json',
+    });
+    expect(catalog.evaluation.winners[0]).toMatchObject({
+      experiment: 'bench',
+      level: 'A',
+      model: 'model-pending',
+      status: 'provisional',
+    });
+  });
+
+  it('rejects a quality review when the published HTML hash changes', () => {
+    expect(
+      summarizeCellEvaluation({
+        outputSha256: 'a'.repeat(64),
+        evaluation: {
+          schemaVersion: 2,
+          rubric: 'quality-v2',
+          artifactSha256: 'b'.repeat(64),
+        },
+      }),
+    ).toMatchObject({ state: 'stale', experienceScore: null });
+  });
+
+  it('rejects the removed quality-v1 contract', () => {
+    expect(
+      summarizeCellEvaluation({
+        outputSha256: 'a'.repeat(64),
+        evaluation: {
+          schemaVersion: 1,
+          rubric: 'quality-v1',
+          artifactSha256: 'a'.repeat(64),
+        },
+      }),
+    ).toMatchObject({ state: 'invalid', experienceScore: null });
+  });
+
+  it('evaluates only the latest prompt revision for each slot', () => {
+    const catalog = buildCatalogFromCells([
+      {
+        cellId: 'old',
+        model: 'model-a',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-01-010000',
+        promptSha256: 'old-prompt',
+        status: 'complete',
+        src: 'old/index.html',
+        glance: { durationMs: 1000, showcaseFixed: false },
+      },
+      {
+        cellId: 'current',
+        model: 'model-b',
+        experiment: 'bench',
+        title: 'Bench',
+        level: 'A',
+        date: '2026-09-02-010000',
+        promptSha256: 'current-prompt',
+        status: 'complete',
+        src: 'current/index.html',
+        outputSha256: 'b'.repeat(64),
+        evaluation: qualityV2Evaluation('b'.repeat(64), 1, 1),
+        glance: { durationMs: 2000, showcaseFixed: false },
+      },
+    ]);
+
+    const scope = catalog.evaluation.scopes.find((row) => row.id === 'bench::A');
+    expect(scope?.rankings.map((row: { model: string }) => row.model)).toEqual(['model-b']);
+    expect(catalog.evaluation.winners[0]).toMatchObject({
+      experiment: 'bench',
+      level: 'A',
+      model: 'model-b',
+      promptRevision: 2,
+      status: 'provisional',
+    });
   });
 });
