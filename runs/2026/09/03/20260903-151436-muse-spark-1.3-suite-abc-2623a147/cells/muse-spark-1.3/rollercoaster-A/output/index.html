@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>First-Person Rollercoaster</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#87bfe8;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  #hud{position:fixed;left:16px;top:14px;color:#fff;user-select:none;pointer-events:none;
+    text-shadow:0 1px 8px rgba(0,0,0,.55)}
+  #hud h1{margin:0;font-size:20px;letter-spacing:.5px}
+  #hud p{margin:4px 0 0;font-size:13px;opacity:.9}
+  #panel{position:fixed;left:16px;bottom:16px;display:flex;gap:10px;align-items:center;
+    background:rgba(10,18,30,.62);color:#fff;border:1px solid rgba(255,255,255,.18);
+    padding:10px 12px;border-radius:12px;backdrop-filter:blur(8px)}
+  #panel button{background:#ffcf3f;border:0;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer}
+  #panel button.ghost{background:rgba(255,255,255,.14);color:#fff}
+  #speed{font-variant-numeric:tabular-nums;font-weight:800;font-size:18px;min-width:132px;text-align:center}
+  #speed small{display:block;font-weight:500;font-size:11px;opacity:.8}
+  #hint{position:fixed;right:16px;bottom:16px;color:#fff;font-size:12px;background:rgba(0,0,0,.35);
+    padding:8px 10px;border-radius:10px;pointer-events:none}
+  #vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.42) 100%)}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud"><h1>🎢 Skyline Rush — First Person</h1><p>Continuous loop &bull; drag to look around &bull; speed reacts to hills</p></div>
+<div id="panel">
+  <button id="playBtn">⏸ Pause</button>
+  <button id="camBtn" class="ghost">Look: on</button>
+  <div id="speed">0 km/h<small>HEIGHT 0 m</small></div>
+</div>
+<div id="hint">Move mouse / drag to glance &bull; scroll = FOV punch</div>
+<div id="vignette"></div>
+<script type="module">
+import * as THREE from 'three';
+
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87bfe8);
+scene.fog = new THREE.Fog(0x87bfe8, 120, 520);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 2000);
+scene.add(camera);
+
+// lights
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x4a7c3a, 0.95));
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.9);
+sun.position.set(90,140,60);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-160; sun.shadow.camera.right=160;
+sun.shadow.camera.top=160; sun.shadow.camera.bottom=-160;
+sun.shadow.camera.far=500;
+scene.add(sun);
+
+// ground
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(600,64),
+  new THREE.MeshStandardMaterial({color:0x5da24a, roughness:1})
+);
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+// infield plaza
+const plaza = new THREE.Mesh(new THREE.CircleGeometry(70,48),
+  new THREE.MeshStandardMaterial({color:0x9db8a4, roughness:1}));
+plaza.rotation.x=-Math.PI/2; plaza.position.y=0.02; plaza.receiveShadow=true; scene.add(plaza);
+
+// ---- track layout ----
+const pts = [
+  [0,14, -95],[38,16,-78],[62,26,-45],[58,38,-8],[30,44,18],
+  [-8,30,38],[-42,16,52],[-68,12,22],[-74,22,-18],[-52,42,-52],
+  [-18,52,-72],[-2,34,-88]
+].map(p=>new THREE.Vector3(...p));
+const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.6);
+const trackLen = curve.getLength();
+const SEG = 900;
+const frames = curve.computeFrenetFrames(SEG, true);
+const centers=[], tangents=[], normals=[], binormals=[];
+for(let i=0;i<=SEG;i++){
+  const t=i/SEG;
+  centers.push(curve.getPointAt(t%1));
+  tangents.push(curve.getTangentAt(t%1).normalize());
+  normals.push(frames.normals[Math.min(i,SEG-1)].clone());
+  binormals.push(frames.binormals[Math.min(i,SEG-1)].clone());
+}
+// smooth banking reference: blend frenet normal toward world-up to avoid flips
+function trackFrame(t){
+  const f = Math.min(Math.floor(t*SEG), SEG-1);
+  const p = curve.getPointAt((t%1+1)%1);
+  const tan = curve.getTangentAt((t%1+1)%1).normalize();
+  let side = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0,1,0));
+  if(side.lengthSq()<1e-4) side.set(1,0,0); else side.normalize();
+  let up = new THREE.Vector3().crossVectors(side, tan).normalize();
+  // banking from horizontal turn
+  const t2=(t+0.004)%1, t0=(t-0.004+1)%1;
+  const a1=curve.getTangentAt(t0), a2=curve.getTangentAt(t2);
+  const turn = (a2.x*a1.z - a2.z*a1.x);
+  const bank = THREE.MathUtils.clamp(-turn*220, -0.65, 0.65);
+  const q = new THREE.Quaternion().setFromAxisAngle(tan, bank);
+  side = side.clone().applyQuaternion(q);
+  up = up.clone().applyQuaternion(q);
+  return {p, tan, side, up, bank};
+}
+
+// ---- rails (custom swept tubes) ----
+function buildRail(offset){
+  const gauge=1.1, tubeR=0.09, radial=8;
+  const posArr=[], normArr=[], idx=[];
+  for(let i=0;i<=SEG;i++){
+    const t=(i%SEG)/SEG;
+    const {p,tan,side,up}=trackFrame(t);
+    const c = p.clone().addScaledVector(side, offset*gauge/2).addScaledVector(up, 0.55);
+    for(let j=0;j<=radial;j++){
+      const th=j/radial*Math.PI*2;
+      const dir = up.clone().multiplyScalar(Math.cos(th)).addScaledVector(side, Math.sin(th));
+      posArr.push(c.x+dir.x*tubeR, c.y+dir.y*tubeR, c.z+dir.z*tubeR);
+      normArr.push(dir.x,dir.y,dir.z);
+    }
+  }
+  const ring=radial+1;
+  for(let i=0;i<SEG;i++) for(let j=0;j<radial;j++){
+    const a=i*ring+j, b=a+ring;
+    idx.push(a,b,a+1, b,b+1,a+1);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(posArr,3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(normArr,3));
+  g.setIndex(idx);
+  return g;
+}
+const railMat = new THREE.MeshStandardMaterial({color:0xd83a34, roughness:0.35, metalness:0.55});
+for(const s of [-1,1]){
+  const m=new THREE.Mesh(buildRail(s), railMat);
+  m.castShadow=true; scene.add(m);
+}
+// spine
+(function(){
+  const posArr=[], idx=[]; const w=0.5;
+  for(let i=0;i<=SEG;i++){
+    const t=(i%SEG)/SEG; const {p,side,up,tan}=trackFrame(t);
+    const c=p.clone().addScaledVector(up,0.15);
+    const l=c.clone().addScaledVector(side,-w), r=c.clone().addScaledVector(side,w);
+    posArr.push(l.x,l.y,l.z, r.x,r.y,r.z);
+  }
+  for(let i=0;i<SEG;i++){const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2);}
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(posArr,3));
+  g.computeVertexNormals();
+  const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0x2b2f36,roughness:.6,metalness:.4,side:THREE.DoubleSide}));
+  m.castShadow=true; scene.add(m);
+})();
+// sleepers
+{
+  const geo=new THREE.BoxGeometry(2.6,0.12,0.5);
+  const mat=new THREE.MeshStandardMaterial({color:0x3a3f47,roughness:.8});
+  const n=Math.floor(SEG/3);
+  const inst=new THREE.InstancedMesh(geo,mat,n);
+  const M=new THREE.Matrix4(), P=new THREE.Vector3(), Q=new THREE.Quaternion(), S=new THREE.Vector3(1,1,1);
+  const Z=new THREE.Vector3(0,0,1), Y=new THREE.Vector3(0,1,0);
+  for(let i=0;i<n;i++){
+    const t=(i/n)%1; const {p,tan,side,up}=trackFrame(t);
+    P.copy(p).addScaledVector(up,0.38);
+    const bx=new THREE.Vector3().copy(tan), by=new THREE.Vector3().copy(up), bz=new THREE.Vector3().copy(side);
+    M.makeBasis(bz,by,bx); M.setPosition(P);
+    inst.setMatrixAt(i,M);
+  }
+  inst.castShadow=true; scene.add(inst);
+}
+// supports
+{
+  const mat=new THREE.MeshStandardMaterial({color:0xe8e8e8,roughness:.7});
+  const g=new THREE.CylinderGeometry(0.35,0.5,1,10);
+  for(let i=0;i<SEG;i+=22){
+    const t=i/SEG; const {p}=trackFrame(t);
+    if(p.y<2) continue;
+    const h=p.y;
+    const m=new THREE.Mesh(g,mat);
+    m.scale.y=h; m.position.set(p.x,h/2,p.z); m.castShadow=true; scene.add(m);
+    const cap=new THREE.Mesh(new THREE.BoxGeometry(3,0.4,1),mat);
+    cap.position.set(p.x,p.y-0.2,p.z); scene.add(cap);
+  }
+}
+// front cart nose (attached to camera for first-person presence)
+const cart = new THREE.Group();
+{
+  const bodyMat=new THREE.MeshStandardMaterial({color:0x18202c,roughness:.4,metalness:.3});
+  const nose=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.35,2.4),bodyMat);
+  nose.position.set(0,-1.05,-1.4); cart.add(nose);
+  const rim=new THREE.Mesh(new THREE.BoxGeometry(1.54,0.12,0.2),
+    new THREE.MeshStandardMaterial({color:0xffcf3f}));
+  rim.position.set(0,-0.85,-2.55); cart.add(rim);
+  const barL=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,1.6,8),bodyMat);
+  barL.rotation.z=Math.PI/2; barL.position.set(0,-0.55,-1.9); cart.add(barL);
+  camera.add(cart);
+}
+
+// scenery: trees, clouds, flags
+function scatterTrees(n){
+  const trunkG=new THREE.CylinderGeometry(0.35,0.5,2.4,7);
+  const leafG=new THREE.ConeGeometry(2.2,5.5,8);
+  const trunkM=new THREE.MeshStandardMaterial({color:0x6b4a2b,roughness:1});
+  const leafM=new THREE.MeshStandardMaterial({color:0x2f7d32,roughness:1});
+  const trunks=new THREE.InstancedMesh(trunkG,trunkM,n);
+  const leaves=new THREE.InstancedMesh(leafG,leafM,n);
+  const M=new THREE.Matrix4(); let placed=0, guard=0;
+  while(placed<n && guard++<n*40){
+    const x=(Math.random()*2-1)*260, z=(Math.random()*2-1)*260;
+    // keep off track
+    let ok=true;
+    for(let k=0;k<24;k++){ if(curve.getPointAt(k/24).distanceTo(new THREE.Vector3(x,0,z))<14){ok=false;break;} }
+    if(!ok) continue;
+    if(Math.hypot(x,z)<75) continue;
+    const s=0.7+Math.random()*1.3;
+    M.makeScale(s,s,s); M.setPosition(x,1.2*s,z); trunks.setMatrixAt(placed,M);
+    M.makeScale(s,s,s); M.setPosition(x,(2.4+2.4)*s*0.62,z); leaves.setMatrixAt(placed,M);
+    placed++;
+  }
+  trunks.count=leaves.count=placed;
+  trunks.castShadow=leaves.castShadow=true;
+  scene.add(trunks,leaves);
+}
+scatterTrees(160);
+const clouds=[];
+for(let i=0;i<10;i++){
+  const g=new THREE.Group();
+  const m=new THREE.MeshStandardMaterial({color:0xffffff,roughness:1,transparent:true,opacity:.92});
+  for(let k=0;k<4;k++){
+    const s=new THREE.Mesh(new THREE.SphereGeometry(4+Math.random()*5,12,10),m);
+    s.position.set(k*6-9,Math.random()*2,Math.random()*4-2); s.scale.y=.55; g.add(s);
+  }
+  g.position.set((Math.random()*2-1)*350,70+Math.random()*50,(Math.random()*2-1)*350);
+  scene.add(g); clouds.push(g);
+}
+// start gate arch
+{
+  const {p}=trackFrame(0);
+  const arch=new THREE.Mesh(new THREE.TorusGeometry(7,0.7,10,24,Math.PI),
+    new THREE.MeshStandardMaterial({color:0xffcf3f}));
+  arch.position.copy(p); arch.position.y-=1; scene.add(arch);
+}
+
+// ride state
+let t=0, playing=true, lookYaw=0, lookPitch=0, targetYaw=0, targetPitch=0, fovPunch=0;
+let maxY=52, minY=12;
+const baseSpeed=26; // m/s
+const playBtn=document.getElementById('playBtn');
+const camBtn=document.getElementById('camBtn');
+const speedEl=document.getElementById('speed');
+let lookEnabled=true;
+playBtn.onclick=()=>{playing=!playing; playBtn.textContent=playing?'⏸ Pause':'▶ Ride';};
+camBtn.onclick=()=>{lookEnabled=!lookEnabled; camBtn.textContent='Look: '+(lookEnabled?'on':'off');
+  if(!lookEnabled){targetYaw=targetPitch=0;}};
+addEventListener('pointermove',e=>{
+  if(!lookEnabled||!playing&&false) return;
+  if(e.buttons===1||e.pointerType==='mouse'){
+    targetYaw=THREE.MathUtils.clamp((e.clientX/innerWidth-0.5)*1.6,-1.1,1.1);
+    targetPitch=THREE.MathUtils.clamp(-(e.clientY/innerHeight-0.5)*1.0,-0.55,0.55);
+  }
+});
+addEventListener('wheel',e=>{fovPunch=THREE.MathUtils.clamp(fovPunch+e.deltaY*0.02,-8,14);},{passive:true});
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();playBtn.click();}});
+
+const clock=new THREE.Clock();
+const tmpLook=new THREE.Vector3();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.05);
+  const fr=trackFrame(t);
+  // gravity-driven speed: faster downhill
+  const hNorm=(maxY-fr.p.y)/(maxY-minY); // 0 top .. 1 bottom
+  const speed=playing? baseSpeed*(0.62+hNorm*0.95) : 0;
+  if(playing) t=(t+dt*speed/trackLen)%1;
+  const f=trackFrame(t);
+  lookYaw+=(targetYaw-lookYaw)*Math.min(1,dt*5);
+  lookPitch+=(targetPitch-lookPitch)*Math.min(1,dt*5);
+  // eye position with rumble
+  const rumble=Math.sin(performance.now()*0.06)*0.03*(speed/baseSpeed);
+  camera.position.copy(f.p).addScaledVector(f.up,1.55);
+  camera.position.y+=rumble;
+  tmpLook.copy(f.p).addScaledVector(f.tan,12).addScaledVector(f.up,1.0);
+  // apply look-around offset
+  const yawQ=new THREE.Quaternion().setFromAxisAngle(f.up, -lookYaw);
+  const side2=f.side.clone().applyQuaternion(yawQ);
+  tmpLook.sub(camera.position).applyQuaternion(yawQ);
+  const pitchQ=new THREE.Quaternion().setFromAxisAngle(side2, lookPitch);
+  tmpLook.applyQuaternion(pitchQ).add(camera.position);
+  camera.up.copy(f.up);
+  camera.lookAt(tmpLook);
+  // dynamic fov: widen with speed + scroll punch
+  fovPunch+=(0-fovPunch)*Math.min(1,dt*2);
+  const targetFov=68+(speed/baseSpeed-0.6)*14+fovPunch;
+  camera.fov+=(targetFov-camera.fov)*Math.min(1,dt*3);
+  camera.updateProjectionMatrix();
+  clouds.forEach((c,i)=>{c.position.x+=dt*(1+i*0.15); if(c.position.x>380)c.position.x=-380;});
+  const kmh=Math.round(speed*3.6);
+  if((animate._k=(animate._k||0)+1)%6===0)
+    speedEl.innerHTML=kmh+' km/h<small>HEIGHT '+Math.round(f.p.y)+' m &bull; LAP '+Math.floor(performance.now()/1000)+'s</small>';
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ant Colony Habitat — Level C</title>
+    <style>
+      :root {
+        --bg-a: #07070f;
+        --bg-b: #0f1831;
+        --bg-c: #1b2c4b;
+        --accent-a: #7edcf5;
+        --accent-b: #ffd166;
+        --accent-c: #ffd9f0;
+        --ink: rgba(236, 246, 255, 0.92);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: radial-gradient(circle at 20% 10%, var(--bg-c), var(--bg-a));
+        color: var(--ink);
+        font-family: "Trebuchet MS", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        filter: saturate(115%);
+      }
+      #hud {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        right: 14px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+        pointer-events: none;
+        z-index: 10;
+      }
+      .panel {
+        background: rgba(12, 23, 49, 0.58);
+        border: 1px solid rgba(130, 184, 255, 0.28);
+        border-radius: 14px;
+        padding: 10px 14px;
+        backdrop-filter: blur(6px);
+        min-width: 220px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        letter-spacing: 0.04em;
+        font-size: 14px;
+        color: #edf7ff;
+        text-transform: uppercase;
+      }
+      .muted {
+        font-size: 12px;
+        color: rgba(236, 246, 255, 0.72);
+        margin-bottom: 4px;
+      }
+      .pill {
+        display: inline-block;
+        margin-top: 4px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(126, 220, 245, 0.16);
+        color: #d4f6ff;
+        font-size: 11px;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 11px;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .footnote {
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        font-size: 11px;
+        color: rgba(236, 246, 255, 0.7);
+        background: rgba(8, 16, 34, 0.55);
+        border: 1px solid rgba(130, 184, 255, 0.24);
+        border-radius: 11px;
+        padding: 6px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="colony"></canvas>
+    <div id="hud">
+      <div class="panel">
+        <h1>Ant Colony Habitat</h1>
+        <div class="muted">A small emergent behavior scene with colony, foraging, and pheromone-guided movement.</div>
+        <span class="pill">Adaptive motion · Atmospheric depth · Cohesive behavior state transitions</span>
+      </div>
+      <div class="panel">
+        <div class="muted" id="stats"></div>
+        <div class="legend">
+          <div><span class="dot" style="background: #ffd166;"></span> Food</div>
+          <div><span class="dot" style="background: #ffd9f0;"></span> Food-carrying ants</div>
+          <div><span class="dot" style="background: #6ce5d8;"></span> Nest-return trail</div>
+          <div><span class="dot" style="background: #88c2ff;"></span> Forage trail</div>
+          <div><span class="dot" style="background: #8cff9b;"></span> Nest</div>
+        </div>
+      </div>
+    </div>
+    <div class="footnote">Press <b>Space</b> to pause, <b>R</b> to restart</div>
+
+    <script>
+      const canvas = document.getElementById("colony");
+      const ctx = canvas.getContext("2d");
+      const stats = document.getElementById("stats");
+
+      let w = 0;
+      let h = 0;
+      let ants = [];
+      let nest = { x: 0, y: 0, r: 36 };
+      let foods = [];
+      let paused = false;
+      let frame = 0;
+      let totalCollected = 0;
+      let totalDrops = 0;
+
+      const settings = {
+        antCount: 180,
+        antSpeed: 0.9,
+        wander: 0.55,
+        carrySpeed: 0.78,
+        gridSize: 14,
+        foodSources: 10,
+        decay: 0.991,
+        deposit: 0.16,
+        smellRadius: 72,
+        detectionRadius: 11
+      };
+
+      function resize() {
+        w = window.innerWidth;
+        h = window.innerHeight;
+        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        nest.x = w * 0.5;
+        nest.y = h * 0.82;
+        nest.r = Math.max(24, Math.min(48, Math.min(w, h) * 0.05));
+        setupField();
+      }
+
+      function randomNear(value, range) {
+        return value + (Math.random() * 2 - 1) * range;
+      }
+
+      function setupField() {
+        cols = Math.max(64, Math.floor(w / settings.gridSize));
+        rows = Math.max(64, Math.floor(h / settings.gridSize));
+        toFood = new Float32Array(cols * rows);
+        toNest = new Float32Array(cols * rows);
+      }
+
+      let cols = 0;
+      let rows = 0;
+      let toFood = new Float32Array(0);
+      let toNest = new Float32Array(0);
+      const bgDots = Array.from({ length: 250 }, () => ({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: Math.random() * 1.5 + 0.3,
+        o: Math.random() * 0.28
+      }));
+
+      function setupFoods() {
+        foods = [];
+        const clusters = Math.max(6, settings.foodSources - 2);
+        for (let c = 0; c < clusters; c++) {
+          const cx = randomNear(w * (0.15 + Math.random() * 0.7), w * 0.12);
+          const cy = randomNear(h * 0.28, h * 0.12);
+          const radius = 36 + Math.random() * 56;
+          const grains = 28 + Math.floor(Math.random() * 16);
+          for (let i = 0; i < grains; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const dist = Math.random() * radius * Math.random();
+            foods.push({
+              x: cx + Math.cos(ang) * dist,
+              y: cy + Math.sin(ang) * dist,
+              amount: 1.5 + Math.random() * 2.2,
+              maxAmount: 3.8,
+              pulse: Math.random() * Math.PI * 2
+            });
+          }
+        }
+      }
+
+      function spawnAnts() {
+        ants = [];
+        for (let i = 0; i < settings.antCount; i++) {
+          ants.push({
+            x: nest.x + (Math.random() * 2 - 1) * nest.r * 0.8,
+            y: nest.y + (Math.random() * 2 - 1) * nest.r * 0.45,
+            angle: Math.random() * Math.PI * 2,
+            carrying: false,
+            state: "seek",
+            speed: settings.antSpeed * (0.8 + Math.random() * 0.6),
+            life: 80 + Math.random() * 80
+          });
+        }
+      }
+
+      function idx(x, y) {
+        const cx = Math.max(0, Math.min(cols - 1, Math.floor(x / settings.gridSize)));
+        const cy = Math.max(0, Math.min(rows - 1, Math.floor(y / settings.gridSize)));
+        return cy * cols + cx;
+      }
+
+      function sampleField(field, x, y) {
+        const i = idx(x, y);
+        return field[i] || 0;
+      }
+
+      function senseGradient(field, x, y, angle) {
+        const step = settings.gridSize;
+        let best = 0;
+        let dir = angle;
+        const dirs = [
+          { a: -0.7, p: 0.25 },
+          { a: -0.35, p: 0.5 },
+          { a: 0, p: 1 },
+          { a: 0.35, p: 0.5 },
+          { a: 0.7, p: 0.25 }
+        ];
+        for (const s of dirs) {
+          const a = angle + s.a;
+          const sx = x + Math.cos(a) * step * 2;
+          const sy = y + Math.sin(a) * step * 2;
+          const value = sampleField(field, sx, sy) * s.p;
+          if (value > best) {
+            best = value;
+            dir = a;
+          }
+        }
+        return dir;
+      }
+
+      function deposit(field, x, y, amount) {
+        const i = idx(x, y);
+        field[i] = Math.min(1.0, field[i] + amount);
+      }
+
+      function decayFields() {
+        for (let i = 0; i < toFood.length; i++) {
+          toFood[i] *= settings.decay;
+          toNest[i] *= settings.decay;
+        }
+      }
+
+      function findFood(x, y) {
+        let nearest = null;
+        let best = 1e9;
+        for (const f of foods) {
+          if (f.amount <= 0) continue;
+          const dx = f.x - x;
+          const dy = f.y - y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < best) {
+            best = d2;
+            nearest = f;
+          }
+        }
+        return nearest && best < settings.smellRadius * settings.smellRadius ? { food: nearest, distSq: best } : null;
+      }
+
+      function moveAnt(a) {
+        const smellField = a.carrying ? toNest : toFood;
+        const drift = senseGradient(smellField, a.x, a.y, a.angle);
+        const nestAttraction = a.carrying ? 0.8 : 0.28;
+        const foodAttraction = a.carrying ? 0.25 : 0.64;
+
+        if (Math.random() < settings.wander) {
+          a.angle += (Math.random() * 0.4 - 0.2);
+        } else {
+          a.angle += (drift - a.angle) * 0.35;
+        }
+        a.angle += (Math.random() * 0.22 - 0.11) * (a.carrying ? foodAttraction : nestAttraction);
+
+        const speed = a.speed * (a.carrying ? settings.carrySpeed : 1);
+        const vx = Math.cos(a.angle) * speed;
+        const vy = Math.sin(a.angle) * speed;
+        a.x += vx;
+        a.y += vy;
+
+        if (a.x < 14 || a.x > w - 14) {
+          a.angle = Math.PI - a.angle;
+          a.x = Math.max(14, Math.min(w - 14, a.x));
+        }
+        if (a.y < 14 || a.y > h - 14) {
+          a.angle = -a.angle;
+          a.y = Math.max(14, Math.min(h - 14, a.y));
+        }
+
+        const dNest = (a.x - nest.x) * (a.x - nest.x) + (a.y - nest.y) * (a.y - nest.y);
+
+        if (!a.carrying) {
+          deposit(toFood, a.x, a.y, settings.deposit * 0.5);
+          const near = findFood(a.x, a.y);
+          if (near && near.distSq < settings.detectionRadius * settings.detectionRadius) {
+            const f = near.food;
+            f.amount -= Math.min(0.035, f.amount);
+            if (f.amount < 0.01) {
+              f.amount = 0;
+            }
+            a.carrying = true;
+            a.state = "return";
+            totalDrops += 1;
+          }
+          if (a.state === "seek" && dNest < nest.r * nest.r && dNest > nest.r * nest.r * 0.35) {
+            a.angle += 1.3 + (Math.random() * 0.6 - 0.3);
+          }
+        } else {
+          deposit(toNest, a.x, a.y, settings.deposit);
+          if (dNest < nest.r * nest.r) {
+            a.carrying = false;
+            a.state = "seek";
+            totalCollected += 1;
+          }
+        }
+
+        a.life -= 1;
+        if (a.life <= 0) {
+          a.x = nest.x + (Math.random() * 2 - 1) * nest.r * 0.8;
+          a.y = nest.y + (Math.random() * 2 - 1) * nest.r * 0.45;
+          a.life = 120 + Math.random() * 180;
+          a.carrying = false;
+          a.state = "seek";
+        }
+      }
+
+      function drawBackdrop() {
+        const grad = ctx.createRadialGradient(w * 0.5, h * 0.2, 30, w * 0.5, h * 0.5, Math.max(w, h));
+        grad.addColorStop(0, "#112248");
+        grad.addColorStop(0.5, "#0c1831");
+        grad.addColorStop(1, "#060711");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(255,255,255,0.05)";
+        for (const p of bgDots) {
+          const ox = p.x + Math.sin((frame + p.x) * 0.002) * 4;
+          const oy = p.y + Math.cos((frame + p.y) * 0.002) * 4;
+          ctx.globalAlpha = p.o;
+          ctx.beginPath();
+          ctx.arc(ox, oy, p.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function drawNest() {
+        const glow = Math.max(4, nest.r * 0.6);
+        const nestGlow = ctx.createRadialGradient(nest.x, nest.y, nest.r * 0.1, nest.x, nest.y, nest.r + glow);
+        nestGlow.addColorStop(0, "rgba(144, 255, 205, 0.55)");
+        nestGlow.addColorStop(1, "rgba(12, 35, 86, 0)");
+        ctx.fillStyle = nestGlow;
+        ctx.beginPath();
+        ctx.arc(nest.x, nest.y, nest.r + glow, 0, Math.PI * 2);
+        ctx.fill();
+
+        const body = ctx.createRadialGradient(nest.x, nest.y, 4, nest.x, nest.y, nest.r);
+        body.addColorStop(0, "#4f5c86");
+        body.addColorStop(1, "#19253f");
+        ctx.fillStyle = body;
+        ctx.beginPath();
+        ctx.arc(nest.x, nest.y, nest.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(nest.x, nest.y, nest.r * 0.62, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      function drawFood() {
+        for (const f of foods) {
+          if (f.amount <= 0) continue;
+          const pulse = 0.85 + Math.sin(frame * 0.06 + f.pulse) * 0.14;
+          const alpha = 0.25 + Math.min(1, f.amount / f.maxAmount) * 0.52;
+          ctx.fillStyle = `rgba(255, 209, 102, ${alpha})`;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, pulse * (8 + f.amount * 5), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255, 240, 170, 0.25)";
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, pulse * (4 + f.amount * 3), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawPheromones() {
+        if (frame % 2 !== 0) return;
+        const scale = settings.gridSize;
+        for (let y = 0; y < rows; y += 2) {
+          for (let x = 0; x < cols; x += 2) {
+            const i = y * cols + x;
+            const f = toFood[i];
+            const n = toNest[i];
+            if (f <= 0.04 && n <= 0.04) continue;
+            const px = x * scale;
+            const py = y * scale;
+            const foodHeat = Math.min(0.24, f * 0.6);
+            const nestHeat = Math.min(0.24, n * 0.8);
+
+            if (foodHeat > 0.003) {
+              ctx.fillStyle = `rgba(136, 194, 255, ${foodHeat})`;
+              ctx.fillRect(px, py, scale + 1, scale + 1);
+            }
+            if (nestHeat > 0.003) {
+              ctx.fillStyle = `rgba(108, 229, 216, ${nestHeat})`;
+              ctx.fillRect(px + 1, py + 1, scale, scale);
+            }
+          }
+        }
+      }
+
+      function drawAnt(a) {
+        if (a.carrying) {
+          ctx.shadowColor = "rgba(255, 217, 240, 0.7)";
+          ctx.shadowBlur = 4;
+          ctx.fillStyle = "#ffd9f0";
+        } else {
+          ctx.shadowColor = "rgba(136, 194, 255, 0.6)";
+          ctx.shadowBlur = 3;
+          ctx.fillStyle = "#88c2ff";
+        }
+        const size = a.carrying ? 2.8 : 2.1;
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, size, 0, Math.PI * 2);
+        ctx.fill();
+        const hx = a.x + Math.cos(a.angle) * 4;
+        const hy = a.y + Math.sin(a.angle) * 4;
+        ctx.strokeStyle = "rgba(255,255,255,0.62)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(hx, hy);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+
+      function drawAtmosphere() {
+        const vignette = ctx.createLinearGradient(0, 0, 0, h);
+        vignette.addColorStop(0, "rgba(0,0,0,0)");
+        vignette.addColorStop(1, "rgba(0,0,20,0.3)");
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      function drawPauseBadge() {
+        ctx.fillStyle = "rgba(10, 14, 28, 0.54)";
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(255,255,255,0.82)";
+        ctx.font = "700 18px 'Trebuchet MS', sans-serif";
+        ctx.fillText("Paused", 16, 28);
+      }
+
+      function updateStats() {
+        const activeFood = foods.reduce((acc, f) => acc + f.amount, 0);
+        const peakFood = Math.max(...toFood, 0);
+        const peakNest = Math.max(...toNest, 0);
+        stats.innerHTML = `
+          <div class='muted'>Ants: ${ants.length}</div>
+          <div class='muted'>Carrying food: ${ants.filter((a) => a.carrying).length}</div>
+          <div class='muted'>Dropped to nest: ${totalDrops}</div>
+          <div class='muted'>Stock collected: ${totalCollected}</div>
+          <div class='muted'>Food remaining: ${activeFood.toFixed(1)}</div>
+          <div class='muted'>Trail peaks: F ${peakFood.toFixed(3)} / N ${peakNest.toFixed(3)}</div>
+        `;
+      }
+
+      function frameStep() {
+        drawBackdrop();
+        decayFields();
+        drawPheromones();
+        drawFood();
+        for (const a of ants) {
+          moveAnt(a);
+          drawAnt(a);
+        }
+        drawNest();
+        drawAtmosphere();
+        updateStats();
+        frame += 1;
+      }
+
+      function start() {
+        resize();
+        setupFoods();
+        spawnAnts();
+        totalCollected = 0;
+        totalDrops = 0;
+      }
+
+      function animate() {
+        if (!paused) {
+          frameStep();
+        } else {
+          drawPauseBadge();
+        }
+        requestAnimationFrame(animate);
+      }
+
+      document.addEventListener("keydown", (event) => {
+        if (event.code === "Space") {
+          paused = !paused;
+        }
+        if (event.key.toLowerCase() === "r") {
+          start();
+        }
+      });
+
+      window.addEventListener("resize", resize);
+      start();
+      requestAnimationFrame(animate);
+    </script>
+  </body>
+</html>
+

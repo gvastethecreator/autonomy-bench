@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ant Colony Simulation</title>
+  <style>
+    :root {
+      --bg: #05111e;
+      --ui-bg: rgba(8, 18, 32, 0.9);
+      --panel: #0d1f33;
+      --text: #d6f0ff;
+      --muted: #84a9c8;
+      --accent: #6de0c4;
+      --danger: #ff7d70;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at top, #0e1e33, var(--bg));
+      color: var(--text);
+      font-family: "Trebuchet MS", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    #canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: radial-gradient(circle at 18% 82%, #102d49, #040d17 70%);
+      cursor: crosshair;
+    }
+
+    .hud {
+      position: fixed;
+      inset: 12px auto auto 12px;
+      width: min(320px, calc(100vw - 24px));
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: var(--ui-bg);
+      border: 1px solid rgba(115, 170, 230, 0.22);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: 0.02em;
+    }
+
+    .metric {
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric b {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .chip {
+      display: inline-block;
+      margin: 8px 6px 0 0;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #001;
+      background: linear-gradient(90deg, #6de0c4, #8fd7ff);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .legend {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <aside class="hud" aria-label="Ant colony simulation controls">
+    <h1>Ant Colony Emergence</h1>
+    <div class="metric">Food found: <b id="foodFound">0</b></div>
+    <div class="metric">Food delivered: <b id="foodStored">0</b></div>
+    <div class="metric">Trail strength: <b id="trailStrength">0.0</b></div>
+    <div class="legend">
+      <span class="chip">ant trails</span>
+      <span class="chip">food</span>
+      <span class="chip">pheromone diffusion</span>
+    </div>
+    <div class="metric" style="margin-top: 8px; color:#7bc7ff">Tip: click to add food.</div>
+  </aside>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const foodFoundEl = document.getElementById('foodFound');
+    const foodStoredEl = document.getElementById('foodStored');
+    const trailEl = document.getElementById('trailStrength');
+
+    const DPR = Math.max(1, devicePixelRatio || 1);
+    const width = () => canvas.clientWidth;
+    const height = () => canvas.clientHeight;
+
+    function resize() {
+      canvas.width = Math.floor(width() * DPR);
+      canvas.height = Math.floor(height() * DPR);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    const nest = { x: 90, y: 120, radius: 14 };
+    const ants = [];
+    const antsCount = 260;
+    const food = [];
+    const obstacles = [];
+    const foodSize = 12;
+    const gridCols = 160;
+    const gridRows = 100;
+    const pheromone = [];
+    const cellw = () => width() / gridCols;
+    const cellh = () => height() / gridRows;
+
+    let storedFood = 0;
+    let foundFood = 0;
+
+    function rand(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function makeGrid() {
+      for (let y = 0; y < gridRows; y++) {
+        pheromone[y] = new Array(gridCols).fill(0);
+      }
+    }
+
+    function addFoodCluster(cx, cy, count = 6) {
+      for (let i = 0; i < count; i++) {
+        food.push({
+          x: cx + rand(-32, 32),
+          y: cy + rand(-22, 22),
+          amount: Math.ceil(rand(8, 20)),
+          radius: foodSize,
+          pulse: rand(0, Math.PI * 2),
+        });
+      }
+    }
+
+    function seedTerrain() {
+      for (let i = 0; i < 6; i++) {
+        const x = rand(0.2 * width(), width() * 0.8);
+        const y = rand(0.15 * height(), height() * 0.85);
+        obstacles.push({
+          x,
+          y,
+          r: rand(25, 70),
+        });
+      }
+
+      addFoodCluster(width() * 0.74, height() * 0.35, 9);
+      addFoodCluster(width() * 0.32, height() * 0.70, 7);
+      addFoodCluster(width() * 0.88, height() * 0.78, 8);
+      nest.x = width() * 0.12;
+      nest.y = height() * 0.68;
+    }
+
+    function addAnt() {
+      const angle = rand(0, Math.PI * 2);
+      return {
+        x: nest.x + Math.cos(angle) * rand(-6, 6),
+        y: nest.y + Math.sin(angle) * rand(-6, 6),
+        vx: Math.cos(rand(0, Math.PI * 2)),
+        vy: Math.sin(rand(0, Math.PI * 2)),
+        speed: rand(0.9, 1.35),
+        carrying: false,
+        hasFoundFoodFor: 0,
+        wander: rand(0, Math.PI * 2),
+        jitter: rand(0.15, 0.3),
+        pheromoneDrop: rand(1.8, 3.6),
+        life: rand(1800, 2300),
+        age: 0,
+      };
+    }
+
+    function seed() {
+      makeGrid();
+      seedTerrain();
+      for (let i = 0; i < antsCount; i++) ants.push(addAnt());
+    }
+
+    function toGrid(pos) {
+      return {
+        x: Math.max(0, Math.min(gridCols - 1, Math.floor(pos.x / cellw()))),
+        y: Math.max(0, Math.min(gridRows - 1, Math.floor(pos.y / cellh()))),
+      };
+    }
+
+    function samplePheromoneAt(x, y) {
+      const g = toGrid({ x, y });
+      return pheromone[g.y][g.x] || 0;
+    }
+
+    function evaporate() {
+      for (let y = 0; y < gridRows; y++) {
+        for (let x = 0; x < gridCols; x++) {
+          const v = pheromone[y][x];
+          pheromone[y][x] = Math.max(0, v * 0.984 - 0.00035);
+        }
+      }
+      if (Math.random() < 0.015) {
+        const x = Math.floor(rand(0, gridCols));
+        const y = Math.floor(rand(0, gridRows));
+        const avg =
+          (pheromone[y - 1]?.[x] || 0) +
+          (pheromone[y + 1]?.[x] || 0) +
+          (pheromone[y]?.[x - 1] || 0) +
+          (pheromone[y]?.[x + 1] || 0);
+        pheromone[y][x] += 0.06 + avg * 0.008;
+      }
+    }
+
+    function obstacleHit(a) {
+      for (const o of obstacles) {
+        const dx = a.x - o.x;
+        const dy = a.y - o.y;
+        if (dx * dx + dy * dy < (o.r + 5) * (o.r + 5)) {
+          const nx = dx === 0 ? 1 : dx;
+          const ny = dy === 0 ? 1 : dy;
+          const inv = 1 / Math.hypot(nx, ny);
+          const rvx = nx * inv;
+          const rvy = ny * inv;
+          a.vx += rvx * 0.14;
+          a.vy += rvy * 0.14;
+          a.x += rvx * (o.r + 6 - Math.hypot(dx, dy));
+          a.y += rvy * (o.r + 6 - Math.hypot(dx, dy));
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function seekDirection(a) {
+      let best = 0;
+      let vx = Math.cos(a.wander);
+      let vy = Math.sin(a.wander);
+      const dirBase = Math.atan2(a.vy, a.vx);
+      const spread = [ -0.9, -0.45, 0, 0.45, 0.9 ];
+      for (const d of spread) {
+        const a2 = dirBase + d;
+        const nx = Math.cos(a2);
+        const ny = Math.sin(a2);
+        const sx = a.x + nx * 26;
+        const sy = a.y + ny * 26;
+        const c = samplePheromoneAt(sx, sy);
+        if (c > best) {
+          best = c;
+          vx = nx;
+          vy = ny;
+        }
+      }
+      return { vx, vy, strength: best };
+    }
+
+    function updateAnt(a) {
+      a.age += 1;
+      if (a.age > a.life) {
+        Object.assign(a, addAnt());
+      }
+
+      const nearNest = dist2(a, nest) < nest.radius * nest.radius;
+      let sensedFood = null;
+      let nearest = 1e9;
+      for (const f of food) {
+        if (f.amount <= 0) continue;
+        const d = dist2(a, f);
+        if (d < nearest) {
+          nearest = d;
+          sensedFood = f;
+        }
+      }
+
+      if (!a.carrying) {
+        const look = seekDirection(a);
+        a.wander += rand(-0.5, 0.5) * a.jitter;
+        if (look.strength > 0.08) {
+          a.vx = a.vx * 0.35 + look.vx * 0.65;
+          a.vy = a.vy * 0.35 + look.vy * 0.65;
+        } else {
+          const target = dist2(a, nest) < 180 * 180 ? 0.4 : 0.65;
+          a.vx = a.vx * target + Math.cos(a.wander) * (1 - target);
+          a.vy = a.vy * target + Math.sin(a.wander) * (1 - target);
+        }
+
+        if (nearest < 22 * 22 && sensedFood.amount > 0) {
+          const eat = Math.min(1, sensedFood.amount);
+          sensedFood.amount -= eat;
+          if (sensedFood.amount <= 0.01) {
+            food.splice(food.indexOf(sensedFood), 1);
+          }
+          a.carrying = true;
+          a.hasFoundFoodFor = 0;
+          foundFood += 1;
+          foodFoundEl.textContent = String(foundFood);
+        }
+      } else {
+        const home = seekHome(a);
+        if (home) {
+          a.vx = a.vx * 0.15 + home.vx * 0.85;
+          a.vy = a.vy * 0.15 + home.vy * 0.85;
+        }
+      }
+
+      const dirLen = Math.hypot(a.vx, a.vy) || 1;
+      a.vx /= dirLen;
+      a.vy /= dirLen;
+      a.x += a.vx * a.speed;
+      a.y += a.vy * a.speed;
+
+      if (a.x < 4 || a.x > width() - 4) a.vx *= -1;
+      if (a.y < 4 || a.y > height() - 4) a.vy *= -1;
+
+      obstacleHit(a);
+
+      if (!a.carrying) {
+        dropPheromone(a, a.pheromoneDrop * 0.22);
+      } else {
+        if (dist2(a, nest) < nest.radius * nest.radius * 1.4) {
+          storedFood += 1;
+          foodStoredEl.textContent = String(storedFood);
+          a.carrying = false;
+          a.pheromoneDrop = rand(1.6, 4.1);
+          a.age = 0;
+          a.life = rand(1900, 2500);
+        } else {
+          dropPheromone(a, a.pheromoneDrop);
+        }
+      }
+    }
+
+    function seekHome(a) {
+      const angle = Math.atan2(nest.y - a.y, nest.x - a.x);
+      return { vx: Math.cos(angle), vy: Math.sin(angle) };
+    }
+
+    function dropPheromone(a, amount) {
+      const g = toGrid(a);
+      const x = g.x;
+      const y = g.y;
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const xx = x + ox;
+          const yy = y + oy;
+          if (yy >= 0 && yy < gridRows && xx >= 0 && xx < gridCols) {
+            const falloff = 1 - (Math.abs(ox) + Math.abs(oy)) * 0.2;
+            pheromone[yy][xx] += amount * falloff;
+          }
+        }
+      }
+    }
+
+    function dist2(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return dx * dx + dy * dy;
+    }
+
+    function drawPheromones() {
+      const img = ctx.createImageData(gridCols, gridRows);
+      for (let y = 0; y < gridRows; y++) {
+        for (let x = 0; x < gridCols; x++) {
+          const v = Math.min(1, pheromone[y][x]);
+          const idx = (y * gridCols + x) * 4;
+          const r = Math.floor(16 + v * 100);
+          const g = Math.floor(35 + v * 120);
+          const b = Math.floor(38 + v * 180);
+          const a = Math.floor(Math.max(0, Math.min(255, v * 180)));
+          img.data[idx] = r;
+          img.data[idx + 1] = g;
+          img.data[idx + 2] = b;
+          img.data[idx + 3] = a;
+        }
+      }
+      const off = document.createElement('canvas');
+      off.width = gridCols;
+      off.height = gridRows;
+      off.getContext('2d').putImageData(img, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(off, 0, 0, width(), height());
+    }
+
+    function drawScene() {
+      ctx.clearRect(0, 0, width(), height());
+
+      drawPheromones();
+
+      for (const o of obstacles) {
+        const grad = ctx.createRadialGradient(o.x, o.y, 6, o.x, o.y, o.r);
+        grad.addColorStop(0, '#2f1a0f');
+        grad.addColorStop(0.5, '#4c2612');
+        grad.addColorStop(1, '#120a08');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const f of food) {
+        const pulse = Math.sin(f.pulse) * 1.2 + 3;
+        f.pulse += 0.08;
+        const flick = 120 + pulse * 12;
+        ctx.fillStyle = `hsl(35, 90%, ${flick}%)`;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = 'rgba(255, 220, 150, 0.95)';
+      ctx.beginPath();
+      ctx.arc(nest.x, nest.y, nest.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (const a of ants) {
+        const c = a.carrying ? '#a8ffe8' : '#ffe48f';
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const total = pheromone.flat().reduce((acc, v) => acc + v, 0);
+      const avg = total / (gridCols * gridRows);
+      trailEl.textContent = avg.toFixed(3);
+      ctx.fillStyle = '#0d253f';
+      ctx.fillRect(0, height() - 24, width(), 24);
+      ctx.fillStyle = '#d6f0ff';
+      ctx.font = '12px Consolas, monospace';
+      ctx.fillText('click: more food', 10, height() - 8);
+    }
+
+    function addClickedFood(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      addFoodCluster(x, y, 4);
+      foundFood += 0;
+    }
+
+    function tick() {
+      for (const a of ants) updateAnt(a);
+      evaporate();
+      drawScene();
+      requestAnimationFrame(tick);
+    }
+
+    canvas.addEventListener('click', addClickedFood);
+
+    seed();
+    tick();
+  </script>
+</body>
+</html>

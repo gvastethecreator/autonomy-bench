@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>First-Person Rollercoaster Experience</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 40%, #1d2842 0%, #070915 55%, #02020b 100%);
+      font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    }
+    #hud {
+      position: fixed;
+      z-index: 10;
+      top: 14px;
+      left: 14px;
+      max-width: min(420px, 85vw);
+      padding: 12px 14px;
+      border: 1px solid rgba(148, 190, 255, 0.28);
+      background: rgba(8, 14, 24, 0.72);
+      border-radius: 12px;
+      color: #e8f1ff;
+      backdrop-filter: blur(2px);
+      font-size: 13px;
+      line-height: 1.35;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    }
+    #hud h1 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      letter-spacing: 0.03em;
+      color: #a7d2ff;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    #hud p {
+      margin: 0 0 6px 0;
+      font-size: 12px;
+      opacity: 0.95;
+    }
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #dce6ff;
+      z-index: 20;
+      background: radial-gradient(circle at center, #101d37 0%, #090e1e 55%, #05080f 100%);
+      transition: opacity 0.8s ease;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading motion…</div>
+  <div id="hud">
+    <h1>First-Person Rollercoaster</h1>
+    <p><strong>Mode:</strong> Continuous first-person loop.</p>
+    <p><strong>Mood:</strong> Electric evening dusk ride through neon canyons.</p>
+    <p><strong>Notes:</strong> Audio not used in this take. Camera is rider perspective, attached to cart front.</p>
+    <p>Tip: resize window for responsive composition; motion is tied to frame time.</p>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.162/build/three.module.js";
+
+    const loading = document.getElementById("loading");
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x15253d, 0.024);
+    scene.background = new THREE.Color(0x090d1a);
+
+    const camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, 0.05, 1200);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMappingExposure = 1.05;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const root = new THREE.Group();
+    scene.add(root);
+
+    // Atmospheric light rig.
+    const ambient = new THREE.AmbientLight(0x7a8db2, 0.35);
+    scene.add(ambient);
+    const key = new THREE.DirectionalLight(0xaed9ff, 1.1);
+    key.position.set(-12, 25, 9);
+    key.castShadow = true;
+    scene.add(key);
+    const warm = new THREE.PointLight(0xff6f5f, 1.2, 120, 1.9);
+    warm.position.set(0, 30, -40);
+    scene.add(warm);
+
+    // Procedural supports and floor.
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x2f3f5e, metalness: 0.45, roughness: 0.45 });
+    const tieMat = new THREE.MeshStandardMaterial({ color: 0x6e4a2c, roughness: 0.7, metalness: 0.2 });
+    const groundGeo = new THREE.CylinderGeometry(0.35, 0.35, 1.4, 8);
+    const supportMat = new THREE.MeshStandardMaterial({ color: 0x2f3746, metalness: 0.2, roughness: 0.65 });
+
+    const ground = new THREE.Mesh(
+      new THREE.CylinderGeometry(280, 300, 1, 18, 2, true),
+      new THREE.MeshStandardMaterial({ color: 0x0a1120, roughness: 0.85 })
+    );
+    ground.rotation.x = Math.PI / 2;
+    ground.position.y = -5;
+    ground.receiveShadow = false;
+    scene.add(ground);
+
+    // Track generation points and path.
+    const points = [];
+    for (let i = 0; i < 240; i++) {
+      const t = i / 239;
+      const angle = t * Math.PI * 16 + Math.sin(t * 9) * 0.2;
+      const radius = 34 + Math.sin(t * 7) * 6 + Math.sin((t + 0.17) * 5) * 1.6;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const y = Math.sin(t * 5) * 6 + Math.sin(t * 18) * 1.6 - Math.cos(t * 4) * 4;
+      points.push(new THREE.Vector3(x, y + 8 + Math.sin(t * 3.4) * 1.2, z));
+    }
+
+    const trackCurve = new THREE.CatmullRomCurve3(points, true, "catmullrom", 0.55);
+    const curvePoints = trackCurve.getPoints(900);
+
+    // Tunnel segments and support columns.
+    const railRadius = 0.9;
+    const supportGeo = new THREE.CylinderGeometry(0.05, 0.05, 10, 6);
+    const tunnelGeo = new THREE.TorusGeometry(0.8, 0.2, 8, 24);
+    curvePoints.forEach((point, i) => {
+      if (i % 18 === 0) {
+        const support = new THREE.Mesh(supportGeo, supportMat);
+        const base = point.clone().setY(-5);
+        support.position.copy(base);
+        support.position.y = -5 + 4.8;
+        support.scale.setScalar(1 + (i % 3) * 0.25);
+        support.rotation.z = Math.random() * Math.PI;
+        root.add(support);
+      }
+      if (i % 10 === 0) {
+        const rail = new THREE.Mesh(groundGeo, i % 20 === 0 ? tieMat : railMat);
+        rail.position.copy(point);
+        rail.lookAt(curvePoints[(i + 1) % curvePoints.length]);
+        rail.translateY(-0.65);
+        rail.translateZ(railRadius);
+        root.add(rail);
+      }
+      if (i % 22 === 0) {
+        const ring = new THREE.InstancedMesh(
+          tunnelGeo,
+          new THREE.MeshStandardMaterial({ color: 0x2b4a68, roughness: 0.35, metalness: 0.25, emissive: 0x06263f, emissiveIntensity: 0.26 }),
+          1
+        );
+        ring.position.copy(point.clone().addScalar(0));
+        ring.position.y += 1.2;
+        ring.rotation.x = Math.PI / 2;
+        root.add(ring);
+      }
+    });
+
+    // Track ties and occasional visual landmarks.
+    const tieMaterial = new THREE.MeshStandardMaterial({ color: 0x9fbdd3, emissive: 0x1e2c47, emissiveIntensity: 0.45 });
+    for (let i = 0; i < 110; i++) {
+      const p = (i / 110);
+      const q = trackCurve.getPoint(p);
+      const dir = trackCurve.getTangent(p).normalize();
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.16, 1.2), railMat);
+      rail.position.copy(q);
+      rail.position.y -= 0.5;
+      rail.lookAt(q.clone().add(dir));
+      root.add(rail);
+
+      if (i % 16 === 0) {
+        const signal = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 12, 10), tieMaterial);
+        signal.position.copy(q).add(dir.clone().multiplyScalar(4.2));
+        signal.position.y -= 3.9;
+        root.add(signal);
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12), new THREE.MeshStandardMaterial({ color: 0x5ea8ff, emissive: 0x1f66a3, emissiveIntensity: 0.9 }));
+        glow.position.copy(signal.position).setY(1);
+        root.add(glow);
+      }
+    }
+
+    // Cart assembly.
+    const cartGroup = new THREE.Group();
+    const cartBody = new THREE.Mesh(
+      new THREE.BoxGeometry(2.35, 1.0, 2.35),
+      new THREE.MeshStandardMaterial({ color: 0x172c45, metalness: 0.8, roughness: 0.28 })
+    );
+    cartBody.position.set(0, 0.35, 1.8);
+    const hood = new THREE.Mesh(
+      new THREE.BoxGeometry(2.0, 0.45, 1.4),
+      new THREE.MeshStandardMaterial({ color: 0x0f1d34, metalness: 0.9, roughness: 0.1, emissive: 0x112e4a, emissiveIntensity: 0.3 })
+    );
+    hood.position.set(0, 1.02, 2.0);
+    hood.rotation.x = -0.2;
+    cartGroup.add(hood);
+    cartGroup.add(cartBody);
+
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.18, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x22395f, metalness: 0.35, roughness: 0.2, emissive: 0x245180, emissiveIntensity: 0.45 })
+    );
+    panel.position.set(0, 0.55, 0.9);
+    cartGroup.add(panel);
+
+    const glowStrip = new THREE.Points(
+      new THREE.BufferGeometry().setFromPoints(Array.from({ length: 16 }, (_, i) => new THREE.Vector3(0, 0, i * 0.2 - 1.4))),
+      new THREE.PointsMaterial({ color: 0x66c7ff, size: 0.08, sizeAttenuation: true })
+    );
+    glowStrip.position.set(0, 0.74, 1.5);
+    cartGroup.add(glowStrip);
+
+    root.add(cartGroup);
+
+    // Camera mount on cart.
+    const riderCamera = new THREE.Object3D();
+    riderCamera.position.set(0, 0.72, 2.45);
+    riderCamera.rotation.set(-0.03, 0, 0);
+    cartGroup.add(riderCamera);
+
+    const motion = { t: 0 };
+    const speed = { value: 0.16 };
+    const shakeAmp = 0.012;
+
+    // Horizon stars and dust to sell motion.
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 800;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      starPos[i * 3 + 0] = (Math.random() - 0.5) * 500;
+      starPos[i * 3 + 1] = Math.random() * 140 - 10;
+      starPos[i * 3 + 2] = (Math.random() - 0.5) * 500;
+    }
+    starGeo.setAttribute("position", new THREE.Float32BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({ color: 0x9cc4ff, size: 0.45, sizeAttenuation: false, transparent: true, opacity: 0.65 });
+    const stars = new THREE.Points(starGeo, starMat);
+    stars.position.set(0, 20, 0);
+    scene.add(stars);
+
+    const dustGeo = new THREE.BufferGeometry();
+    const dustCount = 1400;
+    const dustPos = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      dustPos[i * 3 + 0] = (Math.random() - 0.5) * 220;
+      dustPos[i * 3 + 1] = Math.random() * 40 - 8;
+      dustPos[i * 3 + 2] = (Math.random() - 0.5) * 220;
+    }
+    dustGeo.setAttribute("position", new THREE.Float32BufferAttribute(dustPos, 3));
+    const dustMat = new THREE.PointsMaterial({ color: 0xb5d8ff, size: 0.16, transparent: true, opacity: 0.45 });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    scene.add(dust);
+
+    function updateCartAndCamera(dt) {
+      motion.t = (motion.t + speed.value * dt) % 1;
+      const p = trackCurve.getPointAt(motion.t);
+      const tangent = trackCurve.getTangentAt(motion.t).normalize();
+      const up = new THREE.Vector3(0, 1, 0);
+      const orientation = new THREE.Matrix4();
+      const at = p.clone().add(tangent);
+      orientation.lookAt(p, at, up);
+      const rot = new THREE.Euler().setFromRotationMatrix(orientation, "YXZ");
+
+      cartGroup.position.copy(p);
+      cartGroup.rotation.set(rot.x, rot.y, rot.z);
+      cartGroup.position.y += 0.4;
+
+      // Subtle ride vibration and banking.
+      riderCamera.position.z = 2.45 + Math.sin(performance.now() * 0.012) * shakeAmp;
+      riderCamera.position.y = 0.72 + Math.cos(performance.now() * 0.009) * 0.008;
+      riderCamera.rotation.z = Math.sin(performance.now() * 0.014) * 0.018;
+      cartGroup.rotation.z += Math.sin(performance.now() * 0.008) * 0.0008;
+
+      camera.position.copy(cartGroup.localToWorld(new THREE.Vector3()));
+      camera.position.add(new THREE.Vector3(
+        -Math.sin(rot.y) * 0.4,
+        0.1 + Math.sin(performance.now() * 0.001 + p.x) * 0.04,
+        -Math.cos(rot.y) * 0.4
+      ));
+      camera.quaternion.slerp(new THREE.Quaternion().setFromEuler(rot), 0.13);
+      camera.quaternion.multiply(new THREE.Quaternion().setFromEuler(riderCamera.rotation));
+      camera.lookAt(cartGroup.localToWorld(new THREE.Vector3(0, 1.0, 5)));
+    }
+
+    const clock = new THREE.Clock();
+    let last = 0;
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.08);
+      last += dt;
+      updateCartAndCamera(dt);
+
+      const time = last;
+      const baseY = -5;
+      key.position.x = Math.cos(time * 0.4) * 20;
+      key.position.z = Math.sin(time * 0.44) * 16;
+      key.intensity = 1.05 + Math.sin(time * 1.6) * 0.08;
+      warm.intensity = 1.2 + Math.cos(time * 1.1) * 0.2;
+      warm.position.z = Math.cos(time * 0.5) * 40 - 8;
+
+      stars.rotation.y = -time * 0.012;
+      dust.rotation.y = -time * 0.035;
+      const p = dust.geometry.attributes.position.array;
+      for (let i = 0; i < p.length; i += 3) {
+        p[i + 2] = ((p[i + 2] + time * 12 + 220) % 220) - 110;
+      }
+      dust.geometry.attributes.position.needsUpdate = true;
+
+      cartGroup.children.forEach((child, idx) => {
+        if (child.isMesh && child.material && child.material.emissive) {
+          const v = 0.2 + Math.sin(time * 3 + idx) * 0.06;
+          child.material.emissiveIntensity = THREE.MathUtils.clamp(v, 0.02, 0.45);
+        }
+      });
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    function resize() {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    }
+    addEventListener("resize", resize);
+
+    loading.classList.add("hidden");
+    animate();
+  </script>
+</body>
+</html>
