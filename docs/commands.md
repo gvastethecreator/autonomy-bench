@@ -61,7 +61,7 @@ vp run dev
 vp run deploy
 ```
 
-A push to `main` deploys after CI validates. Use local `vp run deploy` only when you need to publish without that push. The deploy job needs repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+Pushing to `main` runs validation only. Production deploys are manual: run the **CI** workflow from GitHub Actions with `workflow_dispatch`, or use local `vp run deploy`. The deploy job needs repository secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 `vp run bench -- gallery --run <run-id>` publishes one run. `vp run gallery` with no flags publishes every run, then rebuilds the catalog and viewer. `gallery --run` copies each publishable A/B/C take **for live suite benches** into `gallery/<model>/<prompt-V>/<fecha>/` as `index.html`, `prompt.md`, and `receipt.json`. Takes for benches that are not in the live suite are skipped. Leftover published folders for retired or shelved benches leave the public `gallery/` tree so they can be restored locally. It then rebuilds `catalog.json` from the live `gallery/` tree and writes `gallery/index.html` plus helper modules under `gallery/vendor/`.
 

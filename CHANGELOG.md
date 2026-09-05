@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Browser Autonomy Suite v2.3.0 suspends Ant Colony. Its frozen definition and 53 published takes remain in `.archives`, with hashes for all 200 files. The live suite has Rollercoaster and Fireworks at A/B/C; finalized historical runs stay intact.
+- CI keeps validation on pushes, while production deployment now runs only through a manual `workflow_dispatch` or an explicit local `vp run deploy`.
 - The global Autonomy Bench title uses 🧪. Astra Light keeps its variant id while recording `low` reasoning. Receipt details display measured Codex input, output, and cache tokens. Gallery archiving preserves model metadata and stops on an existing archive destination.
 - Document the ranking audit and the decision to report demonstrated task success with visual quality separate. The proposed evidence contract does not change or approve current scores.
 - The gallery opens on a Landing home view. A query without `mode` means landing; the brand mark returns to it, and landing is not an entry in the View picker. Quick Start rolls a random benchmark with 2 models (Compare) or 4 models (Models shootout), and benchmark cards jump into Single, Models, ABC, or Compare.

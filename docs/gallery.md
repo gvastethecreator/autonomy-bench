@@ -1,6 +1,6 @@
 # Gallery viewer
 
-Preview the public stage (`gallery/index.html`) with `vp run dev`. After you regenerate `gallery/`, commit and push to `main` so CI deploys it. Local `vp run deploy` still works.
+Preview the public stage (`gallery/index.html`) with `vp run dev`. After you regenerate `gallery/`, commit and push to `main` so CI validates it. Production deploys are manual through the **CI** workflow's `workflow_dispatch`, or with local `vp run deploy`.
 
 ## Landing
 
