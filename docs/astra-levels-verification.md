@@ -1,6 +1,6 @@
 # Astra variants, suspended Ant Colony, and gallery verification
 
-Baseline: `e925a6d`. The working tree was clean when this phase began. No commit or deployment was performed.
+Baseline: `e925a6d`. The working tree was clean when this phase began. The verification below records the state before publication.
 
 ## Scope and execution
 
@@ -8,11 +8,11 @@ Ant Colony is suspended in [.archives](../.archives/README.md). All 200 archived
 
 Thirteen fresh Astra sessions ran without overlap: the requested Max rerun, six Light cells at low reasoning, and six Medium cells. The six Ant Colony packets already frozen in the Light and Medium manifests were cancelled before dispatch. They have blocked receipts with the user suspension reason, not model failures or invented zero-cost runs.
 
-| Run | Generated | Cancelled before dispatch | Worker time | Reported tokens |
-| --- | ---: | ---: | ---: | ---: |
-| [gpt-6-astra-max](../runs/2026/09/04/20260904-215132-astra-max-rollercoaster-a-rerun-02025da9/README.md) | 1 | 0 | 1170.194 s | 1568656 |
-| [gpt-6-astra-light](../runs/2026/09/04/20260904-215133-astra-light-suite-abc-bcd32a5f/README.md) | 6 | 3 | 2027.528 s | 1075898 |
-| [gpt-6-astra-medium](../runs/2026/09/04/20260904-215134-astra-medium-suite-abc-c0eca489/README.md) | 6 | 3 | 1618.585 s | 2198458 |
+| Run                                                                                                      | Generated | Cancelled before dispatch | Worker time | Reported tokens |
+| -------------------------------------------------------------------------------------------------------- | --------: | ------------------------: | ----------: | --------------: |
+| [gpt-6-astra-max](../runs/2026/09/04/20260904-215132-astra-max-rollercoaster-a-rerun-02025da9/README.md) |         1 |                         0 |  1170.194 s |         1568656 |
+| [gpt-6-astra-light](../runs/2026/09/04/20260904-215133-astra-light-suite-abc-bcd32a5f/README.md)         |         6 |                         3 |  2027.528 s |         1075898 |
+| [gpt-6-astra-medium](../runs/2026/09/04/20260904-215134-astra-medium-suite-abc-c0eca489/README.md)       |         6 |                         3 |  1618.585 s |         2198458 |
 
 Model, reasoning, time, and tokens come from Codex session events. Each run preserves its exact suite snapshot, prompt hashes, execution records, worker reports, and raw HTML. Cached input is part of input; reasoning output is part of output. These counts are not prices. Finalization certifies terminal records and hashes, not task success or visual quality.
 
@@ -36,3 +36,11 @@ Light Rollercoaster C showed its interface without the 3D scene during the captu
 - No separate build was run: these benchmark outputs are single HTML files without a build step. Local Wrangler served the gallery for integration checks. No production check or deployment was performed.
 
 The [ranking analysis](ranking-analysis.md) and [synthetic writer probe](ranking-probe.json) record the decision to make demonstrated task success the main value, with quality separate. The scoring implementation remains a proposal; no current score was converted or approved.
+
+## Publication and follow-up
+
+Commits `731b902` and `2ab8249` were pushed to `main`. CI run `33940340267` failed at formatting in `.vscode/tasks.json` and this report, so its automatic deploy did not run. Both formatting issues were corrected locally during follow-up.
+
+The later manual deployment succeeded with Worker version `043a5e00-15e0-4b9c-aa24-3325519d61f2`. Public HTTP checks returned 200 for the gallery and catalog, with 153 takes, 36 model variants, and only Rollercoaster and Fireworks. The checked Ant Colony route returned 404. These were HTTP checks, not a new browser quality review.
+
+The workflow now permits deployment only through `workflow_dispatch`; pushes run validation. Ranking implementation remains deferred. All three Astra runs are finalized; the recorded runtime failure and browser restriction remain limitations, not unfinished generation jobs.
