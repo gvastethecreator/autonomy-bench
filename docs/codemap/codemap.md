@@ -1,7 +1,7 @@
 # Code map · autonomy-bench
 
-generated: 2026-09-03T19:56:34Z
-commit: 38371a561124
+generated: 2026-09-05T00:31:52Z
+commit: 1c56d657bb5b
 scope: .
 
 counts: 6 nodes · 4 edges · 0 flows · 0 unknown

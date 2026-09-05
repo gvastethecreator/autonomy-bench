@@ -6,7 +6,7 @@ Preview the public stage (`gallery/index.html`) with `vp run dev`. After you reg
 
 The gallery opens on the Landing view. A query without `mode` means landing; clicking the brand mark returns to it. The landing is the home screen, not an entry in the View picker.
 
-The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Each benchmark card lists its live takes and reviewed level-A quality leader when one exists, with one-click entries into Single, Models, the ABC ladder, and Compare. On ultra-wide screens the live face-off sits beside the hero and benchmark cards use the available width; the layout progressively stacks into one column on narrow screens.
+The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Benchmark cards appear before the live face-off so visitors can choose a task from the first desktop viewport. Each card shows the full raw prompt, its live takes, and its confirmed level-A winner or provisional top-tier count. Open is the primary action; Models, ABC, and Compare stay beside it. Cards stack on narrow screens. The introduction states that repairs are marked on each take.
 
 ## Layout
 
