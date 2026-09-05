@@ -42,7 +42,7 @@ Run modes:
 - `prompt-ladder`: A/B/C for the same benchmark and model. A is Raw, B adds exactly 20 words of autonomy permission, and C adds exactly 20 further words of showcase pressure.
 - `model-shootout`: several models against the same frozen prompt.
 - `matrix`: chosen benchmarks × models × attempts.
-- `suite`: every live suite benchmark. The live set is currently Rollercoaster, Ant Colony, and Fireworks.
+- `suite`: every live suite benchmark. The live set is Rollercoaster and Fireworks. Ant Colony is suspended in [`.archives`](../.archives/README.md).
 
 Adapters:
 

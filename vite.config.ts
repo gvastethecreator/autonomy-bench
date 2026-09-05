@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite-plus';
 
 const generated = [
+  '.archives/**',
   'gallery/**',
   'runs/**',
   'exports/**',

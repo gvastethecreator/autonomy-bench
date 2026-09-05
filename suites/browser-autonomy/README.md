@@ -1,8 +1,8 @@
 # Browser Autonomy Benchmark Suite
 
-Version `2.2.0` · live benches: Rollercoaster, Ant Colony, Fireworks · frozen A/B/C prompt ladder
+Version `2.3.0` · live benches: Rollercoaster, Fireworks · frozen A/B/C prompt ladder
 
-The live suite is Rollercoaster plus two benches added in v2.2.0: Ant Colony and Fireworks. Thirty-one additional v2.0.0 benches are shelved with frozen prompts. Adding a bench is the same path as before: put it in `suite.json`, publish takes, rebuild the viewer. The gallery toolbar lists every live bench, including those without published takes.
+The live suite has six cells per model. Ant Colony, added in v2.2.0, is suspended in [`.archives`](../../.archives/README.md), with its frozen prompts and published takes preserved. Finalized historical runs remain intact. Thirty-one additional v2.0.0 benches are shelved with frozen prompts. Adding a bench follows the same path: put it in `suite.json`, publish takes, rebuild the viewer. The gallery toolbar lists every live bench, including those without published takes.
 
 - **A — Raw:** minimum task statement.
 - **B — Autonomous:** A plus exactly 20 words granting explicit authority over unspecified decisions.
@@ -24,11 +24,10 @@ The suite is evaluated **showcase-first, interaction-optional**. That is an eval
 
 ## Raw prompts
 
-|   # | Benchmark                           | Category             | A — Raw prompt                                                                                     |
-| --: | ----------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------- |
-|   1 | **Rollercoaster** (`rollercoaster`) | `3d-interactive`     | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. |
-|   2 | **Ant Colony** (`ant-colony`)       | `physics-simulation` | Create an ant colony simulation in a single HTML file.                                             |
-|   3 | **Fireworks** (`fireworks`)         | `minimal-creative`   | Create a fireworks display in a single HTML file.                                                  |
+|   # | Benchmark                           | Category           | A — Raw prompt                                                                                     |
+| --: | ----------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------- |
+|   1 | **Rollercoaster** (`rollercoaster`) | `3d-interactive`   | Create a first-person rollercoaster with continuous playback in a single HTML file using Three.js. |
+|   2 | **Fireworks** (`fireworks`)         | `minimal-creative` | Create a fireworks display in a single HTML file.                                                  |
 
 ## Evaluation profile
 

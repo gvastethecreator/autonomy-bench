@@ -10,7 +10,11 @@ The compact landing hero shows gallery totals and launches a random 2-up or 4-up
 
 ## Layout
 
-The title is the desaturated experiment emoji plus `{benchmark} Bench` for the selected experiment.
+The global title uses 🧪 with `Autonomy Bench`. A selected benchmark uses its desaturated experiment emoji plus `{benchmark} Bench`.
+
+Only the live suite appears in the gallery and ranking. Ant Colony is suspended in [`.archives`](../.archives/README.md), with its definition and published takes preserved. Historical finalized runs remain intact.
+
+The Astra Light variant keeps the `gpt-6-astra-light` id and records the harness reasoning level as `low`. Token details read the measured Codex session counters, including cached input, without adding cache or reasoning output twice to the total.
 
 The left sidebar holds A/B/C prompt-level buttons and models. Compact (or `[`) collapses the sidebar to an icon rail. On narrow screens it becomes a horizontal model strip above the stage. The model list shows only models that have a generated HTML take for the selected benchmark and the current filters. A gold **new** badge marks models whose first playable take landed within the last 7 days; the same badge marks fresh benchmarks on the Landing bench cards and fresh models in Ranking (podium and table). In Models view, click a model to hide or show it. In Landing, Compare, ABC, Ranking, Charts, or Table, clicking a model opens its playable take in Single for the active benchmark and level. Above the list, a counter plus an **All / Only** button selects every model or collapses the selection to the focused model. Anime.js layout animates models that enter or leave that list.
 

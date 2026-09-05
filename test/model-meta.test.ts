@@ -62,6 +62,17 @@ describe('catalogModelKey', () => {
 });
 
 describe('applyModelThinking', () => {
+  it('keeps the Light variant id while recording its low reasoning level', () => {
+    const [cell] = applyModelThinking([
+      {
+        model: 'gpt-6-astra-light',
+        receipt: { effectiveModel: 'gpt-6-astra', reasoning: 'low' },
+      },
+    ]);
+    expect(cell.modelKey).toBe('gpt-6-astra-light');
+    expect(cell.thinking).toBe('low');
+  });
+
   it('splits one requested model with two thinking levels into two keys', () => {
     const cells = applyModelThinking([
       {
@@ -119,6 +130,18 @@ describe('formatTokenCount', () => {
 });
 
 describe('formatTokenUsage', () => {
+  it('formats the measured Codex session counters without adding cache to total', () => {
+    expect(
+      formatTokenUsage({
+        input_tokens: 1200,
+        cached_input_tokens: 1000,
+        output_tokens: 800,
+        reasoning_output_tokens: 200,
+        total_tokens: 2000,
+      }),
+    ).toBe('2k (1.2k in · 800 out · 1k cache)');
+  });
+
   it('returns empty when usage was not captured', () => {
     expect(formatTokenUsage('not captured')).toBe('');
     expect(formatTokenUsage(null)).toBe('');

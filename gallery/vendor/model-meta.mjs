@@ -4,11 +4,11 @@ const THINKING_SUFFIXES = [
   'xhigh',
   'high',
   'medium',
+  'light',
   'low',
   'max',
   'fast',
 ];
-const THINKING_SET = new Set(THINKING_SUFFIXES);
 
 function normalizeModelId(value) {
   return String(value || '')
@@ -23,9 +23,10 @@ export function parseModelThinking(id) {
     return { base: '', thinking: '' };
   }
   for (const suffix of THINKING_SUFFIXES) {
-    if (raw === suffix) return { base: '', thinking: suffix };
+    const thinking = suffix === 'light' ? 'low' : suffix;
+    if (raw === suffix) return { base: '', thinking };
     if (raw.endsWith('-' + suffix)) {
-      return { base: raw.slice(0, -(suffix.length + 1)), thinking: suffix };
+      return { base: raw.slice(0, -(suffix.length + 1)), thinking };
     }
   }
   return { base: raw, thinking: '' };
@@ -35,7 +36,7 @@ export function thinkingFromNames(requested, effective, reasoning) {
   const fromEffective = parseModelThinking(effective).thinking;
   const fromRequested = parseModelThinking(requested).thinking;
   const reason = normalizeModelId(reasoning);
-  const fromReason = THINKING_SET.has(reason) ? reason : parseModelThinking(reason).thinking;
+  const fromReason = parseModelThinking(reason).thinking;
   return fromEffective || fromRequested || fromReason || '';
 }
 
@@ -108,16 +109,29 @@ export function formatTokenUsage(value) {
     return Number.isFinite(n) ? formatTokenCount(n) : value;
   }
   if (typeof value !== 'object') return '';
-  const input = firstFinite(value, ['input', 'prompt', 'promptTokens', 'inputTokens']);
-  const output = firstFinite(value, ['output', 'completion', 'completionTokens', 'outputTokens']);
+  const input = firstFinite(value, [
+    'input',
+    'prompt',
+    'promptTokens',
+    'inputTokens',
+    'input_tokens',
+  ]);
+  const output = firstFinite(value, [
+    'output',
+    'completion',
+    'completionTokens',
+    'outputTokens',
+    'output_tokens',
+  ]);
   const cache = firstFinite(value, [
     'cache',
     'cached',
     'cacheRead',
     'cachedTokens',
     'cacheReadTokens',
+    'cached_input_tokens',
   ]);
-  let total = firstFinite(value, ['total', 'totalTokens']);
+  let total = firstFinite(value, ['total', 'totalTokens', 'total_tokens']);
   if (total == null && input != null && output != null) total = input + output;
   const parts = [];
   if (input != null) parts.push(formatTokenCount(input) + ' in');

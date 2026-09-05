@@ -53,7 +53,7 @@ describe('browser-autonomy suite', () => {
     expect(doctorSuite(suite)).toEqual([]);
     const ids = new Set<string>();
     expect(suite.id).toBe('browser-autonomy-v2');
-    expect(suite.version).toBe('2.2.0');
+    expect(suite.version).toBe('2.3.0');
     expect(suite.promptLevels.A.name).toBe('Raw');
     expect(suite.promptLevels.B.name).toBe('Autonomous');
     expect(suite.promptLevels.C.name).toBe('Showcase');
@@ -65,10 +65,9 @@ describe('browser-autonomy suite', () => {
       expect(String(benchmark.prompts?.B || '').trim().length).toBeGreaterThan(0);
       expect(String(benchmark.prompts?.C || '').trim().length).toBeGreaterThan(0);
     }
-    expect(suite.benchmarks).toHaveLength(3);
+    expect(suite.benchmarks).toHaveLength(2);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).toEqual([
       'rollercoaster',
-      'ant-colony',
       'fireworks',
     ]);
     expect(suite.benchmarks.map((benchmark: { id: string }) => benchmark.id)).not.toContain(
@@ -116,9 +115,11 @@ describe('browser-autonomy suite', () => {
     );
   });
 
-  it('keeps the v2.2.0 Raw A prompts byte-for-byte unchanged', () => {
+  it('keeps the live and suspended v2.2.0 prompts unchanged', () => {
+    const archived = loadSuite(join(root, '.archives', 'ant-colony', 'suite-v2.2.0.json'));
+    expect(doctorSuite(archived)).toEqual([]);
     const rawA = Object.fromEntries(
-      suite.benchmarks.map((benchmark: { id: string; prompts: { A: string } }) => [
+      archived.benchmarks.map((benchmark: { id: string; prompts: { A: string } }) => [
         benchmark.id,
         benchmark.prompts.A,
       ]),
@@ -126,6 +127,11 @@ describe('browser-autonomy suite', () => {
 
     expect(rawA['ant-colony']).toBe('Create an ant colony simulation in a single HTML file.');
     expect(rawA.fireworks).toBe('Create a fireworks display in a single HTML file.');
+    for (const benchmark of suite.benchmarks) {
+      expect(benchmark.prompts).toEqual(
+        archived.benchmarks.find((row: { id: string }) => row.id === benchmark.id).prompts,
+      );
+    }
   });
 
   it('declares the expanded evaluation profile', () => {

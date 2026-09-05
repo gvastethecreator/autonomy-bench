@@ -7,7 +7,7 @@ import { loadSuite } from './suite.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GALLERY = join(ROOT, 'gallery');
-const GALLERY_ARCHIVE = join(ROOT, '.scratch', 'archive', 'gallery');
+const GALLERY_ARCHIVE = join(ROOT, '.archives', 'gallery');
 const ANIME_BUNDLE = join(ROOT, 'node_modules', 'animejs', 'dist', 'bundles', 'anime.esm.min.js');
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 

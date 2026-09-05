@@ -307,7 +307,7 @@ describe('publishRun', () => {
     expect(indexPublishedCells(galleryDir, suite)).toEqual([]);
   });
 
-  it('removes retired benchmark folders', () => {
+  it('removes retired benchmark folders and preserves model metadata', () => {
     const galleryDir = tempDir();
     mkdirSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000'), {
       recursive: true,
@@ -316,7 +316,10 @@ describe('publishRun', () => {
       join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000', 'index.html'),
       '<html></html>',
     );
+    const attributes = join(galleryDir, 'grok-4.6', '.gitattributes');
+    writeFileSync(attributes, '**/index.html -text\n');
     expect(stripRetiredGalleryBenchmarks(galleryDir, suite)).toBe(1);
+    expect(readFileSync(attributes, 'utf8')).toBe('**/index.html -text\n');
   });
 
   it('moves retired benchmark folders into an archive instead of deleting them', () => {
@@ -336,6 +339,20 @@ describe('publishRun', () => {
       ),
     ).toBe(true);
     expect(existsSync(join(galleryDir, 'grok-4.6', 'terrain-explorer-A'))).toBe(false);
+
+    const restored = join(galleryDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000');
+    mkdirSync(restored, { recursive: true });
+    writeFileSync(join(restored, 'index.html'), '<html>another take</html>');
+    expect(() => stripRetiredGalleryBenchmarks(galleryDir, suite, archiveDir)).toThrow(
+      'Archive destination already exists',
+    );
+    expect(readFileSync(join(restored, 'index.html'), 'utf8')).toBe('<html>another take</html>');
+    expect(
+      readFileSync(
+        join(archiveDir, 'grok-4.6', 'terrain-explorer-A', '2026-08-21-000000', 'index.html'),
+        'utf8',
+      ),
+    ).toBe('<html></html>');
   });
 
   it('writes .nojekyll and serve.json when finishing a gallery', () => {

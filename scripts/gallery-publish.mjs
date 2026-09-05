@@ -98,17 +98,16 @@ export function stripRetiredGalleryBenchmarks(galleryDir, suite, archiveDir = ''
     const modelDir = join(galleryDir, modelName);
     if (!statSync(modelDir).isDirectory()) continue;
     for (const promptV of readdirSync(modelDir)) {
+      const src = join(modelDir, promptV);
+      if (!statSync(src).isDirectory()) continue;
       const parsed = parsePromptVersion(promptV);
       const id = parsed.benchmarkId;
       if (!id || known.has(id)) continue;
-      const src = join(modelDir, promptV);
       if (archiveDir) {
         const dest = join(archiveDir, modelName, promptV);
-        if (existsSync(dest)) rmSync(src, { recursive: true, force: true });
-        else {
-          ensureDir(join(archiveDir, modelName));
-          renameSync(src, dest);
-        }
+        if (existsSync(dest)) throw new Error(`Archive destination already exists: ${dest}`);
+        ensureDir(join(archiveDir, modelName));
+        renameSync(src, dest);
       } else {
         rmSync(src, { recursive: true, force: true });
       }
