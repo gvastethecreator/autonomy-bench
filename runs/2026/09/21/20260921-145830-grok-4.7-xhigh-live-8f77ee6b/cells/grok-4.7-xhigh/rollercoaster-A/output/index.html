@@ -1,0 +1,2197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16325c">
+<title>First Light — Continuous Rollercoaster</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #16325c;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  body.dragging canvas { cursor: grabbing; }
+  #boot {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: #16325c;
+    color: #fff6ec;
+    font: 500 18px "Segoe UI", system-ui, sans-serif;
+    text-align: center;
+  }
+  #vignette {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(18, 10, 8, 0.38) 100%);
+  }
+  #hud {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    color: #fff8f2;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  }
+  #title {
+    position: absolute;
+    top: max(22px, env(safe-area-inset-top));
+    left: max(22px, env(safe-area-inset-left));
+    max-width: min(420px, calc(100vw - 44px));
+    transition: opacity 1.6s ease;
+  }
+  #title.is-quiet { opacity: 0; }
+  #title .kicker {
+    margin: 0 0 4px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    opacity: 0.85;
+  }
+  #title h1 {
+    margin: 0;
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 720;
+    letter-spacing: -0.04em;
+    line-height: 0.95;
+  }
+  #title p {
+    margin: 8px 0 0;
+    max-width: 34em;
+    font-size: 14px;
+    line-height: 1.4;
+    opacity: 0.9;
+  }
+  #speed {
+    position: absolute;
+    left: max(22px, env(safe-area-inset-left));
+    bottom: max(22px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  #lap {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.8;
+  }
+  #speed-val {
+    font-size: clamp(46px, 8vw, 72px);
+    font-weight: 730;
+    letter-spacing: -0.045em;
+    line-height: 0.86;
+    font-variant-numeric: tabular-nums;
+  }
+  #speed-val small {
+    margin-left: 6px;
+    font-size: 0.34em;
+    letter-spacing: 0.04em;
+    font-weight: 650;
+  }
+  #gforce {
+    margin-top: 2px;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.9;
+  }
+  #speed.inverted #speed-val { color: #ffd0c6; }
+  #sound {
+    position: absolute;
+    right: max(18px, env(safe-area-inset-right));
+    bottom: max(18px, env(safe-area-inset-bottom));
+    pointer-events: auto;
+    border: 1px solid rgba(255, 255, 255, 0.38);
+    background: rgba(12, 10, 14, 0.42);
+    color: #fff8f2;
+    border-radius: 999px;
+    padding: 10px 16px;
+    font: 600 14px "Segoe UI", system-ui, sans-serif;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+  #sound:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 3px;
+  }
+  #progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  #progress-bar {
+    height: 100%;
+    width: 0;
+    background: #ffe0bf;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #title { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="boot">Loading the ride…</div>
+<div id="vignette"></div>
+<div id="hud">
+  <div id="title">
+    <p class="kicker">Continuous ride</p>
+    <h1>First Light</h1>
+    <p>First person, and it does not stop. Drag to look around. Press M for sound.</p>
+  </div>
+  <div id="speed">
+    <span id="lap">Lap 1</span>
+    <span id="speed-val">0<small>km/h</small></span>
+    <span id="gforce">1.0 g</span>
+  </div>
+  <button id="sound" type="button" aria-pressed="false">Sound off</button>
+  <div id="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+</div>
+<script>
+  setTimeout(function () {
+    var boot = document.getElementById('boot');
+    if (!boot || boot.dataset.ready === '1') return;
+    boot.textContent = 'Still loading the ride. If this stays, the network may be blocking Three.js.';
+  }, 15000);
+</script>
+<script type="module">
+const bootEl = document.getElementById('boot');
+
+function fail(message) {
+  if (!bootEl) return;
+  bootEl.dataset.ready = '1';
+  bootEl.hidden = false;
+  bootEl.textContent = message;
+}
+
+async function loadThree() {
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js',
+    'https://unpkg.com/three@0.170.0/build/three.module.js'
+  ];
+  let lastError;
+  for (const url of urls) {
+    try {
+      return await import(url);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+loadThree().then((THREE) => {
+  try {
+    startRide(THREE);
+  } catch (error) {
+    console.error(error);
+    fail('The ride could not start.');
+  }
+}).catch(() => {
+  fail('Could not load Three.js. A network connection is required.');
+});
+
+function startRide(THREE) {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const RAIL_UP = -1.02;
+  const RAIL_SEP = 0.47;
+  const RAIL_R = 0.068;
+  const TAU = Math.PI * 2;
+
+  const speedVal = document.getElementById('speed-val');
+  const gReadout = document.getElementById('gforce');
+  const lapReadout = document.getElementById('lap');
+  const soundBtn = document.getElementById('sound');
+  const titleEl = document.getElementById('title');
+  const progressBar = document.getElementById('progress-bar');
+  const speedBox = document.getElementById('speed');
+
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.setClearColor(0xf2c2a4, 1);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.body.prepend(renderer.domElement);
+  renderer.domElement.setAttribute('aria-label', 'First-person view of a looping rollercoaster in continuous motion');
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xf2c2a4, 150, 980);
+
+  const camera = new THREE.PerspectiveCamera(68, window.innerWidth / Math.max(1, window.innerHeight), 0.07, 4800);
+  camera.rotation.order = 'YXZ';
+
+  const rig = new THREE.Group();
+  rig.add(camera);
+  scene.add(rig);
+
+  const sunDir = new THREE.Vector3(-0.62, 0.48, -0.42).normalize();
+  const hemi = new THREE.HemisphereLight(0xffd2b8, 0x4e7a3c, 0.78);
+  scene.add(hemi);
+  const sunLight = new THREE.DirectionalLight(0xfff1df, 3.15);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.bias = -0.00028;
+  sunLight.shadow.normalBias = 0.04;
+  const shadowCam = sunLight.shadow.camera;
+  shadowCam.left = -95;
+  shadowCam.right = 95;
+  shadowCam.top = 95;
+  shadowCam.bottom = -95;
+  shadowCam.near = 20;
+  shadowCam.far = 480;
+  shadowCam.updateProjectionMatrix();
+  scene.add(sunLight);
+  scene.add(sunLight.target);
+  const fill = new THREE.DirectionalLight(0xc5d4ff, 0.48);
+  fill.position.set(90, 50, 70);
+  scene.add(fill);
+
+  const world = {
+    ferrisSpin: null,
+    gondolas: [],
+    balloon: null,
+    birds: [],
+    clouds: [],
+    water: null,
+    bulbs: []
+  };
+
+  addSky();
+  addSunSprite();
+  addClouds();
+
+  const built = buildCenterline();
+  const sampled = resampleClosed(relaxClosed(built.points, built.flags), 0.72);
+  const trackLength = sampled.length;
+  const frames = buildFrames(sampled.points, trackLength, built.meta);
+  const N = frames.length;
+  let maxY = 0;
+  for (let i = 0; i < N; i++) maxY = Math.max(maxY, frames[i].p.y);
+  const hRef = maxY + 8;
+
+  addGround();
+  addLake();
+  addMountains();
+  addTrack();
+  addSupports();
+  addLoopStructure();
+  addHelixStructure();
+  addStation();
+  addGantry();
+  addTrees();
+  addTents();
+  addFerris();
+  addBalloon();
+  addBirds();
+  addPeopleBalloons();
+  buildInterior();
+
+  const train = [];
+  const trainGap = 3.25;
+  for (let i = 0; i < 3; i++) {
+    const car = makeExteriorCar(i === 0);
+    scene.add(car);
+    train.push(car);
+  }
+  const trainOffset = trackLength * 0.46;
+
+  const streaks = buildStreaks();
+  rig.add(streaks.points);
+
+  let travel = 32;
+  let last = performance.now();
+  let gSmooth = 1;
+  let havePrev = false;
+  let fovSpeed = 18;
+  let smoothYaw = 0;
+  let smoothPitch = 0;
+  let lookX = 0;
+  let lookY = 0;
+  let dragging = false;
+  let dragX = 0;
+  let dragY = 0;
+  let audioWanted = false;
+  let heard = false;
+  let audioCtx = null;
+  let windGain = null;
+  let rumbleGain = null;
+  let rumbleOsc = null;
+  let noiseBuffer = null;
+  let clackDist = 0;
+
+  const current = makeFrame();
+  const ahead = makeFrame();
+  const trainFrame = makeFrame();
+  const prevVel = new THREE.Vector3();
+  const vel = new THREE.Vector3();
+  const accel = new THREE.Vector3();
+  const felt = new THREE.Vector3();
+  const aheadVec = new THREE.Vector3();
+  const shadowFocus = new THREE.Vector3();
+
+  const keys = new Set();
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'm' || event.key === 'M') {
+      heard = true;
+      setSound(!audioWanted);
+    }
+    if (event.key.startsWith('Arrow')) event.preventDefault();
+    keys.add(event.key);
+  });
+  window.addEventListener('keyup', (event) => keys.delete(event.key));
+
+  soundBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    heard = true;
+    setSound(!audioWanted);
+  });
+
+  renderer.domElement.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    dragX = event.clientX;
+    dragY = event.clientY;
+    document.body.classList.add('dragging');
+    if (renderer.domElement.setPointerCapture) renderer.domElement.setPointerCapture(event.pointerId);
+    if (!heard) {
+      heard = true;
+      setSound(true);
+    }
+  });
+  renderer.domElement.addEventListener('pointermove', (event) => {
+    if (!dragging) return;
+    const dx = event.clientX - dragX;
+    const dy = event.clientY - dragY;
+    dragX = event.clientX;
+    dragY = event.clientY;
+    lookX = clamp(lookX - dx * 0.0034, -0.55, 0.55);
+    lookY = clamp(lookY - dy * 0.0026, -0.34, 0.3);
+  });
+  function endDrag(event) {
+    dragging = false;
+    document.body.classList.remove('dragging');
+    if (event && renderer.domElement.releasePointerCapture) {
+      try { renderer.domElement.releasePointerCapture(event.pointerId); } catch (error) { /* already released */ }
+    }
+  }
+  renderer.domElement.addEventListener('pointerup', endDrag);
+  renderer.domElement.addEventListener('pointercancel', endDrag);
+  renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+
+  window.addEventListener('resize', resize);
+  setTimeout(() => titleEl && titleEl.classList.add('is-quiet'), 5600);
+
+  if (bootEl) {
+    bootEl.dataset.ready = '1';
+    bootEl.remove();
+  }
+  renderer.setAnimationLoop(animate);
+
+  function resize() {
+    const w = window.innerWidth;
+    const h = Math.max(1, window.innerHeight);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false);
+  }
+
+  function animate(now) {
+    const dt = Math.min(0.033, Math.max(0.001, (now - last) / 1000));
+    last = now;
+
+    sampleAt(travel, current);
+    const speed = speedAtHeight(current.p.y);
+    travel += speed * dt;
+    const lookDist = clamp(6.2 + (speed - 12) * 0.09, 6.2, 11);
+    sampleAt(travel, current);
+    sampleAt(travel + lookDist, ahead);
+
+    aheadVec.copy(ahead.p).sub(current.p);
+    const forwardDot = aheadVec.dot(current.tangent);
+    const rawYaw = Math.atan2(aheadVec.dot(current.right), forwardDot);
+    const rawPitch = Math.atan2(aheadVec.dot(current.up), forwardDot);
+    const trackYaw = clamp(rawYaw * 0.48, -0.22, 0.22);
+    const trackPitch = clamp(rawPitch * 0.42, -0.18, 0.22);
+    const follow = 1 - Math.exp(-dt * 5);
+    smoothYaw += (trackYaw - smoothYaw) * follow;
+    smoothPitch += (trackPitch - smoothPitch) * follow;
+
+    if (keys.has('ArrowLeft')) lookX = clamp(lookX + dt * 0.45, -0.55, 0.55);
+    if (keys.has('ArrowRight')) lookX = clamp(lookX - dt * 0.45, -0.55, 0.55);
+    if (keys.has('ArrowUp')) lookY = clamp(lookY + dt * 0.35, -0.34, 0.3);
+    if (keys.has('ArrowDown')) lookY = clamp(lookY - dt * 0.35, -0.34, 0.3);
+    if (!dragging && !keys.has('ArrowLeft') && !keys.has('ArrowRight') && !keys.has('ArrowUp') && !keys.has('ArrowDown')) {
+      const back = 1 - Math.exp(-dt * 1.35);
+      lookX += (0 - lookX) * back;
+      lookY += (0 - lookY) * back;
+    }
+
+    basisQuat(current.right, current.up, current.tangent, rig.quaternion);
+    rig.position.copy(current.p);
+    camera.rotation.y = clamp(smoothYaw + lookX, -0.72, 0.72);
+    camera.rotation.x = clamp(smoothPitch + lookY, -0.58, 0.48);
+
+    const shake = reduceMotion ? 0 : Math.min(0.018, speed * 0.00042);
+    const tieBump = reduceMotion ? 0 : Math.sin(travel * 4.15) * Math.min(0.011, speed * 0.00022);
+    camera.position.set(
+      Math.sin(travel * 1.6) * shake - current.right.y * 0.05,
+      0.03 + tieBump + Math.cos(travel * 2.7) * shake,
+      0.16
+    );
+
+    fovSpeed += (speed - fovSpeed) * (1 - Math.exp(-dt * 2.2));
+    const targetFov = 67 + clamp((fovSpeed - 10) * 0.5, 0, 15);
+    if (Math.abs(camera.fov - targetFov) > 0.05) {
+      camera.fov += (targetFov - camera.fov) * (1 - Math.exp(-dt * 3));
+      camera.updateProjectionMatrix();
+    }
+
+    vel.copy(current.tangent).multiplyScalar(speed);
+    if (havePrev) {
+      accel.copy(vel).sub(prevVel).multiplyScalar(1 / dt);
+      felt.copy(accel);
+      felt.y += 9.81;
+      const g = felt.dot(current.up) / 9.81;
+      if (Number.isFinite(g)) {
+        const clamped = clamp(g, -2.5, 6.5);
+        gSmooth += (clamped - gSmooth) * (1 - Math.exp(-dt * 2.4));
+      }
+    }
+    prevVel.copy(vel);
+    havePrev = true;
+
+    const lead = travel + trainOffset;
+    for (let i = 0; i < train.length; i++) {
+      sampleAt(lead - i * trainGap, trainFrame);
+      basisQuat(trainFrame.right, trainFrame.up, trainFrame.tangent, train[i].quaternion);
+      train[i].position.copy(trainFrame.p);
+    }
+
+    shadowFocus.copy(current.p);
+    sunLight.position.copy(shadowFocus).addScaledVector(sunDir, 180);
+    sunLight.target.position.copy(shadowFocus);
+
+    updateStreaks(speed, dt);
+    updateWorld(now, dt);
+    updateAudio(dt, speed);
+    updateHud(speed);
+
+    renderer.render(scene, camera);
+  }
+
+  function updateHud(speed) {
+    const kmh = Math.round(speed * 3.6);
+    speedVal.innerHTML = `${kmh}<small>km/h</small>`;
+    const inverted = current.up.y < -0.35;
+    speedBox.classList.toggle('inverted', inverted);
+    const gText = `${gSmooth.toFixed(1)} g`;
+    gReadout.textContent = inverted ? `${gText} · inverted` : gText;
+    const lap = Math.floor(travel / trackLength) + 1;
+    lapReadout.textContent = `Lap ${lap}`;
+    progressBar.style.width = `${(modulo(travel, trackLength) / trackLength) * 100}%`;
+  }
+
+  function speedAtHeight(y) {
+    const v = Math.sqrt(Math.max(0, 2 * 9.81 * (hRef - y)));
+    return Math.min(34, Math.max(11, v));
+  }
+
+  function setSound(on) {
+    if (on && !ensureAudio()) {
+      soundBtn.textContent = 'Sound unavailable';
+      soundBtn.setAttribute('aria-pressed', 'false');
+      audioWanted = false;
+      return;
+    }
+    audioWanted = on;
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    soundBtn.textContent = on ? 'Sound on' : 'Sound off';
+    soundBtn.setAttribute('aria-pressed', String(on));
+    if (!on && audioCtx && windGain) {
+      const t = audioCtx.currentTime;
+      windGain.gain.setTargetAtTime(0.0001, t, 0.04);
+      rumbleGain.gain.setTargetAtTime(0.0001, t, 0.04);
+    }
+  }
+
+  function ensureAudio() {
+    if (audioCtx) return true;
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) return false;
+    audioCtx = new AudioCtor();
+    const seconds = 2;
+    noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * seconds, audioCtx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+    const wind = audioCtx.createBufferSource();
+    wind.buffer = noiseBuffer;
+    wind.loop = true;
+    const windFilter = audioCtx.createBiquadFilter();
+    windFilter.type = 'bandpass';
+    windFilter.frequency.value = 520;
+    windFilter.Q.value = 0.55;
+    windGain = audioCtx.createGain();
+    windGain.gain.value = 0.0001;
+    wind.connect(windFilter).connect(windGain).connect(audioCtx.destination);
+    wind.start();
+
+    rumbleOsc = audioCtx.createOscillator();
+    rumbleOsc.type = 'sawtooth';
+    rumbleOsc.frequency.value = 48;
+    const rumbleFilter = audioCtx.createBiquadFilter();
+    rumbleFilter.type = 'lowpass';
+    rumbleFilter.frequency.value = 140;
+    rumbleGain = audioCtx.createGain();
+    rumbleGain.gain.value = 0.0001;
+    rumbleOsc.connect(rumbleFilter).connect(rumbleGain).connect(audioCtx.destination);
+    rumbleOsc.start();
+    wind.filter = windFilter;
+    return true;
+  }
+
+  function updateAudio(dt, speed) {
+    clackDist += speed * dt;
+    if (clackDist > 8) clackDist = 1.5;
+    if (!audioCtx || !windGain) return;
+    const t = audioCtx.currentTime;
+    if (!audioWanted) {
+      windGain.gain.setTargetAtTime(0.0001, t, 0.05);
+      rumbleGain.gain.setTargetAtTime(0.0001, t, 0.05);
+      return;
+    }
+    const windAmp = Math.min(0.22, Math.max(0, speed - 6) * 0.007);
+    windGain.gain.setTargetAtTime(Math.max(0.0001, windAmp), t, 0.08);
+    if (windGain.filter) windGain.filter.frequency.setTargetAtTime(280 + speed * 16, t, 0.1);
+    rumbleGain.gain.setTargetAtTime(Math.max(0.0001, Math.min(0.065, speed * 0.0017)), t, 0.08);
+    rumbleOsc.frequency.setTargetAtTime(34 + speed * 1.25, t, 0.1);
+    const spacing = speed < 16 ? 2.3 : 1.5;
+    let guard = 0;
+    while (clackDist >= spacing && guard++ < 3) {
+      clackDist -= spacing;
+      triggerClack(speed);
+    }
+  }
+
+  function triggerClack(speed) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = noiseBuffer;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 380 + speed * 7;
+    filter.Q.value = 0.7;
+    const gain = audioCtx.createGain();
+    const now = audioCtx.currentTime;
+    const amp = Math.min(0.07, 0.012 + speed * 0.0013);
+    gain.gain.setValueAtTime(amp, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+    src.connect(filter).connect(gain).connect(audioCtx.destination);
+    const offset = Math.random() * Math.max(0.05, noiseBuffer.duration - 0.08);
+    src.start(now, offset, 0.06);
+    src.stop(now + 0.07);
+  }
+
+  function updateStreaks(speed, dt) {
+    const attr = streaks.positions;
+    const flow = speed * dt;
+    const visible = !reduceMotion && speed > 13;
+    for (let i = 0; i < streaks.count; i++) {
+      const i3 = i * 3;
+      attr[i3 + 2] += flow;
+      if (attr[i3 + 2] > 2.5) respawnStreak(i);
+    }
+    streaks.geo.attributes.position.needsUpdate = true;
+    streaks.mat.opacity = visible ? Math.min(0.5, (speed - 13) / 42) : 0;
+  }
+
+  function respawnStreak(i) {
+    const i3 = i * 3;
+    const angle = Math.random() * TAU;
+    const radius = 1.4 + Math.random() * 3.4;
+    streaks.positions[i3] = Math.cos(angle) * radius;
+    streaks.positions[i3 + 1] = Math.sin(angle) * radius * 0.65;
+    streaks.positions[i3 + 2] = -6 - Math.random() * 26;
+  }
+
+  function buildStreaks() {
+    const count = 80;
+    const positions = new Float32Array(count * 3);
+    const holder = { positions, count };
+    streaksPlaceholder(holder);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xfff4e4,
+      size: 0.16,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      sizeAttenuation: true
+    });
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    return { geo, mat, points, positions, count };
+    function streaksPlaceholder(target) {
+      for (let i = 0; i < target.count; i++) {
+        const i3 = i * 3;
+        const angle = Math.random() * TAU;
+        const radius = 1.4 + Math.random() * 3.4;
+        target.positions[i3] = Math.cos(angle) * radius;
+        target.positions[i3 + 1] = Math.sin(angle) * radius * 0.65;
+        target.positions[i3 + 2] = -4 - Math.random() * 28;
+      }
+    }
+  }
+
+  function updateWorld(now, dt) {
+    if (world.ferrisSpin) {
+      world.ferrisSpin.rotation.z = now * 0.00022;
+      for (let i = 0; i < world.gondolas.length; i++) {
+        world.gondolas[i].rotation.z = -world.ferrisSpin.rotation.z;
+      }
+    }
+    if (world.balloon) {
+      const base = world.balloon.userData.base;
+      world.balloon.position.x = base.x + Math.sin(now * 0.00008) * 16;
+      world.balloon.position.z = base.z + Math.cos(now * 0.00005) * 10;
+      world.balloon.position.y = base.y + Math.sin(now * 0.00035) * 1.4;
+    }
+    for (let i = 0; i < world.birds.length; i++) {
+      const bird = world.birds[i];
+      const t = now * 0.00018 + bird.userData.phase;
+      bird.position.set(
+        Math.cos(t) * bird.userData.radius + bird.userData.cx,
+        72 + Math.sin(t * 3.0) * 2.2,
+        Math.sin(t * 0.85) * bird.userData.radius * 0.62 + bird.userData.cz
+      );
+      bird.rotation.y = -t;
+      bird.children[0].rotation.z = Math.sin(now * 0.012 + i) * 0.45;
+      bird.children[1].rotation.z = -Math.sin(now * 0.012 + i) * 0.45;
+    }
+    for (let i = 0; i < world.clouds.length; i++) {
+      const cloud = world.clouds[i];
+      cloud.position.x += cloud.userData.speed * dt;
+      if (cloud.position.x > 820) cloud.position.x = -820;
+    }
+    for (let i = 0; i < world.bulbs.length; i++) {
+      const bulb = world.bulbs[i];
+      bulb.position.y = bulb.userData.baseY + Math.sin(now * 0.001 + i) * 0.18;
+    }
+    if (world.water) world.water.uniforms.uTime.value = now * 0.001;
+  }
+
+  function addSky() {
+    const geo = new THREE.SphereGeometry(3200, 28, 18);
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: {
+        uTop: { value: new THREE.Color('#1d438c') },
+        uHorizon: { value: new THREE.Color('#ffbf93') },
+        uNadir: { value: new THREE.Color('#e28a62') },
+        uSun: { value: sunDir.clone() }
+      },
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vDir = worldPos.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vDir;
+        uniform vec3 uTop;
+        uniform vec3 uHorizon;
+        uniform vec3 uNadir;
+        uniform vec3 uSun;
+        void main() {
+          vec3 dir = normalize(vDir);
+          float h = dir.y;
+          vec3 col = mix(uHorizon, uTop, smoothstep(0.0, 0.62, h));
+          col = mix(uNadir, col, smoothstep(-0.18, 0.06, h));
+          float sunDot = max(dot(dir, normalize(uSun)), 0.0);
+          col += vec3(1.0, 0.86, 0.62) * pow(sunDot, 420.0) * 1.35;
+          col += vec3(1.0, 0.55, 0.28) * pow(sunDot, 7.0) * 0.48;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+    const sky = new THREE.Mesh(geo, mat);
+    sky.frustumCulled = false;
+    sky.renderOrder = -1;
+    scene.add(sky);
+  }
+
+  function addSunSprite() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const g = canvas.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 6, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,248,230,1)');
+    grad.addColorStop(0.35, 'rgba(255,214,150,0.85)');
+    grad.addColorStop(1, 'rgba(255,170,90,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(sunDir).multiplyScalar(2600);
+    sprite.scale.set(220, 220, 1);
+    scene.add(sprite);
+  }
+
+  function addClouds() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const g = canvas.getContext('2d');
+    const grad = g.createRadialGradient(64, 32, 8, 64, 32, 60);
+    grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 64);
+    const tex = new THREE.CanvasTexture(canvas);
+    for (let i = 0; i < 18; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.55,
+        color: 0xfff4ea
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.set(-700 + Math.random() * 1400, 90 + Math.random() * 70, -700 + Math.random() * 1400);
+      const w = 90 + Math.random() * 120;
+      sprite.scale.set(w, w * 0.48, 1);
+      sprite.userData.speed = 4 + Math.random() * 6;
+      scene.add(sprite);
+      world.clouds.push(sprite);
+    }
+  }
+
+  function addGround() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#6eaf52';
+    g.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 28; i++) {
+      g.fillStyle = i % 2 ? 'rgba(40,90,36,0.28)' : 'rgba(190,210,90,0.18)';
+      g.beginPath();
+      g.ellipse(Math.random() * 512, Math.random() * 512, 30 + Math.random() * 70, 18 + Math.random() * 40, Math.random() * 3, 0, TAU);
+      g.fill();
+    }
+    for (let i = 0; i < 7000; i++) {
+      const shade = 80 + Math.random() * 90;
+      g.fillStyle = `rgb(${30 + Math.random() * 40}, ${shade}, ${28 + Math.random() * 30})`;
+      g.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    }
+    for (let i = 0; i < 50; i++) {
+      g.fillStyle = i % 2 ? '#f2d15c' : '#f08ab0';
+      g.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(46, 46);
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const geo = new THREE.PlaneGeometry(1900, 1900);
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 });
+    const ground = new THREE.Mesh(geo, mat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+  }
+
+  function addLake() {
+    const center = built.meta.lake;
+    const geo = new THREE.CircleGeometry(center.r, 56);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      uniforms: {
+        uTime: { value: 0 },
+        uCenter: { value: new THREE.Vector2(center.x, center.z) },
+        uRadius: { value: center.r }
+      },
+      vertexShader: `
+        uniform float uTime;
+        varying vec3 vPos;
+        void main() {
+          vec3 p = position;
+          float wave = sin(p.x * 0.45 + uTime * 1.5) * 0.12 + cos(p.y * 0.32 - uTime * 1.1) * 0.1;
+          p.z += wave;
+          vec4 worldPos = modelMatrix * vec4(p, 1.0);
+          vPos = worldPos.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vPos;
+        uniform float uTime;
+        uniform vec2 uCenter;
+        uniform float uRadius;
+        void main() {
+          float d = length(vPos.xz - uCenter) / uRadius;
+          vec3 deep = vec3(0.05, 0.28, 0.40);
+          vec3 shallow = vec3(0.28, 0.62, 0.62);
+          vec3 col = mix(deep, shallow, clamp(d, 0.0, 1.0));
+          float spark = pow(max(sin(vPos.x * 0.85 + uTime * 2.0) * cos(vPos.z * 0.7 - uTime * 1.4), 0.0), 10.0);
+          col += vec3(1.0, 0.86, 0.7) * spark * 0.55;
+          vec3 viewDir = normalize(cameraPosition - vPos);
+          float fres = pow(1.0 - max(dot(viewDir, vec3(0.0, 1.0, 0.0)), 0.0), 3.0);
+          col = mix(col, vec3(1.0, 0.74, 0.55), fres * 0.45);
+          float fogF = smoothstep(150.0, 980.0, length(cameraPosition - vPos));
+          col = mix(col, vec3(0.95, 0.76, 0.64), fogF);
+          gl_FragColor = vec4(col, 0.9);
+        }
+      `
+    });
+    const water = new THREE.Mesh(geo, mat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(center.x, 0.16, center.z);
+    scene.add(water);
+    world.water = mat.uniforms;
+
+    const shore = new THREE.Mesh(
+      new THREE.RingGeometry(center.r * 0.92, center.r * 1.28, 48),
+      new THREE.MeshStandardMaterial({ color: 0xd9c39a, roughness: 1 })
+    );
+    shore.rotation.x = -Math.PI / 2;
+    shore.position.set(center.x, 0.05, center.z);
+    shore.receiveShadow = true;
+    scene.add(shore);
+
+    const reedGeo = new THREE.ConeGeometry(0.12, 1.3, 4);
+    reedGeo.translate(0, 0.65, 0);
+    const reedMat = new THREE.MeshStandardMaterial({ color: 0x2f6a38, roughness: 1 });
+    const reeds = new THREE.InstancedMesh(reedGeo, reedMat, 24);
+    reeds.frustumCulled = false;
+    const dummy = new THREE.Object3D();
+    let count = 0;
+    for (let i = 0; i < 80 && count < 24; i++) {
+      const a = (i / 80) * TAU;
+      const rad = center.r * (0.98 + (i % 3) * 0.06);
+      const x = center.x + Math.cos(a) * rad;
+      const z = center.z + Math.sin(a) * rad * 0.92;
+      if (!farFromTrack(x, z, 6)) continue;
+      dummy.position.set(x, 0, z);
+      dummy.scale.setScalar(0.8 + (i % 4) * 0.15);
+      dummy.rotation.y = a;
+      dummy.updateMatrix();
+      reeds.setMatrixAt(count++, dummy.matrix);
+    }
+    reeds.count = count;
+    scene.add(reeds);
+  }
+
+  function addMountains() {
+    const geo = new THREE.ConeGeometry(1, 1, 7);
+    geo.translate(0, 0.5, 0);
+    const matA = new THREE.MeshStandardMaterial({ color: 0x86a37a, roughness: 1 });
+    const matB = new THREE.MeshStandardMaterial({ color: 0x6f8b68, roughness: 1 });
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * TAU + 0.35;
+      const dist = 470 + (i % 5) * 36;
+      const height = 55 + (i % 6) * 22;
+      const radius = 70 + (i % 4) * 24;
+      const mesh = new THREE.Mesh(geo, i % 2 ? matA : matB);
+      mesh.position.set(Math.cos(a) * dist, 0, Math.sin(a) * dist);
+      mesh.scale.set(radius, height, radius);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+  }
+
+  function addTrack() {
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0xf4f7f8,
+      metalness: 0.92,
+      roughness: 0.24,
+      side: THREE.DoubleSide
+    });
+    const beamMat = new THREE.MeshStandardMaterial({
+      color: 0x8e2430,
+      metalness: 0.28,
+      roughness: 0.52,
+      side: THREE.DoubleSide
+    });
+    const tieMat = new THREE.MeshStandardMaterial({
+      color: 0x6a4630,
+      roughness: 0.86
+    });
+    const left = buildTube(frames, -RAIL_SEP, RAIL_UP, RAIL_R, 7, true);
+    const right = buildTube(frames, RAIL_SEP, RAIL_UP, RAIL_R, 7, true);
+    const beam = buildBeam(frames, -1.3, 0.2, 0.09);
+    for (const geo of [left, right]) {
+      const mesh = new THREE.Mesh(geo, railMat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+    const beamMesh = new THREE.Mesh(beam, beamMat);
+    beamMesh.castShadow = true;
+    beamMesh.receiveShadow = true;
+    scene.add(beamMesh);
+
+    const tieEvery = Math.max(1, Math.round(1.5 / (trackLength / N)));
+    let tieCount = 0;
+    for (let i = 0; i < N; i += tieEvery) tieCount++;
+    const tieGeo = new THREE.BoxGeometry(1, 1, 1);
+    const ties = new THREE.InstancedMesh(tieGeo, tieMat, tieCount);
+    ties.frustumCulled = false;
+    ties.castShadow = true;
+    ties.receiveShadow = true;
+    const dummy = new THREE.Object3D();
+    let write = 0;
+    for (let i = 0; i < N; i += tieEvery) {
+      const f = frames[i];
+      dummy.position.copy(f.p).addScaledVector(f.up, -1.15);
+      basisQuat(f.right, f.up, f.tangent, dummy.quaternion);
+      dummy.scale.set(1.36, 0.09, 0.3);
+      dummy.updateMatrix();
+      ties.setMatrixAt(write++, dummy.matrix);
+    }
+    scene.add(ties);
+
+    const chainFrames = collectSpan(built.meta.liftStart, built.meta.liftEnd, 0.34);
+    if (chainFrames.length > 8) {
+      const chainGeo = buildTube(chainFrames, 0, -1.2, 0.045, 6, false);
+      const chain = new THREE.Mesh(chainGeo, new THREE.MeshStandardMaterial({
+        color: 0x2c3034,
+        metalness: 0.7,
+        roughness: 0.4,
+        side: THREE.DoubleSide
+      }));
+      chain.castShadow = true;
+      scene.add(chain);
+    }
+  }
+
+  function addSupports() {
+    const supportMat = new THREE.MeshStandardMaterial({
+      color: 0xd5dde3,
+      roughness: 0.58,
+      metalness: 0.12
+    });
+    const poleGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
+    const matrices = [];
+    const dummy = new THREE.Object3D();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+    const side = new THREE.Vector3();
+
+    function addPole(a, b, radius) {
+      const len = a.distanceTo(b);
+      if (len < 0.2 || matrices.length > 980) return;
+      dir.copy(b).sub(a).multiplyScalar(1 / len);
+      dummy.position.copy(a).add(b).multiplyScalar(0.5);
+      dummy.scale.set(radius, len, radius);
+      if (dir.y < -0.999) dummy.quaternion.set(1, 0, 0, 0);
+      else dummy.quaternion.setFromUnitVectors(yAxis, dir);
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+    }
+
+    let since = 20;
+    for (let i = 0; i < N; i++) {
+      since += trackLength / N;
+      const f = frames[i];
+      if (isHelixFrame(i)) continue;
+      if (f.up.y < 0.22) continue;
+      const apexY = f.p.y + f.up.y * -1.22;
+      const need = apexY > 24 ? 9.5 : 13.5;
+      if (since < need || apexY < 2.5) continue;
+      if (inHighLoop(f.p)) continue;
+      if (columnHitsTrack(f.p.x, f.p.z, apexY)) continue;
+      since = 0;
+      const apex = f.p.clone().addScaledVector(f.up, -1.22);
+      side.set(f.right.x, 0, f.right.z);
+      if (side.lengthSq() < 1e-6) continue;
+      side.normalize();
+      const spread = clamp(0.9 + apex.y * 0.075, 0.95, 5.4);
+      const topL = apex.clone().addScaledVector(side, spread);
+      const topR = apex.clone().addScaledVector(side, -spread);
+      const footL = topL.clone();
+      const footR = topR.clone();
+      footL.y = 0;
+      footR.y = 0;
+      const thick = apex.y > 20 ? 0.15 : 0.1;
+      addPole(footL, topL, thick);
+      addPole(footR, topR, thick);
+      addPole(topL, topR, 0.075);
+      if (apex.y > 16) {
+        addPole(footL.clone().lerp(topL, 0.48), footR.clone().lerp(topR, 0.48), 0.065);
+      }
+    }
+
+    if (matrices.length) {
+      const mesh = new THREE.InstancedMesh(poleGeo, supportMat, matrices.length);
+      for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i]);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    }
+  }
+
+  function inHighLoop(p) {
+    const loop = built.meta.loop;
+    const dx = p.x - loop.centerX;
+    const dz = p.z - loop.centerZ;
+    return dx * dx + dz * dz < (loop.r + 2.5) * (loop.r + 2.5) && p.y > loop.baseY + 4;
+  }
+
+  function columnHitsTrack(x, z, yTop) {
+    for (let i = 0; i < N; i += 2) {
+      const q = frames[i].p;
+      const dx = q.x - x;
+      const dz = q.z - z;
+      if (dx * dx + dz * dz < 7.8 && q.y < yTop - 2.6 && q.y > 1.4) return true;
+    }
+    return false;
+  }
+
+  function isHelixFrame(i) {
+    const helix = built.meta.helix;
+    if (!helix.span) return false;
+    const rel = (i - helix.index0 + N) % N;
+    if (rel > helix.span) return false;
+    const p = frames[i].p;
+    const dist = Math.hypot(p.x - helix.x, p.z - helix.z);
+    return Math.abs(dist - helix.r) < 3.8 && p.y > 4;
+  }
+
+  function addLoopStructure() {
+    const loop = built.meta.loop;
+    const mat = new THREE.MeshStandardMaterial({ color: 0xefe8dc, roughness: 0.62 });
+    const topY = loop.baseY + loop.r * 2 + 2.9;
+    const geo = new THREE.CylinderGeometry(0.42, 0.55, 1, 8);
+    geo.translate(0, 0.5, 0);
+    for (const s of [-1, 1]) {
+      const post = new THREE.Mesh(geo, mat);
+      post.position.set(loop.centerX, 0, loop.centerZ + s * 3.7);
+      post.scale.y = topY;
+      post.castShadow = true;
+      post.receiveShadow = true;
+      scene.add(post);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.55, 8.2), mat);
+    beam.position.set(loop.centerX, topY, loop.centerZ);
+    beam.castShadow = true;
+    scene.add(beam);
+    const mid = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 8.2), mat);
+    mid.position.set(loop.centerX, loop.centerY, loop.centerZ);
+    mid.castShadow = true;
+    scene.add(mid);
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 0.7, 1.6),
+      new THREE.MeshStandardMaterial({ color: 0xc8393a, roughness: 0.5 })
+    );
+    cap.position.set(loop.centerX, topY + 0.55, loop.centerZ);
+    scene.add(cap);
+  }
+
+  function addHelixStructure() {
+    const helix = built.meta.helix;
+    const mastMat = new THREE.MeshStandardMaterial({ color: 0xe7e0d4, roughness: 0.6 });
+    const armMat = new THREE.MeshStandardMaterial({ color: 0xd5dde3, roughness: 0.5, metalness: 0.15 });
+    const height = helix.yTop + 5;
+    const mastGeo = new THREE.CylinderGeometry(0.62, 0.85, height, 10);
+    const mast = new THREE.Mesh(mastGeo, mastMat);
+    mast.position.set(helix.x, height / 2, helix.z);
+    mast.castShadow = true;
+    mast.receiveShadow = true;
+    scene.add(mast);
+    const foot = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.3, 2.5, 0.45, 12),
+      mastMat
+    );
+    foot.position.set(helix.x, 0.22, helix.z);
+    foot.receiveShadow = true;
+    scene.add(foot);
+
+    const armGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
+    const arms = [];
+    const dummy = new THREE.Object3D();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+    let since = 0;
+    for (let i = 0; i < N; i++) {
+      if (!isHelixFrame(i)) continue;
+      since += trackLength / N;
+      if (since < 12) continue;
+      since = 0;
+      const f = frames[i];
+      const attach = f.p.clone().addScaledVector(f.up, -1.2);
+      const inner = new THREE.Vector3(helix.x, attach.y, helix.z);
+      const len = inner.distanceTo(attach);
+      if (len < 1) continue;
+      dir.copy(attach).sub(inner).multiplyScalar(1 / len);
+      dummy.position.copy(inner).add(attach).multiplyScalar(0.5);
+      dummy.scale.set(0.1, len, 0.1);
+      dummy.quaternion.setFromUnitVectors(yAxis, dir);
+      dummy.updateMatrix();
+      arms.push(dummy.matrix.clone());
+    }
+    if (arms.length) {
+      const mesh = new THREE.InstancedMesh(armGeo, armMat, arms.length);
+      for (let i = 0; i < arms.length; i++) mesh.setMatrixAt(i, arms[i]);
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    }
+  }
+
+  function addStation() {
+    const station = frames.filter((f) => (
+      f.p.x > -16 && f.p.x < 42 && f.p.y < 8.5 && Math.abs(f.p.z - built.meta.join.z) < 5 && f.tangent.x > 0.75
+    ));
+    if (station.length < 4) return;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let z = 0;
+    let y = 0;
+    for (const f of station) {
+      minX = Math.min(minX, f.p.x);
+      maxX = Math.max(maxX, f.p.x);
+      z += f.p.z;
+      y += f.p.y;
+    }
+    z /= station.length;
+    y /= station.length;
+    const deckTop = y + RAIL_UP - 0.22;
+    const deckMat = new THREE.MeshStandardMaterial({ color: 0xcbb89a, roughness: 0.84 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x8e3a34, roughness: 0.7 });
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xefe8dc, roughness: 0.6 });
+    const length = maxX - minX;
+    const centerX = (minX + maxX) / 2;
+    for (const side of [-1, 1]) {
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(length, 0.32, 2.15), deckMat);
+      deck.position.set(centerX, deckTop - 0.16, z + side * 2.7);
+      deck.receiveShadow = true;
+      deck.castShadow = true;
+      scene.add(deck);
+    }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(length + 1.5, 0.24, 8.6), roofMat);
+    roof.position.set(centerX, y + 3.7, z);
+    roof.castShadow = true;
+    roof.receiveShadow = true;
+    scene.add(roof);
+    const postGeo = new THREE.BoxGeometry(0.28, y + 3.7 - deckTop, 0.28);
+    for (let i = 0; i <= 4; i++) {
+      const x = minX + (length * i) / 4;
+      for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(x, (deckTop + y + 3.7) / 2, z + side * 3.9);
+        post.castShadow = true;
+        scene.add(post);
+      }
+    }
+    const lampMat = new THREE.MeshStandardMaterial({
+      color: 0xffd2a1,
+      emissive: 0xffb15e,
+      emissiveIntensity: 1.3,
+      roughness: 0.4
+    });
+    for (let i = 0; i <= 8; i++) {
+      const x = minX + (length * i) / 8;
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), lampMat);
+      bulb.position.set(x, y + 3.35, z);
+      bulb.userData.baseY = bulb.position.y;
+      scene.add(bulb);
+      world.bulbs.push(bulb);
+    }
+    const stationLight = new THREE.PointLight(0xffc089, 18, 42, 2);
+    stationLight.position.set(centerX, y + 3.1, z);
+    scene.add(stationLight);
+
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(7.2, 1.45),
+      new THREE.MeshStandardMaterial({
+        map: labelTexture('FIRST LIGHT', '#f6efe4', '#9d2430'),
+        roughness: 0.7
+      })
+    );
+    sign.position.set(minX + length * 0.72, y + 2.15, z);
+    sign.rotation.y = -Math.PI / 2;
+    scene.add(sign);
+
+    addPeople(minX + 4, maxX - 4, z, deckTop);
+  }
+
+  function addPeople(x0, x1, z, deckTop) {
+    const shirts = [0xe24d4d, 0x3d7dd6, 0xf0c14a, 0x46a36a, 0xf4f4f4, 0x222222, 0xd97b2a, 0x8d5cc7, 0xffffff];
+    const skin = new THREE.MeshStandardMaterial({ color: 0xe0b394, roughness: 0.8 });
+    const bodyGeo = new THREE.CapsuleGeometry(0.18, 0.72, 3, 6);
+    const headGeo = new THREE.SphereGeometry(0.16, 8, 8);
+    const span = Math.max(1, x1 - x0);
+    for (let i = 0; i < 9; i++) {
+      const group = new THREE.Group();
+      const cloth = new THREE.MeshStandardMaterial({ color: shirts[i % shirts.length], roughness: 0.75 });
+      const body = new THREE.Mesh(bodyGeo, cloth);
+      body.position.y = 0.72;
+      body.castShadow = true;
+      const head = new THREE.Mesh(headGeo, skin);
+      head.position.y = 1.28;
+      head.castShadow = true;
+      group.add(body, head);
+      const side = i % 2 === 0 ? -1 : 1;
+      group.position.set(x0 + (span * (i + 0.5)) / 9, deckTop, z + side * 2.65);
+      group.rotation.y = side > 0 ? Math.PI : 0;
+      scene.add(group);
+    }
+  }
+
+  function addPeopleBalloons() {
+    const colors = [0xe24b4b, 0xf0c14a, 0x3d8bff, 0x46a36a, 0xf4f4f4, 0xd97b2a];
+    const join = built.meta.join;
+    for (let i = 0; i < 6; i++) {
+      const group = new THREE.Group();
+      const balloon = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 10, 8),
+        new THREE.MeshStandardMaterial({ color: colors[i], roughness: 0.45 })
+      );
+      balloon.position.y = 2.4 + (i % 3) * 0.35;
+      const string = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.015, 0.015, balloon.position.y, 4),
+        new THREE.MeshStandardMaterial({ color: 0x222222 })
+      );
+      string.position.y = balloon.position.y / 2;
+      group.add(balloon, string);
+      group.position.set(join.x + 8 + i * 1.4, 4.7, join.z - 5.4);
+      group.userData.baseY = group.position.y;
+      scene.add(group);
+      world.bulbs.push(group);
+    }
+  }
+
+  function addGantry() {
+    const index = nearestIndex(-40, 6, built.meta.join.z);
+    const f = frames[index];
+    const mat = new THREE.MeshStandardMaterial({ color: 0xc8393a, roughness: 0.55 });
+    const cream = new THREE.MeshStandardMaterial({ color: 0xefe8dc, roughness: 0.6 });
+    const side = new THREE.Vector3(f.right.x, 0, f.right.z).normalize();
+    const beamY = f.p.y + 3.05;
+    for (const s of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.36, beamY, 0.36), cream);
+      post.position.set(f.p.x + side.x * s * 3.5, beamY / 2, f.p.z + side.z * s * 3.5);
+      post.castShadow = true;
+      scene.add(post);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 7.6), mat);
+    beam.position.set(f.p.x, beamY, f.p.z);
+    beam.lookAt(f.p.x + side.x, beamY, f.p.z + side.z);
+    beam.castShadow = true;
+    scene.add(beam);
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.4, 0.9),
+      new THREE.MeshStandardMaterial({
+        map: labelTexture('FIRST LIGHT', '#c8393a', '#fff8f2'),
+        roughness: 0.6
+      })
+    );
+    sign.position.set(f.p.x - f.tangent.x * 0.45, beamY - 0.15, f.p.z - f.tangent.z * 0.45);
+    sign.rotation.y = Math.atan2(-f.tangent.x, -f.tangent.z);
+    scene.add(sign);
+  }
+
+  function addTrees() {
+    const trunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 2.1, 5);
+    trunkGeo.translate(0, 1.05, 0);
+    const pineGeo = new THREE.ConeGeometry(1.45, 4.1, 6);
+    pineGeo.translate(0, 3.7, 0);
+    const oakGeo = new THREE.SphereGeometry(1.35, 7, 6);
+    oakGeo.translate(0, 3.3, 0);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6a4b32, roughness: 1 });
+    const pineMat = new THREE.MeshStandardMaterial({ color: 0x2d6b38, roughness: 1 });
+    const oakMat = new THREE.MeshStandardMaterial({ color: 0x3e8f45, roughness: 1 });
+    const maxTrees = 170;
+    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, maxTrees);
+    const pines = new THREE.InstancedMesh(pineGeo, pineMat, maxTrees);
+    const oaks = new THREE.InstancedMesh(oakGeo, oakMat, maxTrees);
+    for (const mesh of [trunks, pines, oaks]) {
+      mesh.frustumCulled = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
+    const dummy = new THREE.Object3D();
+    let pinesN = 0;
+    let oaksN = 0;
+    let trunksN = 0;
+    for (let i = 0; i < 900 && trunksN < maxTrees; i++) {
+      const x = -180 + hash(i * 2) * 520;
+      const z = -140 + hash(i * 2 + 1) * 420;
+      if (sceneryBlocked(x, z)) continue;
+      const scale = 0.75 + hash(i * 5) * 0.9;
+      dummy.position.set(x, 0, z);
+      dummy.rotation.set(0, hash(i * 3) * TAU, 0);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(trunksN++, dummy.matrix);
+      if (hash(i * 7) > 0.72) oaks.setMatrixAt(oaksN++, dummy.matrix);
+      else pines.setMatrixAt(pinesN++, dummy.matrix);
+    }
+    trunks.count = trunksN;
+    pines.count = pinesN;
+    oaks.count = oaksN;
+    scene.add(trunks, pines, oaks);
+  }
+
+  function sceneryBlocked(x, z) {
+    if (!farFromTrack(x, z, 8)) return true;
+    const lake = built.meta.lake;
+    const dx = (x - lake.x) / lake.r;
+    const dz = (z - lake.z) / (lake.r * 0.92);
+    if (dx * dx + dz * dz < 1.25) return true;
+    if (Math.abs(z - built.meta.join.z) < 16 && x > -70 && x < 70) return true;
+    if (Math.hypot(x - 258, z - 28) < 28) return true;
+    const loop = built.meta.loop;
+    if (Math.hypot(x - loop.centerX, z - loop.centerZ) < loop.r + 7) return true;
+    const helix = built.meta.helix;
+    if (Math.hypot(x - helix.x, z - helix.z) < helix.r + 8) return true;
+    return false;
+  }
+
+  function farFromTrack(x, z, minDist) {
+    const min2 = minDist * minDist;
+    for (let i = 0; i < N; i += 3) {
+      const p = frames[i].p;
+      const dx = p.x - x;
+      const dz = p.z - z;
+      if (dx * dx + dz * dz < min2) return false;
+    }
+    return true;
+  }
+
+  function addTents() {
+    const spots = [[236, 10, 0xe24b6a], [274, 40, 0xf0c14a], [246, 56, 0x3d8bff]];
+    for (const [x, z, color] of spots) {
+      if (!farFromTrack(x, z, 10)) continue;
+      const group = new THREE.Group();
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(3.2, 2.4, 4),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.75 })
+      );
+      roof.position.y = 2.5;
+      roof.rotation.y = Math.PI / 4;
+      roof.castShadow = true;
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 2.2, 6),
+        new THREE.MeshStandardMaterial({ color: 0xefe8dc })
+      );
+      pole.position.y = 1.1;
+      group.add(roof, pole);
+      group.position.set(x, 0, z);
+      scene.add(group);
+    }
+  }
+
+  function addFerris() {
+    const root = new THREE.Group();
+    root.position.set(258, 0, 28);
+    root.rotation.y = -Math.PI / 2;
+    const spin = new THREE.Group();
+    root.add(spin);
+    const radius = 15;
+    const hubY = 18.5;
+    const metal = new THREE.MeshStandardMaterial({ color: 0xdfe5ea, metalness: 0.55, roughness: 0.35 });
+    const accent = new THREE.MeshStandardMaterial({ color: 0xc8393a, roughness: 0.5 });
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.18, 8, 40), metal);
+    wheel.position.y = hubY;
+    wheel.castShadow = true;
+    spin.add(wheel);
+    const spokeGeo = new THREE.CylinderGeometry(0.06, 0.06, radius, 5);
+    spokeGeo.translate(0, radius / 2, 0);
+    for (let i = 0; i < 8; i++) {
+      const spoke = new THREE.Mesh(spokeGeo, metal);
+      spoke.position.y = hubY;
+      spoke.rotation.z = (i / 8) * TAU;
+      spin.add(spoke);
+    }
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.7, 12, 10), accent);
+    hub.position.y = hubY;
+    spin.add(hub);
+    const gondolaGeo = new THREE.BoxGeometry(1.5, 1.15, 1.2);
+    const gondolaMat = new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.6 });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TAU;
+      const gondola = new THREE.Mesh(gondolaGeo, i % 2 ? gondolaMat : accent);
+      gondola.position.set(Math.cos(a) * radius, hubY + Math.sin(a) * radius, 0);
+      gondola.castShadow = true;
+      spin.add(gondola);
+      world.gondolas.push(gondola);
+    }
+    const legMat = new THREE.MeshStandardMaterial({ color: 0xefe8dc, roughness: 0.62 });
+    for (const z of [-1.6, 1.6]) {
+      for (const x of [-9, 9]) {
+        const leg = cylinderBetween(new THREE.Vector3(x, 0, z), new THREE.Vector3(0, hubY - 0.4, z), 0.28, legMat);
+        root.add(leg);
+      }
+    }
+    scene.add(root);
+    world.ferrisSpin = spin;
+    const glow = new THREE.PointLight(0xffd2a8, 10, 36, 2);
+    glow.position.set(258, hubY, 28);
+    scene.add(glow);
+  }
+
+  function addBalloon() {
+    const group = new THREE.Group();
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const g = canvas.getContext('2d');
+    const cols = ['#e23b3b', '#f2d15a', '#3d7ed6', '#f7f4ef'];
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = cols[i];
+      g.fillRect(i * 16, 0, 16, 64);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    const envelope = new THREE.Mesh(
+      new THREE.SphereGeometry(7, 18, 14),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 })
+    );
+    envelope.scale.y = 1.22;
+    const basket = new THREE.Mesh(
+      new THREE.BoxGeometry(2.1, 1.3, 2.1),
+      new THREE.MeshStandardMaterial({ color: 0xc48a4a, roughness: 0.8 })
+    );
+    basket.position.y = -9.2;
+    const cable = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 4.2, 4),
+      new THREE.MeshStandardMaterial({ color: 0x222222 })
+    );
+    cable.position.y = -6.2;
+    group.add(envelope, basket, cable);
+    group.position.set(-150, 54, 175);
+    group.userData.base = group.position.clone();
+    scene.add(group);
+    world.balloon = group;
+  }
+
+  function addBirds() {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x1b2330, side: THREE.DoubleSide });
+    const wing = new THREE.BoxGeometry(0.85, 0.05, 0.26);
+    for (let i = 0; i < 7; i++) {
+      const bird = new THREE.Group();
+      const left = new THREE.Mesh(wing, mat);
+      const right = new THREE.Mesh(wing, mat);
+      left.position.x = -0.42;
+      right.position.x = 0.42;
+      bird.add(left, right);
+      bird.userData.phase = i * 1.3;
+      bird.userData.radius = 70 + i * 8;
+      bird.userData.cx = -20 + i * 12;
+      bird.userData.cz = 30;
+      scene.add(bird);
+      world.birds.push(bird);
+    }
+  }
+
+  function buildInterior() {
+    const paint = new THREE.MeshStandardMaterial({
+      color: 0xff3a2e,
+      roughness: 0.42,
+      metalness: 0.35
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.62, metalness: 0.18 });
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc5c8cc, roughness: 0.32, metalness: 0.8 });
+    const barMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.38, metalness: 0.62 });
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.3, 0.78), paint);
+    nose.position.set(0, -0.74, -1.18);
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.02, 0.78),
+      new THREE.MeshStandardMaterial({ color: 0xfff6ea, roughness: 0.5 })
+    );
+    stripe.position.set(0, -0.58, -1.18);
+    const plate = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.36, 0.16),
+      new THREE.MeshStandardMaterial({ map: labelTexture('FL', '#fff6ea', '#c8393a'), roughness: 0.55 })
+    );
+    plate.rotation.x = -Math.PI / 2;
+    plate.position.set(0, -0.585, -1.18);
+    const bulk = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.42, 0.08), dark);
+    bulk.position.set(0, -0.48, -0.78);
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.92, 10), barMat);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.set(0, -0.3, -0.36);
+    for (const x of [-0.32, 0.32]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.28, 8), metal);
+      post.position.set(x, -0.44, -0.36);
+      rig.add(post);
+    }
+    const header = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.06, 0.08), dark);
+    header.position.set(0, 0.48, -0.7);
+    for (const x of [-1, 1]) {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 1.15), paint);
+      panel.position.set(x * 0.74, -0.22, -0.05);
+      rig.add(panel);
+    }
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.07, 1.15), dark);
+    floor.position.set(0, -0.92, -0.12);
+    const seatL = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.1), dark);
+    const seatR = seatL.clone();
+    seatL.position.set(-0.28, -0.22, 0.42);
+    seatR.position.set(0.28, -0.22, 0.42);
+    rig.add(nose, stripe, plate, bulk, bar, header, floor, seatL, seatR);
+  }
+
+  function makeExteriorCar(lead) {
+    const group = new THREE.Group();
+    const paint = new THREE.MeshStandardMaterial({
+      color: lead ? 0xffd23a : 0xff3a2e,
+      roughness: 0.4,
+      metalness: 0.42
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1c1e22, roughness: 0.55, metalness: 0.25 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xf7f4ef, roughness: 0.45 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.55, 2.35), paint);
+    body.position.set(0, -0.72, 0);
+    body.castShadow = true;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.07, 2.05), white);
+    stripe.position.set(0, -0.5, 0);
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.26, 0.08), dark);
+    screen.position.set(0, -0.32, -0.9);
+    const wheelGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.14, 10);
+    wheelGeo.rotateZ(Math.PI / 2);
+    group.add(body, stripe, screen);
+    for (const x of [-0.5, 0.5]) {
+      for (const z of [-0.78, 0.78]) {
+        const wheel = new THREE.Mesh(wheelGeo, dark);
+        wheel.position.set(x, -0.95, z);
+        wheel.castShadow = true;
+        group.add(wheel);
+      }
+    }
+    if (lead) {
+      const lamp = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0xfff4d2, emissive: 0xffe1a3, emissiveIntensity: 1.8 })
+      );
+      lamp.position.set(0, -0.58, -1.22);
+      group.add(lamp);
+    }
+    return group;
+  }
+
+  function collectSpan(start, end, maxFraction) {
+    const i0 = nearestIndex(start.x, start.y, start.z);
+    const i1 = nearestIndex(end.x, end.y, end.z);
+    const span = orderedSpan(i0, i1);
+    if (span.span < 6 || span.span > N * maxFraction) return [];
+    const list = [];
+    for (let k = 0; k <= span.span; k++) list.push(frames[(span.start + k) % N]);
+    return list;
+  }
+
+  function orderedSpan(i0, i1) {
+    const forward = (i1 - i0 + N) % N;
+    const backward = (i0 - i1 + N) % N;
+    if (forward <= backward) return { start: i0, span: forward };
+    return { start: i1, span: backward };
+  }
+
+  function nearestIndex(x, y, z) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < N; i++) {
+      const p = frames[i].p;
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) + (p.z - z) * (p.z - z);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  function sampleAt(distance, out) {
+    const s = modulo(distance, trackLength);
+    const x = (s / trackLength) * N;
+    const i = Math.floor(x) % N;
+    const f = x - Math.floor(x);
+    const j = (i + 1) % N;
+    const a = frames[i];
+    const b = frames[j];
+    out.p.lerpVectors(a.p, b.p, f);
+    out.tangent.lerpVectors(a.tangent, b.tangent, f).normalize();
+    out.up.lerpVectors(a.up, b.up, f);
+    out.up.addScaledVector(out.tangent, -out.up.dot(out.tangent));
+    if (out.up.lengthSq() < 1e-8) out.up.set(0, 1, 0);
+    out.up.normalize();
+    out.right.crossVectors(out.tangent, out.up);
+    if (out.right.lengthSq() < 1e-8) {
+      out.up.set(1, 0, 0).addScaledVector(out.tangent, -out.tangent.x);
+      if (out.up.lengthSq() < 1e-8) out.up.set(0, 0, 1);
+      out.up.normalize();
+      out.right.crossVectors(out.tangent, out.up).normalize();
+    } else {
+      out.right.normalize();
+    }
+    out.up.crossVectors(out.right, out.tangent).normalize();
+  }
+
+  function makeFrame() {
+    return {
+      p: new THREE.Vector3(),
+      tangent: new THREE.Vector3(),
+      up: new THREE.Vector3(),
+      right: new THREE.Vector3()
+    };
+  }
+
+  const basisBack = new THREE.Vector3();
+  const basisMatrix = new THREE.Matrix4();
+  function basisQuat(right, up, forward, quat) {
+    basisBack.copy(forward).negate();
+    basisMatrix.makeBasis(right, up, basisBack);
+    quat.setFromRotationMatrix(basisMatrix);
+  }
+
+  function buildCenterline() {
+    const raw = [];
+    const flags = [];
+    const meta = {
+      join: new THREE.Vector3(-24, 6, -32),
+      lake: { x: 210, z: 92, r: 36 }
+    };
+
+    function pushPoint(x, y, z, flag) {
+      const p = new THREE.Vector3(x, y, z);
+      if (raw.length && raw[raw.length - 1].distanceTo(p) < 0.3) return;
+      raw.push(p);
+      flags.push(flag || 0);
+    }
+
+    function arrDist(a, b) {
+      const dx = a[0] - b[0];
+      const dy = a[1] - b[1];
+      const dz = a[2] - b[2];
+      return Math.hypot(dx, dy, dz);
+    }
+
+    function bezier(p0, c1, c2, p3, flag) {
+      const rough = arrDist(p0, c1) + arrDist(c1, c2) + arrDist(c2, p3);
+      const n = Math.max(4, Math.ceil(rough / 1.15));
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        const u = 1 - t;
+        pushPoint(
+          u * u * u * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p3[0],
+          u * u * u * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p3[1],
+          u * u * u * p0[2] + 3 * u * u * t * c1[2] + 3 * u * t * t * c2[2] + t * t * t * p3[2],
+          flag
+        );
+      }
+    }
+
+    function addLeftArc(start, dir, radius, y1) {
+      const horiz = Math.hypot(dir.x, dir.z) || 1;
+      const fx = dir.x / horiz;
+      const fz = dir.z / horiz;
+      const cx = start.x - fz * radius;
+      const cz = start.z + fx * radius;
+      const a0 = Math.atan2(start.z - cz, start.x - cx);
+      let a1 = Math.PI / 2;
+      while (a1 < a0 + 0.35) a1 += TAU;
+      const sweep = a1 - a0;
+      const steps = Math.max(8, Math.ceil((sweep * radius) / 1.15));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const a = a0 + sweep * t;
+        const y = start.y + (y1 - start.y) * t;
+        pushPoint(cx + Math.cos(a) * radius, y, cz + Math.sin(a) * radius, 0);
+      }
+      return {
+        x: cx + Math.cos(a1) * radius,
+        y: y1,
+        z: cz + Math.sin(a1) * radius
+      };
+    }
+
+    function addLoop(start, dirX, dirZ, radius) {
+      const len = Math.hypot(dirX, dirZ) || 1;
+      const dx = dirX / len;
+      const dz = dirZ / len;
+      const steps = Math.max(24, Math.ceil((TAU * radius) / 1.05));
+      for (let i = 1; i < steps; i++) {
+        const theta = (i / steps) * TAU;
+        pushPoint(
+          start.x + dx * Math.sin(theta) * radius,
+          start.y + (1 - Math.cos(theta)) * radius,
+          start.z + dz * Math.sin(theta) * radius,
+          1
+        );
+      }
+      const exit = new THREE.Vector3(
+        start.x + dx * radius * 0.42,
+        start.y + 0.08,
+        start.z + dz * radius * 0.42
+      );
+      pushPoint(exit.x, exit.y, exit.z, 0);
+      pushPoint(exit.x + dx * 5, start.y + 0.35, exit.z + dz * 5, 0);
+      meta.loop = {
+        centerX: start.x,
+        centerY: start.y + radius,
+        centerZ: start.z,
+        baseY: start.y,
+        r: radius
+      };
+      return new THREE.Vector3(exit.x + dx * 5, start.y + 0.35, exit.z + dz * 5);
+    }
+
+    bezier([-24, 6, -32], [-8, 6, -32], [16, 6, -32], [38, 6, -32]);
+    meta.liftStart = new THREE.Vector3(38, 6, -32);
+    bezier([38, 6, -32], [64, 8, -31], [90, 20, -28], [112, 34, -22]);
+    bezier([112, 34, -22], [128, 45, -14], [142, 52, -4], [152, 53.4, 6]);
+    meta.liftEnd = new THREE.Vector3(152, 53.4, 6);
+    bezier([152, 53.4, 6], [160, 53.6, 14], [168, 46, 24], [174, 36, 34]);
+    bezier([174, 36, 34], [182, 22, 48], [192, 8, 64], [200, 3.5, 78]);
+    bezier([200, 3.5, 78], [210, 3.3, 92], [222, 11, 104], [232, 16.2, 114]);
+    bezier([232, 16.2, 114], [242, 16.4, 126], [248, 7, 140], [250, 3.9, 154]);
+
+    const dropEnd = raw[raw.length - 1];
+    const prev = raw[raw.length - 2];
+    const incoming = dropEnd.clone().sub(prev);
+    const turnEnd = addLeftArc(dropEnd, incoming, 36, 6.4);
+    bezier(
+      [turnEnd.x, turnEnd.y, turnEnd.z],
+      [turnEnd.x - 5, (turnEnd.y + 5.5) * 0.5, turnEnd.z],
+      [turnEnd.x - 12, 5.5, turnEnd.z],
+      [turnEnd.x - 18, 5.45, turnEnd.z]
+    );
+    const loopStart = { x: turnEnd.x - 18, y: 5.45, z: turnEnd.z };
+    const loopExit = addLoop(loopStart, -1, 0, 14);
+
+    const helixR = 30;
+    const helixCx = loopExit.x - 24;
+    const helixCz = loopExit.z - helixR;
+    const helixY0 = 19;
+    const helixY1 = 5.6;
+    const helixA0 = Math.PI / 2;
+    const helixSweep = TAU * 1.25;
+    bezier(
+      [loopExit.x, loopExit.y, loopExit.z],
+      [loopExit.x - 8, 8, loopExit.z],
+      [helixCx + 14, helixY0, helixCz + helixR],
+      [helixCx, helixY0, helixCz + helixR]
+    );
+    meta.helix = { x: helixCx, z: helixCz, r: helixR, yTop: helixY0 };
+    meta.helixStart = new THREE.Vector3(helixCx, helixY0, helixCz + helixR);
+    const helixSteps = Math.ceil((helixSweep * helixR) / 1.15);
+    for (let i = 1; i <= helixSteps; i++) {
+      const t = i / helixSteps;
+      const a = helixA0 + helixSweep * t;
+      const y = helixY0 + (helixY1 - helixY0) * t;
+      pushPoint(helixCx + Math.cos(a) * helixR, y, helixCz + Math.sin(a) * helixR, 0);
+    }
+    const helixEnd = raw[raw.length - 1].clone();
+    meta.helixEnd = helixEnd.clone();
+
+    const southA = [helixEnd.x, helixEnd.y, helixEnd.z];
+    const southB = [helixEnd.x, 6.2, helixEnd.z - 18];
+    const southC = [helixEnd.x - 12, 8.5, helixEnd.z - 40];
+    const southD = [helixEnd.x - 30, 10, helixEnd.z - 62];
+    bezier(southA, southB, southC, southD);
+    const cork0 = southD;
+    const cork1 = [southD[0] - 28, 7.2, southD[2] - 34];
+    const cork2 = [cork1[0] - 24, 5.6, cork1[2] - 30];
+    const cork3 = [cork2[0] - 16, 6.3, cork2[2] - 22];
+    meta.corkStart = new THREE.Vector3(cork0[0], cork0[1], cork0[2]);
+    bezier(cork0, cork1, cork2, cork3);
+    meta.corkEnd = new THREE.Vector3(cork3[0], cork3[1], cork3[2]);
+
+    bezier(
+      cork3,
+      [cork3[0] - 16, 7, cork3[2] - 8],
+      [-20, 7.2, -12],
+      [-46, 6.6, -18]
+    );
+    bezier(
+      [-46, 6.6, -18],
+      [-58, 6.3, -24],
+      [-58, 6, -30],
+      [-50, 6, -32]
+    );
+    bezier([-50, 6, -32], [-42, 6, -32], [-33, 6, -32], [-25.4, 6, -32]);
+
+    return { points: raw, flags, meta };
+  }
+
+  function relaxClosed(points, flags) {
+    let current = points.map((p) => p.clone());
+    for (let pass = 0; pass < 2; pass++) {
+      const next = new Array(current.length);
+      const n = current.length;
+      for (let i = 0; i < n; i++) {
+        const prev = current[(i - 1 + n) % n];
+        const nxt = current[(i + 1) % n];
+        const mid = prev.clone().add(nxt).multiplyScalar(0.5);
+        const amount = flags[i] === 1 ? 0.05 : 0.34;
+        next[i] = current[i].clone().lerp(mid, amount);
+      }
+      current = next;
+    }
+    for (const p of current) if (p.y < 3.2) p.y = 3.2;
+    return current;
+  }
+
+  function resampleClosed(points, spacing) {
+    const n = points.length;
+    const lens = new Float64Array(n);
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      lens[i] = points[i].distanceTo(points[(i + 1) % n]);
+      total += lens[i];
+    }
+    const count = Math.max(64, Math.round(total / spacing));
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      let target = (i / count) * total;
+      let seg = 0;
+      while (seg < n - 1 && (lens[seg] <= 1e-6 || target > lens[seg])) {
+        target -= lens[seg];
+        seg++;
+      }
+      const denom = lens[seg] || 1;
+      const t = clamp(target / denom, 0, 1);
+      out.push(new THREE.Vector3().lerpVectors(points[seg], points[(seg + 1) % n], t));
+    }
+    return { points: out, length: total };
+  }
+
+  function buildFrames(points, length, meta) {
+    const count = points.length;
+    const framesLocal = [];
+    for (let i = 0; i < count; i++) {
+      const prev = points[(i - 1 + count) % count];
+      const next = points[(i + 1) % count];
+      const tangent = next.clone().sub(prev);
+      if (tangent.lengthSq() < 1e-8) tangent.set(1, 0, 0);
+      else tangent.normalize();
+      framesLocal.push({
+        p: points[i],
+        tangent,
+        up: new THREE.Vector3(),
+        right: new THREE.Vector3()
+      });
+    }
+
+    let up = new THREE.Vector3(0, 1, 0);
+    if (Math.abs(up.dot(framesLocal[0].tangent)) > 0.95) up.set(1, 0, 0);
+    up.addScaledVector(framesLocal[0].tangent, -up.dot(framesLocal[0].tangent)).normalize();
+    framesLocal[0].up.copy(up);
+
+    const q = new THREE.Quaternion();
+    const axis = new THREE.Vector3();
+    for (let i = 1; i < count; i++) {
+      const t0 = framesLocal[i - 1].tangent;
+      const t1 = framesLocal[i].tangent;
+      axis.crossVectors(t0, t1);
+      const sin = axis.length();
+      const cos = clamp(t0.dot(t1), -1, 1);
+      if (sin > 1e-6) {
+        axis.multiplyScalar(1 / sin);
+        q.setFromAxisAngle(axis, Math.atan2(sin, cos));
+        up.applyQuaternion(q);
+      }
+      up.addScaledVector(t1, -up.dot(t1)).normalize();
+      framesLocal[i].up.copy(up);
+    }
+
+    // Spread the closed-loop twist so the join does not pop.
+    const endUp = framesLocal[count - 1].up.clone();
+    const tLast = framesLocal[count - 1].tangent;
+    const tFirst = framesLocal[0].tangent;
+    axis.crossVectors(tLast, tFirst);
+    const sinH = axis.length();
+    const cosH = clamp(tLast.dot(tFirst), -1, 1);
+    if (sinH > 1e-6) {
+      axis.multiplyScalar(1 / sinH);
+      q.setFromAxisAngle(axis, Math.atan2(sinH, cosH));
+      endUp.applyQuaternion(q);
+    }
+    endUp.addScaledVector(tFirst, -endUp.dot(tFirst)).normalize();
+    const twist = signedAngle(tFirst, endUp, framesLocal[0].up);
+    for (let i = 0; i < count; i++) {
+      q.setFromAxisAngle(framesLocal[i].tangent, twist * (i / count));
+      framesLocal[i].up.applyQuaternion(q).normalize();
+    }
+
+    const banks = new Float64Array(count);
+    const step = 4;
+    const refH = hRefGuess(framesLocal);
+    for (let i = 0; i < count; i++) {
+      const ia = (i - step + count) % count;
+      const ib = (i + step) % count;
+      const a = framesLocal[ia].tangent;
+      const b = framesLocal[ib].tangent;
+      const al = Math.hypot(a.x, a.z);
+      const bl = Math.hypot(b.x, b.z);
+      if (al < 0.28 || bl < 0.28) continue;
+      const ax = a.x / al;
+      const az = a.z / al;
+      const bx = b.x / bl;
+      const bz = b.z / bl;
+      const dAng = Math.atan2(ax * bz - az * bx, ax * bx + az * bz);
+      const ds = (step * 2 / count) * length;
+      const curvature = dAng / Math.max(0.001, ds);
+      const v = Math.sqrt(Math.max(0, 2 * 9.81 * (refH - framesLocal[i].p.y)));
+      let bank = Math.atan((v * v * curvature) / 9.81);
+      const pitch = Math.abs(Math.asin(clamp(framesLocal[i].tangent.y, -1, 1)));
+      const level = 1 - smoothstep(pitch, 0.45, 1.15);
+      banks[i] = clamp(bank, -0.85, 0.85) * level;
+    }
+    const smoothBanks = smoothCircular(banks, 8);
+    for (let i = 0; i < count; i++) {
+      q.setFromAxisAngle(framesLocal[i].tangent, -smoothBanks[i]);
+      framesLocal[i].up.applyQuaternion(q).normalize();
+    }
+
+    applyCorkscrew(framesLocal, meta);
+
+    for (let i = 0; i < count; i++) {
+      const f = framesLocal[i];
+      f.right.crossVectors(f.tangent, f.up);
+      if (f.right.lengthSq() < 1e-8) {
+        f.up.set(0, 1, 0).addScaledVector(f.tangent, -f.tangent.y).normalize();
+        f.right.crossVectors(f.tangent, f.up);
+      }
+      f.right.normalize();
+      f.up.crossVectors(f.right, f.tangent).normalize();
+    }
+
+    const helixSpan = orderedSpan(
+      nearestOn(framesLocal, meta.helixStart),
+      nearestOn(framesLocal, meta.helixEnd)
+    );
+    meta.helix.index0 = helixSpan.start;
+    meta.helix.span = helixSpan.span < framesLocal.length * 0.45 ? helixSpan.span : 0;
+    return framesLocal;
+  }
+
+  function hRefGuess(frameList) {
+    let max = 0;
+    for (let i = 0; i < frameList.length; i++) max = Math.max(max, frameList[i].p.y);
+    return max + 8;
+  }
+
+  function applyCorkscrew(frameList, meta) {
+    const count = frameList.length;
+    const span = orderedSpan(nearestOn(frameList, meta.corkStart), nearestOn(frameList, meta.corkEnd));
+    if (span.span < 24 || span.span > count * 0.22) return;
+    const q = new THREE.Quaternion();
+    for (let k = 0; k <= span.span; k++) {
+      const t = k / span.span;
+      if (t <= 0 || t >= 0.999) continue;
+      const roll = smoothstep(t, 0, 1) * TAU;
+      const frame = frameList[(span.start + k) % count];
+      q.setFromAxisAngle(frame.tangent, roll);
+      frame.up.applyQuaternion(q).normalize();
+    }
+  }
+
+  function nearestOn(frameList, point) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < frameList.length; i++) {
+      const d = frameList[i].p.distanceToSquared(point);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  function buildTube(frameList, rightOff, upOff, radius, radial, closed) {
+    const n = frameList.length;
+    const positions = [];
+    const normals = [];
+    const indices = [];
+    for (let i = 0; i < n; i++) {
+      const f = frameList[i];
+      const cx = f.p.x + f.right.x * rightOff + f.up.x * upOff;
+      const cy = f.p.y + f.right.y * rightOff + f.up.y * upOff;
+      const cz = f.p.z + f.right.z * rightOff + f.up.z * upOff;
+      for (let k = 0; k < radial; k++) {
+        const a = (k / radial) * TAU;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        const nx = f.right.x * c + f.up.x * s;
+        const ny = f.right.y * c + f.up.y * s;
+        const nz = f.right.z * c + f.up.z * s;
+        positions.push(cx + nx * radius, cy + ny * radius, cz + nz * radius);
+        normals.push(nx, ny, nz);
+      }
+    }
+    const segCount = closed ? n : n - 1;
+    for (let i = 0; i < segCount; i++) {
+      const i2 = (i + 1) % n;
+      for (let k = 0; k < radial; k++) {
+        const k2 = (k + 1) % radial;
+        const a = i * radial + k;
+        const b = i2 * radial + k;
+        const c = i2 * radial + k2;
+        const d = i * radial + k2;
+        indices.push(a, b, d, b, c, d);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setIndex(indices);
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  function buildBeam(frameList, yOffset, halfW, halfH) {
+    const n = frameList.length;
+    const positions = [];
+    const normals = [];
+    const indices = [];
+    const corners = [[halfW, halfH], [-halfW, halfH], [-halfW, -halfH], [halfW, -halfH]];
+    for (let i = 0; i < n; i++) {
+      const f = frameList[i];
+      for (let k = 0; k < 4; k++) {
+        const cx = corners[k][0];
+        const cy = corners[k][1] + yOffset;
+        positions.push(
+          f.p.x + f.right.x * cx + f.up.x * cy,
+          f.p.y + f.right.y * cx + f.up.y * cy,
+          f.p.z + f.right.z * cx + f.up.z * cy
+        );
+        const nx = f.right.x * Math.sign(corners[k][0] || 1) * 0.2 + f.up.x * Math.sign(corners[k][1] || 1);
+        const ny = f.right.y * Math.sign(corners[k][0] || 1) * 0.2 + f.up.y * Math.sign(corners[k][1] || 1);
+        const nz = f.right.z * Math.sign(corners[k][0] || 1) * 0.2 + f.up.z * Math.sign(corners[k][1] || 1);
+        const len = Math.hypot(nx, ny, nz) || 1;
+        normals.push(nx / len, ny / len, nz / len);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const i2 = (i + 1) % n;
+      for (let k = 0; k < 4; k++) {
+        const k2 = (k + 1) % 4;
+        const a = i * 4 + k;
+        const b = i2 * 4 + k;
+        const c = i2 * 4 + k2;
+        const d = i * 4 + k2;
+        indices.push(a, d, b, b, d, c);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setIndex(indices);
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  function cylinderBetween(a, b, radius, material) {
+    const dir = b.clone().sub(a);
+    const len = dir.length();
+    const geo = new THREE.CylinderGeometry(radius, radius, len, 8);
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.multiplyScalar(1 / len));
+    mesh.castShadow = true;
+    return mesh;
+  }
+
+  function labelTexture(text, background, foreground) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 160;
+    const g = canvas.getContext('2d');
+    g.fillStyle = background;
+    g.fillRect(0, 0, 512, 160);
+    g.fillStyle = foreground;
+    g.font = '700 78px Segoe UI, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, 256, 84);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  function signedAngle(axis, from, to) {
+    const cross = new THREE.Vector3().crossVectors(from, to);
+    return Math.atan2(axis.dot(cross), from.dot(to));
+  }
+
+  function smoothCircular(values, radius) {
+    const n = values.length;
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      let weight = 0;
+      for (let k = -radius; k <= radius; k++) {
+        const w = radius + 1 - Math.abs(k);
+        sum += values[(i + k + n) % n] * w;
+        weight += w;
+      }
+      out[i] = sum / weight;
+    }
+    return out;
+  }
+
+  function smoothstep(x, edge0, edge1) {
+    const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function modulo(v, m) {
+    return ((v % m) + m) % m;
+  }
+
+  function hash(n) {
+    const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  }
+}
+</script>
+</body>
+</html>
