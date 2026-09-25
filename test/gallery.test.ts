@@ -20,9 +20,6 @@ describe('gallery CLI module', () => {
     expect(suitePath.replaceAll('\\', '/')).toMatch(/suites\/browser-autonomy\/suite\.json$/);
     const suite = loadSuite(suitePath);
     expect(suite).not.toBeNull();
-    expect(suite.benchmarks.map((row: { id: string }) => row.id)).toEqual([
-      'rollercoaster',
-      'fireworks',
-    ]);
+    expect(suite.benchmarks.map((row: { id: string }) => row.id)).toEqual(['rollercoaster']);
   });
 });

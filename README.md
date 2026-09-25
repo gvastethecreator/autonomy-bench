@@ -2,7 +2,7 @@
 
 Receipt-driven benchmark for how coding models handle underspecified single-HTML browser tasks.
 
-The live suite is **Rollercoaster** and **Fireworks** with a frozen A/B/C prompt ladder: six cells per model. A is the raw task. B adds 20 words of autonomy. C adds 20 words of showcase pressure. The model still chooses architecture, interaction, look, and scope. **Ant Colony is suspended**; its prompts and published takes are preserved in [.archives](.archives/README.md). More benches can be restored or added later without changing that ladder.
+The live suite is **Rollercoaster** with a frozen A/B/C prompt ladder: three cells per model. A is the raw task. B adds 20 words of autonomy. C adds 20 words of showcase pressure. The model still chooses architecture, interaction, look, and scope. **Ant Colony and Fireworks are suspended**; their prompts and published takes are preserved in [.archives](.archives/README.md). More benches can be restored or added later without changing that ladder.
 
 Live gallery: [benchmark.gvaste.dev](https://benchmark.gvaste.dev).
 

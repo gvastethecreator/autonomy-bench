@@ -21,7 +21,7 @@ A synthetic probe through the existing review CLI illustrates the failure. Given
 
 ## Recommended public value
 
-Show **verified task success** as the main numeric value and keep visual quality separately labeled. Prefer a fraction, such as **5/6 passed**, with the percentage available beside it. Do not label this percentage “quality.” Ant Colony is now suspended, so the live scope is six cells per model. The 193-take audit above records the earlier snapshot, before suspension.
+Show **verified task success** as the main numeric value and keep visual quality separately labeled. Prefer a fraction, such as **2/3 passed**, with the percentage available beside it. Do not label this percentage “quality.” Ant Colony and Fireworks are now suspended, so the live scope is three cells per model. The 193-take audit above records the earlier snapshot, before either suspension.
 
 For a selected scope:
 
@@ -32,7 +32,7 @@ For a selected scope:
 5. Report the number of passed takes over all expected takes. Keep failures and unknowns explicit. With unknowns, show a provisional fraction such as **4 passed, 1 failed, 1 not verified** instead of a complete-looking rank.
 6. Once every expected slot has a result, sort by the passed fraction. Preserve ties. A stable model id controls display order within a tie, not quality order.
 
-The denominator must include the full selected scope. Do not average only the successful or reviewed subset. With six live cells, report the fraction rather than unnecessary decimal precision. Suspended cells are outside this scope; they are not model failures. One attempt per cell measures this run; it is not a probability that the model will succeed next time.
+The denominator must include the full selected scope. Do not average only the successful or reviewed subset. With three live cells, report the fraction rather than unnecessary decimal precision. Suspended cells are outside this scope; they are not model failures. One attempt per cell measures this run; it is not a probability that the model will succeed next time.
 
 This value answers “how much of the task suite was demonstrated?” It does not distinguish two fully working outputs by visual finish. That distinction needs the quality profile below.
 

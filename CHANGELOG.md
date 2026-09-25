@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Browser Autonomy Suite v2.4.0 suspends Fireworks. Its frozen definition and 61 published takes remain in `.archives`, with hashes for all 223 files. Rollercoaster is the only live benchmark; finalized historical runs stay intact.
 - Browser Autonomy Suite v2.3.0 suspends Ant Colony. Its frozen definition and 53 published takes remain in `.archives`, with hashes for all 200 files. The live suite has Rollercoaster and Fireworks at A/B/C; finalized historical runs stay intact.
 - CI keeps validation on pushes, while production deployment now runs only through a manual `workflow_dispatch` or an explicit local `vp run deploy`.
 - The global Autonomy Bench title uses 🧪. Astra Light keeps its variant id while recording `low` reasoning. Receipt details display measured Codex input, output, and cache tokens. Gallery archiving preserves model metadata and stops on an existing archive destination.

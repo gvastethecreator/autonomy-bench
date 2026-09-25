@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <meta name="theme-color" content="#111b27">
+  <title>Altitude — Continuous Coaster</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      text-rendering: geometricPrecision;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111b27; }
+    body { color: #f3f7f8; }
+    canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+    .hud { position: fixed; inset: 0; pointer-events: none; }
+    .hud::before {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(7,15,24,.65) 0%, transparent 23%, transparent 67%, rgba(7,15,24,.42) 100%);
+    }
+    .topbar {
+      position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center;
+      gap: 15px; padding: 25px clamp(20px, 4vw, 58px);
+    }
+    .mark {
+      display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid rgba(233,245,247,.38);
+      border-radius: 13px; color: #f2bd76; font-size: 20px; font-weight: 800; letter-spacing: -.1em;
+      background: rgba(13,24,34,.32); box-shadow: inset 0 0 20px rgba(255,255,255,.04);
+    }
+    .brand { display: flex; flex-direction: column; gap: 4px; }
+    .brand strong { font-size: 13px; letter-spacing: .22em; font-weight: 750; }
+    .brand small, .route small { color: rgba(230,239,240,.61); font-size: 9px; letter-spacing: .17em; }
+    .route {
+      margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+      padding-right: 26px; border-right: 1px solid rgba(235,245,247,.24);
+    }
+    .route b { font-size: 10px; letter-spacing: .18em; color: #e9c38d; }
+    .speed { min-width: 110px; padding-left: 2px; white-space: nowrap; }
+    .speed strong { font-size: clamp(24px, 3.4vw, 39px); line-height: 1; letter-spacing: -.06em; font-weight: 650; }
+    .speed span { margin-left: 6px; font-size: 9px; letter-spacing: .18em; color: rgba(237,244,242,.68); }
+    .bottom {
+      position: absolute; left: clamp(20px, 4vw, 58px); right: clamp(20px, 4vw, 58px); bottom: 24px;
+      display: grid; grid-template-columns: 1fr minmax(90px, 34vw) 1fr; align-items: center; gap: 20px;
+      color: rgba(242,247,246,.75); font-size: 9px; letter-spacing: .16em;
+    }
+    .bottom .state { color: #edc68f; }
+    .bottom .lap { text-align: right; }
+    .progress { height: 2px; overflow: hidden; background: rgba(239,247,245,.25); }
+    .progress i { display: block; width: 0; height: 100%; background: #f1c48a; box-shadow: 0 0 10px rgba(241,196,138,.8); }
+    .reticle {
+      position: absolute; left: 50%; top: 50%; width: 23px; height: 23px;
+      transform: translate(-50%,-50%); opacity: .45;
+    }
+    .reticle::before, .reticle::after { content: ""; position: absolute; background: rgba(248,250,246,.78); }
+    .reticle::before { width: 1px; height: 13px; left: 11px; top: 5px; }
+    .reticle::after { width: 13px; height: 1px; left: 5px; top: 11px; }
+    .error {
+      position: fixed; inset: 0; display: none; place-items: center; padding: 28px; text-align: center;
+      color: #f3f7f8; background: #101a26; line-height: 1.6;
+    }
+    .error.visible { display: grid; }
+    .error div { max-width: 460px; }
+    .error strong { display: block; margin-bottom: 8px; letter-spacing: .12em; }
+    @media (max-width: 560px) {
+      .topbar { gap: 10px; padding-top: 18px; }
+      .mark { width: 36px; height: 36px; }
+      .brand small { font-size: 7px; letter-spacing: .1em; }
+      .route { display: none; }
+      .speed { min-width: auto; }
+      .bottom { bottom: 16px; grid-template-columns: 1fr minmax(60px, 28vw) 1fr; gap: 10px; font-size: 7px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hud" aria-hidden="true">
+    <div class="topbar">
+      <div class="mark">A</div>
+      <div class="brand">
+        <strong>ALTITUDE</strong>
+        <small>COASTER SYSTEMS · FIELD TEST 09</small>
+      </div>
+      <div class="route">
+        <b>ROUTE 06</b>
+        <small>CONTINUOUS CIRCUIT</small>
+      </div>
+      <div class="speed"><strong id="speed">0</strong><span>KM/H</span></div>
+    </div>
+    <div class="reticle"></div>
+    <div class="bottom">
+      <span class="state">● LIVE CIRCUIT</span>
+      <div class="progress"><i id="progress"></i></div>
+      <span class="lap" id="lap">LAP 01 · INFINITE</span>
+    </div>
+  </div>
+  <div class="error" id="error" role="alert"><div><strong>RIDE UNAVAILABLE</strong>This experience needs a browser with WebGL support and a connection to load Three.js.</div></div>
+
+  <script type="module">
+    try {
+      const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js');
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xb9d3dd);
+      scene.fog = new THREE.Fog(0xb9d3dd, 95, 285);
+
+      const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.1, 520);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.08;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
+      renderer.domElement.setAttribute('aria-hidden', 'true');
+
+      scene.add(new THREE.HemisphereLight(0xd9edf2, 0x35404a, 1.75));
+      const sun = new THREE.DirectionalLight(0xffdfb6, 3.0);
+      sun.position.set(-55, 105, 48);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(1536, 1536);
+      sun.shadow.camera.left = -125;
+      sun.shadow.camera.right = 125;
+      sun.shadow.camera.top = 125;
+      sun.shadow.camera.bottom = -125;
+      sun.shadow.bias = -0.00015;
+      scene.add(sun);
+
+      const groundY = -4;
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(520, 520),
+        new THREE.MeshStandardMaterial({ color: 0x647d6c, roughness: 1 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = groundY;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      let seed = 240924;
+      function random() {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      }
+
+      const trunkMesh = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.17, 0.31, 1, 6),
+        new THREE.MeshStandardMaterial({ color: 0x594536, roughness: 1 }),
+        360
+      );
+      const canopyMesh = new THREE.InstancedMesh(
+        new THREE.ConeGeometry(1, 1, 6),
+        new THREE.MeshStandardMaterial({ color: 0x365a4b, roughness: 1 }),
+        360
+      );
+      const dummy = new THREE.Object3D();
+      let treeIndex = 0;
+      for (let i = 0; i < 180; i++) {
+        const angle = random() * Math.PI * 2;
+        const radius = 76 + random() * 91;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        const height = 5.5 + random() * 8;
+        const trunkHeight = 2.0 + random() * 0.9;
+        dummy.position.set(x, groundY + trunkHeight / 2, z);
+        dummy.scale.set(0.85, trunkHeight, 0.85);
+        dummy.rotation.y = random() * Math.PI;
+        dummy.updateMatrix();
+        trunkMesh.setMatrixAt(treeIndex, dummy.matrix);
+        dummy.position.set(x, groundY + trunkHeight + (height - trunkHeight) / 2, z);
+        dummy.scale.set(height * 0.24, height - trunkHeight, height * 0.24);
+        dummy.rotation.y = 0;
+        dummy.updateMatrix();
+        canopyMesh.setMatrixAt(treeIndex, dummy.matrix);
+        treeIndex++;
+      }
+      trunkMesh.count = treeIndex;
+      canopyMesh.count = treeIndex;
+      trunkMesh.castShadow = canopyMesh.castShadow = true;
+      scene.add(trunkMesh, canopyMesh);
+
+      const mountainMesh = new THREE.InstancedMesh(
+        new THREE.ConeGeometry(1, 1, 7),
+        new THREE.MeshStandardMaterial({ color: 0x71858a, roughness: 1 }),
+        28
+      );
+      for (let i = 0; i < 28; i++) {
+        const angle = (i / 28) * Math.PI * 2 + random() * 0.12;
+        const radius = 192 + random() * 36;
+        const height = 38 + random() * 53;
+        const width = 23 + random() * 19;
+        dummy.position.set(Math.cos(angle) * radius, groundY + height / 2 - 1, Math.sin(angle) * radius);
+        dummy.scale.set(width, height, width * (0.8 + random() * 0.5));
+        dummy.rotation.set(0, random() * Math.PI, 0);
+        dummy.updateMatrix();
+        mountainMesh.setMatrixAt(i, dummy.matrix);
+      }
+      mountainMesh.castShadow = true;
+      scene.add(mountainMesh);
+
+      const routePoints = [
+        [-46, 12, -30], [-32, 14, -43], [-5, 18, -49], [24, 13, -44],
+        [45, 18, -27], [52, 38, -2], [40, 54, 25], [20, 24, 39],
+        [-9, 13, 45], [-34, 18, 36], [-52, 39, 16], [-51, 51, -12], [-30, 24, -30]
+      ].map(function (point) { return new THREE.Vector3(point[0], point[1], point[2]); });
+      const route = new THREE.CatmullRomCurve3(routePoints, true, 'centripetal', 0.5);
+      const routeLength = route.getLength();
+      const worldUp = new THREE.Vector3(0, 1, 0);
+
+      function frameAt(t) {
+        const tangent = route.getTangentAt((t + 1) % 1).normalize();
+        const nextTangent = route.getTangentAt((t + 0.003) % 1).normalize();
+        let right = new THREE.Vector3().crossVectors(worldUp, tangent);
+        if (right.lengthSq() < 0.0001) right.set(1, 0, 0);
+        right.normalize();
+        let up = new THREE.Vector3().crossVectors(tangent, right).normalize();
+        const curvature = new THREE.Vector3().crossVectors(tangent, nextTangent).dot(worldUp);
+        const bank = THREE.MathUtils.clamp(curvature * 11, -0.32, 0.32);
+        const c = Math.cos(bank);
+        const s = Math.sin(bank);
+        const bankedRight = right.clone().multiplyScalar(c).addScaledVector(up, s);
+        const bankedUp = up.clone().multiplyScalar(c).addScaledVector(right, -s);
+        return { tangent: tangent, right: bankedRight, up: bankedUp };
+      }
+
+      const railMaterial = new THREE.MeshStandardMaterial({ color: 0x97a8ae, metalness: 0.78, roughness: 0.28 });
+      const railGlowMaterial = new THREE.MeshStandardMaterial({ color: 0xc1d4d8, metalness: 0.68, roughness: 0.24 });
+      const railSegments = 1050;
+      for (const side of [-1, 1]) {
+        const points = [];
+        for (let i = 0; i < railSegments; i++) {
+          const t = i / railSegments;
+          const center = route.getPointAt(t);
+          const frame = frameAt(t);
+          points.push(center.addScaledVector(frame.right, side * 1.08).addScaledVector(frame.up, 0.18));
+        }
+        const railPath = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5);
+        const rail = new THREE.Mesh(new THREE.TubeGeometry(railPath, railSegments, 0.13, 10, true), side === 1 ? railMaterial : railGlowMaterial);
+        rail.castShadow = true;
+        rail.receiveShadow = true;
+        scene.add(rail);
+      }
+
+      const tieCount = Math.floor(routeLength / 1.28);
+      const tieMesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(2.78, 0.14, 0.25),
+        new THREE.MeshStandardMaterial({ color: 0x433d36, roughness: 0.88 }),
+        tieCount
+      );
+      for (let i = 0; i < tieCount; i++) {
+        const t = i / tieCount;
+        const center = route.getPointAt(t);
+        const frame = frameAt(t);
+        const basis = new THREE.Matrix4().makeBasis(frame.right, frame.up, frame.tangent);
+        dummy.position.copy(center).addScaledVector(frame.up, 0.04);
+        dummy.quaternion.setFromRotationMatrix(basis);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        tieMesh.setMatrixAt(i, dummy.matrix);
+      }
+      tieMesh.castShadow = true;
+      tieMesh.receiveShadow = true;
+      scene.add(tieMesh);
+
+      const supportSpacing = 4.6;
+      const supportCount = Math.floor(routeLength / supportSpacing);
+      const postMesh = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.105, 0.18, 1, 8),
+        new THREE.MeshStandardMaterial({ color: 0x4a5960, metalness: 0.57, roughness: 0.47 }),
+        supportCount * 2
+      );
+      const beamMesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(2.72, 0.17, 0.2),
+        new THREE.MeshStandardMaterial({ color: 0x59676b, metalness: 0.48, roughness: 0.51 }),
+        supportCount
+      );
+      const feetMesh = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.35, 0.46, 0.22, 6),
+        new THREE.MeshStandardMaterial({ color: 0x6c7773, roughness: 0.9 }),
+        supportCount * 2
+      );
+      let postIndex = 0;
+      const horizontal = new THREE.Vector3(1, 0, 0);
+      for (let i = 0; i < supportCount; i++) {
+        const t = i / supportCount;
+        const center = route.getPointAt(t);
+        const frame = frameAt(t);
+        const topY = center.y - 0.42;
+        const height = Math.max(0.4, topY - groundY);
+        for (const side of [-1, 1]) {
+          const x = center.x + frame.right.x * side * 1.08;
+          const z = center.z + frame.right.z * side * 1.08;
+          dummy.position.set(x, groundY + height / 2, z);
+          dummy.scale.set(1, height, 1);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          postMesh.setMatrixAt(postIndex, dummy.matrix);
+          dummy.position.set(x, groundY + 0.12, z);
+          dummy.scale.set(1, 1, 1);
+          dummy.updateMatrix();
+          feetMesh.setMatrixAt(postIndex, dummy.matrix);
+          postIndex++;
+        }
+        dummy.position.set(center.x, topY - 0.2, center.z);
+        dummy.quaternion.setFromUnitVectors(horizontal, frame.right);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        beamMesh.setMatrixAt(i, dummy.matrix);
+      }
+      postMesh.count = postIndex;
+      feetMesh.count = postIndex;
+      postMesh.castShadow = beamMesh.castShadow = feetMesh.castShadow = true;
+      scene.add(postMesh, beamMesh, feetMesh);
+
+      const portalGeometry = new THREE.TorusGeometry(1, 0.085, 10, 64);
+      const portalMaterial = new THREE.MeshStandardMaterial({
+        color: 0xf1c48a, emissive: 0x7a421d, emissiveIntensity: 0.65,
+        metalness: 0.38, roughness: 0.3
+      });
+      for (const t of [0.08, 0.28, 0.5, 0.72, 0.9]) {
+        const center = route.getPointAt(t);
+        const frame = frameAt(t);
+        const portal = new THREE.Mesh(portalGeometry, portalMaterial);
+        portal.position.copy(center).addScaledVector(frame.up, 2.25);
+        portal.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(frame.right, frame.up, frame.tangent));
+        portal.scale.set(5.3, 4.5, 1);
+        portal.castShadow = true;
+        scene.add(portal);
+      }
+
+      camera.position.set(-46, 13.3, -30);
+      scene.add(camera);
+
+      const speedEl = document.getElementById('speed');
+      const progressEl = document.getElementById('progress');
+      const errorEl = document.getElementById('error');
+      const clock = new THREE.Clock();
+      let progress = 0.001;
+      let elapsed = 0;
+      let lastHudUpdate = 0;
+      let lap = 1;
+
+      function animate() {
+        const delta = Math.min(clock.getDelta(), 0.04);
+        elapsed += delta;
+        const speed = 21.5 + Math.sin(progress * Math.PI * 2) * 4.5 + Math.sin(progress * Math.PI * 6) * 1.4;
+        progress = (progress + speed * delta / routeLength) % 1;
+        if (progress < speed * delta / routeLength) lap++;
+
+        const center = route.getPointAt(progress);
+        const frame = frameAt(progress);
+        const cameraRight = frame.tangent.clone().cross(frame.up).normalize();
+        const basis = new THREE.Matrix4().makeBasis(cameraRight, frame.up, frame.tangent.clone().negate());
+        const bob = Math.sin(elapsed * 11.5) * 0.025;
+        camera.position.copy(center).addScaledVector(frame.up, 1.32 + bob);
+        camera.quaternion.setFromRotationMatrix(basis);
+        camera.fov = 77 + Math.max(0, -frame.tangent.y) * 3.5;
+        camera.updateProjectionMatrix();
+
+        if (elapsed - lastHudUpdate > 0.12) {
+          speedEl.textContent = String(Math.round(speed * 3.6));
+          progressEl.style.width = (progress * 100).toFixed(2) + '%';
+          document.getElementById('lap').textContent = 'LAP ' + String(lap).padStart(2, '0') + ' · INFINITE';
+          lastHudUpdate = elapsed;
+        }
+        renderer.render(scene, camera);
+      }
+
+      renderer.setAnimationLoop(animate);
+      window.addEventListener('resize', function () {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
+      });
+    } catch (error) {
+      console.error('Altitude could not start:', error);
+      document.getElementById('error').classList.add('visible');
+    }
+  </script>
+</body>
+</html>
