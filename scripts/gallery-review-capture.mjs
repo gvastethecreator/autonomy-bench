@@ -327,7 +327,7 @@ async function main() {
     args: ['--disable-gpu-sandbox'],
   });
 
-  const results = new Array(cells.length);
+  const results = Array.from({ length: cells.length });
   let cursor = 0;
   async function worker() {
     while (cursor < cells.length) {

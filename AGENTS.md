@@ -5,6 +5,7 @@ Coordinator for frozen browser-autonomy cells. Workers get only their cell packe
 Root commands, suite files, and receipts: `README.md`, `docs/commands.md`, `SKILLS/autonomy-bench/SKILL.md`.
 Suite additions and donated takes: `CONTRIBUTING.md`.
 Code map: `docs/codemap/codemap.md`.
+Gallery viewer source: `scripts/gallery-viewer.html`. `gallery/index.html` is its published copy; `vp run gallery -- --viewer` rewrites it and rebuilds `catalog.json`.
 Toolchain: Vite+ (`vp`). Keep the declared package manager. Do not rewrite frozen prompts under gallery/ or runs/.
 
 ## Hard rules

@@ -55,8 +55,8 @@ function validateOrders(takes, judgments) {
   for (const [scope, ids] of entriesByScope) {
     const order = judgments.cohorts?.[scope];
     if (!Array.isArray(order)) throw new Error('Missing judgment order for ' + scope + '.');
-    const expected = [...ids].sort();
-    const actual = [...order].sort();
+    const expected = [...ids].sort((a, b) => a.localeCompare(b));
+    const actual = [...order].sort((a, b) => String(a).localeCompare(String(b)));
     if (expected.length !== actual.length || expected.some((id, index) => id !== actual[index])) {
       throw new Error('Judgment order does not match the captured takes for ' + scope + '.');
     }
