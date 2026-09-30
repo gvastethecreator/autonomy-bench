@@ -6,7 +6,7 @@ Preview the public stage (`gallery/index.html`) with `vp run dev`. Edit the view
 
 The gallery opens on the Landing view. A query without `mode` means landing; clicking the brand mark or the **Home** tab returns to it.
 
-The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Benchmark cards appear before the live face-off so visitors can choose a task from the first desktop viewport. Each card shows the A/B/C ladder: the raw prompt, then only the words that B and C add, with each level's take count and its confirmed winner or provisional Tier 1 count. **See all** opens Models at that level. Open is the primary action; Models, ABC, and Compare stay beside it. Rungs stack on narrow screens. The introduction states that repairs are marked on each take.
+The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Benchmark cards appear before the live face-off so visitors can choose a task from the first desktop viewport. Each card shows the A/B/C ladder: the raw prompt, then only the words that B and C add, with each level's take count and its confirmed winner or provisional Tier 1 count. **See all** opens Models at that level. The card header holds Open (primary), ABC, and Compare. Rungs stack on narrow screens. The introduction states that repairs are marked on each take.
 
 ## Layout
 
@@ -36,7 +36,7 @@ One navigation bar beside the title holds every destination: **Home**, **Explore
 
 ## Compare
 
-Compare fills the available stage height with 2 or 3 takes side by side. In Fit, each take is centered in its slot. A compact global bar toggles between 2 and 3 views; each slot has its own model, benchmark, and A/B/C level pickers, so you can face two models on the same prompt or one model across the ladder. Each slot keeps the standard take toolbar (Vote, Reload, Copy prompt, HTML, Receipt). The chosen slots serialize to the `slots` query key, so a comparison is a shareable URL. Slots without a landed take typeset the prompt instead of faking a preview.
+Compare fills the available stage height with 2 or 3 takes side by side. Each slot bar shows the full model name and A/B/C pills; the benchmark picker appears only when more than one benchmark is live, and the actions wrap to a second line when the slot is narrow. In Fit, each slot keeps the take's 16:10 shape and the row centers on the stage. A compact global bar toggles between 2 and 3 views; each slot has its own model, benchmark, and A/B/C level pickers, so you can face two models on the same prompt or one model across the ladder. Each slot keeps the standard take toolbar (Vote, Reload, Copy prompt, HTML, Receipt). The chosen slots serialize to the `slots` query key, so a comparison is a shareable URL. Slots without a landed take typeset the prompt instead of faking a preview.
 
 ## Ranking
 
@@ -54,7 +54,7 @@ See [the evaluation protocol](../SKILLS/autonomy-bench/references/evaluation.md)
 
 ## Charts
 
-Charts draws every model with matching catalog facts instead of truncating the list: approximate output tokens, average generation duration, A → B → C token expansion for complete ladders, and suite completion. Completion counts unique benchmark-level slots, caps at 100%, and shows each model's average captured generation time beside the rate. A benchmark filter narrows every chart. Responsive rows keep labels, values, and bars inside the viewport. Bars animate on draw unless `prefers-reduced-motion` is set.
+Charts draws every model with matching catalog facts instead of truncating the list. When the top values dwarf the rest, the scale caps near the third-highest value and the longer bars show a small break before their end: approximate output tokens, average generation duration, A → B → C token expansion for complete ladders, and suite completion. Completion counts unique benchmark-level slots, caps at 100%, and shows each model's average captured generation time beside the rate. A benchmark filter narrows every chart. Responsive rows keep labels, values, and bars inside the viewport. Bars animate on draw unless `prefers-reduced-motion` is set.
 
 If a listed model has no playable HTML for the current filters, the stage typesets the prompt instead of faking a preview.
 
