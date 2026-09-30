@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First-Person Coaster</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f1a; font-family: system-ui, sans-serif; }
+  canvas { display: block; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #hud { position: fixed; left: 16px; right: 16px; bottom: 16px; display: flex; gap: 12px; align-items: flex-end;
+         justify-content: space-between; pointer-events: none; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,.6); }
+  .stats { display: flex; gap: 20px; }
+  .stat b { display: block; font-size: 28px; font-variant-numeric: tabular-nums; line-height: 1; }
+  .stat span { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
+  .btns { display: flex; gap: 8px; pointer-events: auto; }
+  button { font: inherit; font-size: 13px; color: #fff; background: rgba(15,20,35,.55); border: 1px solid rgba(255,255,255,.35);
+           border-radius: 8px; padding: 8px 12px; cursor: pointer; backdrop-filter: blur(6px); }
+  button:hover { background: rgba(40,50,80,.7); }
+  button:focus-visible { outline: 2px solid #ffd76a; outline-offset: 2px; }
+  #hint { position: fixed; top: 14px; left: 0; right: 0; text-align: center; color: #fff; font-size: 13px; opacity: .85;
+          text-shadow: 0 1px 4px rgba(0,0,0,.7); pointer-events: none; transition: opacity 1.5s; }
+  #zone { position: fixed; top: 14px; right: 16px; color: #ffd76a; font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+          text-shadow: 0 1px 4px rgba(0,0,0,.7); pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="hint">Drag to look around · Space pauses · sound starts on first click</div>
+<div id="zone"></div>
+<div id="hud">
+  <div class="stats">
+    <div class="stat"><b id="sp">0</b><span>km/h</span></div>
+    <div class="stat"><b id="ht">0</b><span>m high</span></div>
+    <div class="stat"><b id="gf">1.0</b><span>g</span></div>
+    <div class="stat"><b id="lp">1</b><span>lap</span></div>
+  </div>
+  <div class="btns">
+    <button id="bPause" aria-label="Pause">Pause</button>
+    <button id="bSound" aria-label="Toggle sound">Sound: off</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+/* ---------- renderer / scene ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const HORIZON = new THREE.Color(0xf2c39a);
+scene.fog = new THREE.Fog(HORIZON, 60, 520);
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.1, 1500);
+scene.add(camera);
+
+// sky dome
+const sunDir = new THREE.Vector3(-0.5, 0.28, -0.8).normalize();
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(1000, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { sun: { value: sunDir } },
+    vertexShader: 'varying vec3 d; void main(){ d = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+    fragmentShader: `varying vec3 d; uniform vec3 sun;
+      void main(){
+        float h = clamp(d.y, 0., 1.);
+        vec3 c = mix(vec3(.95,.76,.60), vec3(.25,.45,.80), pow(h, .55));
+        float s = max(dot(d, sun), 0.);
+        c += vec3(1.,.75,.4) * pow(s, 8.) * .5 + vec3(1.,.95,.8) * pow(s, 600.);
+        gl_FragColor = vec4(c, 1.);
+      }`
+  })
+));
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x5a4a3a, 0.9));
+const sun = new THREE.DirectionalLight(0xffd9a8, 2.2);
+sun.position.copy(sunDir).multiplyScalar(200);
+scene.add(sun);
+
+// ground
+const ground = new THREE.Mesh(new THREE.CircleGeometry(900, 48).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x5d8a48 }));
+scene.add(ground);
+
+/* ---------- track path ---------- */
+// Start of the list is the station / bottom of the lift hill; it heads toward -z.
+const ctrl = [
+  [0, 4, 80], [0, 4, 55], [0, 9, 30], [0, 24, 5], [0, 44, -25], [0, 52, -45],   // lift hill
+  [8, 46, -62], [28, 26, -82], [55, 6, -92], [82, 3, -80],                        // first drop
+  [102, 8, -55], [104, 26, -30], [96, 30, -8], [92, 12, 15],                      // turn + camelback
+  [98, 3, 38], [112, 18, 62], [98, 28, 88], [70, 12, 108],                        // banked turn, second hill
+  [40, 3, 118], [14, 5, 108], [0, 4, 92]                                          // return to station
+].map(p => new THREE.Vector3(...p));
+const curve = new THREE.CatmullRomCurve3(ctrl, true, 'centripetal');
+const N = 1800, LEN = curve.getLength(), DS = LEN / N;
+
+const P = [], T = [];
+for (let i = 0; i < N; i++) {
+  const u = i / N;
+  P.push(curve.getPointAt(u));
+  T.push(curve.getTangentAt(u));
+}
+let peak = 0;
+for (let i = 0; i < N; i++) if (P[i].y > P[peak].y) peak = i;
+
+// speed profile: chain lift up to the crest, then energy with drag
+const G = 9.8, LIFT_V = 9, hp = P[peak].y;
+let V = new Array(N);
+for (let i = 0; i < N; i++) {
+  if (i <= peak) V[i] = LIFT_V;
+  else {
+    const e = LIFT_V ** 2 + 2 * G * 0.7 * (hp - P[i].y) - 0.55 * (i - peak) * DS;
+    V[i] = Math.sqrt(Math.max(e, LIFT_V ** 2));
+  }
+}
+const blur = (a, passes, r) => {
+  for (let k = 0; k < passes; k++) {
+    const b = a.slice();
+    for (let i = 0; i < N; i++) {
+      let s = 0;
+      for (let j = -r; j <= r; j++) s += a[(i + j + N) % N];
+      b[i] = s / (2 * r + 1);
+    }
+    a = b;
+  }
+  return a;
+};
+V = blur(V, 2, 6);
+
+// banking from horizontal curvature
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+const psi = T.map(t => Math.atan2(t.x, t.z));
+let bank = new Array(N);
+for (let i = 0; i < N; i++) {
+  const d = wrap(psi[(i + 1) % N] - psi[(i - 1 + N) % N]) / (2 * DS);
+  const b = Math.atan(-V[i] ** 2 * d / G) * 0.9;
+  bank[i] = Math.max(-1.1, Math.min(1.1, b));
+}
+bank = blur(bank, 6, 10);
+
+// frames
+const Yv = new THREE.Vector3(0, 1, 0);
+const R = [], U = [];
+for (let i = 0; i < N; i++) {
+  const f = T[i];
+  const r = new THREE.Vector3().crossVectors(f, Yv).normalize();
+  const u = new THREE.Vector3().crossVectors(r, f).normalize();
+  const c = Math.cos(bank[i]), s = Math.sin(bank[i]);
+  R.push(r.clone().multiplyScalar(c).addScaledVector(u, -s));
+  U.push(u.clone().multiplyScalar(c).addScaledVector(r, s));
+}
+
+/* ---------- track geometry ---------- */
+const railMat = new THREE.MeshStandardMaterial({ color: 0xd8dde6, metalness: 0.7, roughness: 0.3 });
+const spineMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.6 });
+const tieMat = new THREE.MeshStandardMaterial({ color: 0x3a2a20, roughness: 0.9 });
+const supMat = new THREE.MeshStandardMaterial({ color: 0x8a97a8, roughness: 0.7 });
+
+function offsetTube(side, up, radius, mat) {
+  const pts = [];
+  for (let i = 0; i < N; i += 2) pts.push(P[i].clone().addScaledVector(R[i], side).addScaledVector(U[i], up));
+  const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), N / 2, radius, 6, true), mat);
+  scene.add(m);
+}
+offsetTube(0.65, 0.0, 0.07, railMat);
+offsetTube(-0.65, 0.0, 0.07, railMat);
+offsetTube(0, -0.45, 0.16, spineMat);
+
+const ties = new THREE.InstancedMesh(new THREE.BoxGeometry(1.7, 0.07, 0.22), tieMat, N / 2);
+const M = new THREE.Matrix4(), tmp = new THREE.Vector3();
+const back = new THREE.Vector3();
+for (let k = 0; k < N / 2; k++) {
+  const i = k * 2;
+  back.copy(T[i]).negate();
+  M.makeBasis(R[i], U[i], back).setPosition(tmp.copy(P[i]).addScaledVector(U[i], -0.08));
+  ties.setMatrixAt(k, M);
+}
+scene.add(ties);
+
+// supports
+const supList = [];
+for (let i = 0; i < N; i += 14) if (P[i].y > 3) supList.push(i);
+const supGeo = new THREE.CylinderGeometry(0.16, 0.2, 1, 6).translate(0, 0.5, 0);
+const sups = new THREE.InstancedMesh(supGeo, supMat, supList.length * 2);
+supList.forEach((i, k) => {
+  for (let s = 0; s < 2; s++) {
+    const p = P[i].clone().addScaledVector(R[i], s ? 0.9 : -0.9);
+    const h = p.y - 0.6;
+    M.compose(new THREE.Vector3(p.x, 0, p.z), new THREE.Quaternion(), new THREE.Vector3(1, h, 1));
+    sups.setMatrixAt(k * 2 + s, M);
+  }
+});
+scene.add(sups);
+// cross-beams at supports
+const beams = new THREE.InstancedMesh(new THREE.BoxGeometry(1.9, 0.12, 0.12), supMat, supList.length);
+supList.forEach((i, k) => {
+  back.copy(T[i]).negate();
+  M.makeBasis(R[i], U[i], back).setPosition(tmp.copy(P[i]).addScaledVector(U[i], -0.62));
+  beams.setMatrixAt(k, M);
+});
+scene.add(beams);
+
+// station platform
+const plat = new THREE.Mesh(new THREE.BoxGeometry(6, 0.5, 40), new THREE.MeshLambertMaterial({ color: 0x9a8f80 }));
+plat.position.set(-4.5, 0.25, 70);
+scene.add(plat);
+const roof = new THREE.Mesh(new THREE.BoxGeometry(9, 0.3, 40), new THREE.MeshLambertMaterial({ color: 0xb03a2e }));
+roof.position.set(-3, 5.5, 70);
+scene.add(roof);
+[-30, -10, 10, 30].forEach(dz => {
+  const c = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.5, 0.4), supMat);
+  c.position.set(-6.5, 2.75, 70 + dz * 0.65);
+  scene.add(c);
+});
+
+/* ---------- scenery ---------- */
+let seed = 7;
+const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const near = (x, z, d) => {
+  for (let i = 0; i < N; i += 6) {
+    const dx = P[i].x - x, dz = P[i].z - z;
+    if (dx * dx + dz * dz < d * d) return true;
+  }
+  return false;
+};
+const trees = [];
+while (trees.length < 500) {
+  const a = rnd() * Math.PI * 2, r = 10 + Math.sqrt(rnd()) * 450;
+  const x = Math.cos(a) * r + 40, z = Math.sin(a) * r;
+  if (!near(x, z, 14)) trees.push([x, z, 0.7 + rnd() * 1.4]);
+}
+const trunkI = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.25, 0.35, 2, 5).translate(0, 1, 0),
+  new THREE.MeshLambertMaterial({ color: 0x5b4030 }), trees.length);
+const leafI = new THREE.InstancedMesh(new THREE.ConeGeometry(1.8, 6, 7).translate(0, 5, 0),
+  new THREE.MeshLambertMaterial({ color: 0x2f6b3a }), trees.length);
+const col = new THREE.Color();
+trees.forEach(([x, z, s], k) => {
+  M.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s));
+  trunkI.setMatrixAt(k, M); leafI.setMatrixAt(k, M);
+  leafI.setColorAt(k, col.setHSL(0.30 + rnd() * 0.06, 0.45, 0.2 + rnd() * 0.12));
+});
+scene.add(trunkI, leafI);
+
+// distant mountains
+const mtn = new THREE.MeshLambertMaterial({ color: 0x6b6f86, flatShading: true });
+for (let i = 0; i < 26; i++) {
+  const a = (i / 26) * Math.PI * 2 + rnd() * 0.2, r = 620 + rnd() * 120, h = 90 + rnd() * 140;
+  const m = new THREE.Mesh(new THREE.ConeGeometry(70 + rnd() * 80, h, 5), mtn);
+  m.position.set(Math.cos(a) * r, h / 2 - 5, Math.sin(a) * r);
+  scene.add(m);
+}
+
+// lake
+const lake = new THREE.Mesh(new THREE.CircleGeometry(45, 32).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x3f7fa8, roughness: 0.15, metalness: 0.4 }));
+lake.position.set(-120, 0.06, -20);
+scene.add(lake);
+
+// car nose (lap bar + hood) attached to camera
+const nose = new THREE.Group();
+const hoodMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.4, metalness: 0.2 });
+const hood = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.35, 1.2), hoodMat);
+hood.position.set(0, -0.95, -1.3);
+const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.9, 8).rotateZ(Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x222, metalness: 0.8, roughness: 0.3 }));
+bar.position.set(0, -0.5, -0.45);
+[-0.2, 0.2].forEach(x => {
+  const s = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.35, 8), bar.material);
+  s.position.set(x, -0.68, -0.4); s.rotation.x = -0.4; nose.add(s);
+});
+nose.add(hood, bar);
+camera.add(nose);
+
+/* ---------- audio ---------- */
+let ac = null, soundOn = false, rumble, rumbleG, wind, windG, clickBuf, master;
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+  const nb = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const d = nb.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const mk = (type, freq) => {
+    const s = ac.createBufferSource(); s.buffer = nb; s.loop = true;
+    const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = ac.createGain(); g.gain.value = 0;
+    s.connect(f); f.connect(g); g.connect(master); s.start();
+    return { g, f };
+  };
+  rumble = mk('lowpass', 220); wind = mk('highpass', 900);
+  clickBuf = ac.createBuffer(1, 800, ac.sampleRate);
+  const c = clickBuf.getChannelData(0);
+  for (let i = 0; i < c.length; i++) c[i] = (Math.random() * 2 - 1) * Math.exp(-i / 90);
+}
+function setSound(on) {
+  soundOn = on;
+  if (on && !ac) initAudio();
+  if (ac) { ac.resume(); master.gain.setTargetAtTime(on ? 0.8 : 0, ac.currentTime, 0.1); }
+  bSound.textContent = 'Sound: ' + (on ? 'on' : 'off');
+}
+function click(gain) {
+  const s = ac.createBufferSource(); s.buffer = clickBuf;
+  const g = ac.createGain(); g.gain.value = gain;
+  s.connect(g); g.connect(master); s.start();
+}
+
+/* ---------- controls / hud ---------- */
+const $ = id => document.getElementById(id);
+const bSound = $('bSound'), bPause = $('bPause');
+let paused = false, yaw = 0, pitch = 0, dragging = false, lx = 0, ly = 0;
+function togglePause() { paused = !paused; bPause.textContent = paused ? 'Resume' : 'Pause'; }
+bPause.onclick = togglePause;
+bSound.onclick = () => setSound(!soundOn);
+addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); togglePause(); } });
+const cv = renderer.domElement;
+cv.addEventListener('pointerdown', e => {
+  dragging = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId);
+  if (!ac && !soundOn) setSound(true);
+  $('hint').style.opacity = 0;
+});
+cv.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  yaw = Math.max(-2.2, Math.min(2.2, yaw + (e.clientX - lx) * 0.006));
+  pitch = Math.max(-1.0, Math.min(1.0, pitch + (e.clientY - ly) * 0.006));
+  lx = e.clientX; ly = e.clientY;
+});
+const release = () => { dragging = false; };
+cv.addEventListener('pointerup', release); cv.addEventListener('pointercancel', release);
+setTimeout(() => { $('hint').style.opacity = 0; }, 9000);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------- ride loop ---------- */
+let s = 0, lap = 1, lastTie = 0, prevF = null, gSmooth = 1, shakeT = 0;
+const pos = new THREE.Vector3(), fwd = new THREE.Vector3(), up = new THREE.Vector3(), look = new THREE.Vector3();
+const lookF = new THREE.Vector3(), rgt = new THREE.Vector3();
+const lerpIdx = (arr, f, out) => {
+  const i = Math.floor(f) % N, j = (i + 1) % N, t = f - Math.floor(f);
+  return out.copy(arr[i]).lerp(arr[j], t);
+};
+const lerpNum = (arr, f) => {
+  const i = Math.floor(f) % N, j = (i + 1) % N, t = f - Math.floor(f);
+  return arr[i] * (1 - t) + arr[j] * t;
+};
+
+const clock = new THREE.Clock();
+function frame() {
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+  let v = lerpNum(V, s / DS);
+
+  if (!paused) {
+    s += v * dt;
+    if (s >= LEN) { s -= LEN; lap++; $('lp').textContent = lap; }
+    shakeT += dt;
+  }
+  const f = s / DS;
+  v = lerpNum(V, f);
+  lerpIdx(P, f, pos);
+  lerpIdx(T, f, fwd).normalize();
+  lerpIdx(U, f, up).normalize();
+  lerpIdx(T, f + 5 / DS, lookF).normalize();           // look slightly ahead into turns
+  look.copy(fwd).lerp(lookF, 0.5).normalize();
+
+  // g-force estimate from change of velocity direction / speed
+  if (prevF && dt > 0 && !paused) {
+    const a = new THREE.Vector3().copy(fwd).sub(prevF).multiplyScalar(v / dt / 9.8 / 1);
+    const acc = a.dot(up) + up.y;                    // perpendicular accel + gravity component
+    gSmooth += (acc - gSmooth) * Math.min(1, dt * 5);
+  }
+  prevF = (prevF || new THREE.Vector3()).copy(fwd);
+
+  const shake = Math.min(v / 25, 1) * (paused ? 0 : 1);
+  const sx = (Math.sin(shakeT * 37) + Math.sin(shakeT * 23.7)) * 0.004 * shake;
+  const sy = (Math.sin(shakeT * 41.3) + Math.sin(shakeT * 19)) * 0.005 * shake;
+  camera.position.copy(pos).addScaledVector(up, 1.15 + sy).addScaledVector(rgt.crossVectors(fwd, up), sx);
+  camera.up.copy(up);
+  camera.lookAt(look.add(camera.position));
+  if (!dragging) { yaw *= 1 - Math.min(1, dt * 1.8); pitch *= 1 - Math.min(1, dt * 1.8); }
+  camera.rotateY(-yaw); camera.rotateX(-pitch);
+  camera.fov = 70 + Math.min(v - 9, 20) * 0.7;
+  camera.updateProjectionMatrix();
+
+  // audio
+  if (ac && soundOn && !paused) {
+    const k = v / 25;
+    rumble.g.gain.setTargetAtTime(0.25 + k * 0.5, ac.currentTime, 0.1);
+    wind.g.gain.setTargetAtTime(Math.max(0, k - 0.25) * 0.35, ac.currentTime, 0.1);
+    const spacing = f < peak ? 1.6 : 2.6;       // lift chain clacks faster
+    const tie = Math.floor(s / spacing);
+    if (tie !== lastTie) { click(f < peak ? 0.5 : 0.25 + k * 0.2); lastTie = tie; }
+  } else if (ac) { rumble.g.gain.setTargetAtTime(0, ac.currentTime, 0.1); wind.g.gain.setTargetAtTime(0, ac.currentTime, 0.1); }
+
+  // hud
+  $('sp').textContent = Math.round(v * 3.6);
+  $('ht').textContent = Math.round(pos.y);
+  $('gf').textContent = Math.max(-1, Math.min(5, gSmooth)).toFixed(1);
+  $('zone').textContent = f < peak ? 'Chain lift' : '';
+
+  renderer.render(scene, camera);
+}
+frame();
+</script>
+</body>
+</html>
