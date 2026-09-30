@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Gallery review pass: the model list keeps every model of the benchmark, grouped by family, with A/B/C dots, a tier chip, and search (`/`); switching level no longer swaps the model. Ranking groups tier bands with visible facets and gates, Coverage lists models against A/B/C with review state, the receipt panel opens with the take's evaluation, the landing card shows the A/B/C ladder, Models cards drop the repeated prompt, narrow Single takes show icon actions, Fit centers Compare slots, level buttons use tinted fills, and the smallest text is 11px.
+- Gallery navigation: one tab bar (Home, Explore, Compare, Ranking, Coverage, Charts) replaces the report group and the View picker arrows. Explore switches Single, Models, and ABC; Layout appears only where it applies. ABC frames name their model, the model list keeps the current model in view and marks it only in Single and ABC, `←`/`→` step through models, `?` lists shortcuts, and shortcuts work after closing a picker. Icons are filled, level buttons name each rung, Filters shows a count instead of `v1`, and chart numbers use `en-US`.
 - Browser Autonomy Suite v2.4.0 suspends Fireworks. Its frozen definition and 61 published takes remain in `.archives`, with hashes for all 223 files. Rollercoaster is the only live benchmark; finalized historical runs stay intact.
 - Browser Autonomy Suite v2.3.0 suspends Ant Colony. Its frozen definition and 53 published takes remain in `.archives`, with hashes for all 200 files. The live suite has Rollercoaster and Fireworks at A/B/C; finalized historical runs stay intact.
 - CI keeps validation on pushes, while production deployment now runs only through a manual `workflow_dispatch` or an explicit local `vp run deploy`.

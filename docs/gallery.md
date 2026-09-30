@@ -4,9 +4,9 @@ Preview the public stage (`gallery/index.html`) with `vp run dev`. After you reg
 
 ## Landing
 
-The gallery opens on the Landing view. A query without `mode` means landing; clicking the brand mark returns to it. The landing is the home screen, not an entry in the View picker.
+The gallery opens on the Landing view. A query without `mode` means landing; clicking the brand mark or the **Home** tab returns to it.
 
-The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Benchmark cards appear before the live face-off so visitors can choose a task from the first desktop viewport. Each card shows the full raw prompt, its live takes, and its confirmed level-A winner or provisional top-tier count. Open is the primary action; Models, ABC, and Compare stay beside it. Cards stack on narrow screens. The introduction states that repairs are marked on each take.
+The compact landing hero shows gallery totals and launches a random 2-up or 4-up matchup. Two models open Compare; four open Models with only the drawn set visible. Benchmark cards appear before the live face-off so visitors can choose a task from the first desktop viewport. Each card shows the A/B/C ladder: the raw prompt, then only the words that B and C add, with each level's take count and its confirmed winner or provisional Tier 1 count. **See all** opens Models at that level. Open is the primary action; Models, ABC, and Compare stay beside it. Rungs stack on narrow screens. The introduction states that repairs are marked on each take.
 
 ## Layout
 
@@ -16,15 +16,15 @@ Only the live suite appears in the gallery and ranking. Ant Colony and Fireworks
 
 The Astra Light variant keeps the `gpt-6-astra-light` id and records the harness reasoning level as `low`. Token details read the measured Codex session counters, including cached input, without adding cache or reasoning output twice to the total.
 
-The left sidebar holds A/B/C prompt-level buttons and models. Compact (or `[`) collapses the sidebar to an icon rail. On narrow screens it becomes a horizontal model strip above the stage. The model list shows only models that have a generated HTML take for the selected benchmark and the current filters. A gold **new** badge marks models whose first playable take landed within the last 7 days; the same badge marks fresh benchmarks on the Landing bench cards and fresh models in Ranking (podium and table). In Models view, click a model to hide or show it. In Landing, Compare, ABC, Ranking, Charts, or Table, clicking a model opens its playable take in Single for the active benchmark and level. Above the list, a counter plus an **All / Only** button selects every model or collapses the selection to the focused model. Anime.js layout animates models that enter or leave that list.
+The left sidebar holds the A/B/C prompt-level buttons (**A Raw**, **B +Autonomy**, **C +Showcase**; the take count is in the tooltip) and models. Compact (or `[`) collapses the sidebar to an icon rail. On narrow screens it becomes a horizontal model strip above the stage. The model list shows every model with a take in the selected benchmark, grouped by family (Anthropic, OpenAI, Google, xAI, and so on). Each row shows three dots for the A/B/C takes it has and its quality tier at the current level (`T1`, `T2`, … or `gate` when a required task gate failed). A model without a take at the current level stays in the list, dimmed. Changing level keeps the chosen model; the stage says the take did not land instead of switching models. **Search models** (or `/`) filters the list, and Enter opens the first match. A gold **new** badge marks models whose first playable take landed within the last 7 days; the same badge marks fresh benchmarks on the Landing bench cards and fresh models in Ranking (podium and table). In Models view, click a model to hide or show it; a dimmed model has nothing to show. In ABC, clicking a model shows its ladder. In Landing, Compare, Ranking, Charts, or Table, clicking a model opens its playable take in Single for the active benchmark and level. Only Single and ABC mark a current model in the list, and the list scrolls to keep it in view. Above the list, a counter plus an **All / Only** button selects every model or collapses the selection to the focused model. Anime.js layout animates models that enter or leave that list.
 
-**Table** is a coverage matrix: every benchmark against every model that has at least one playable take. A filled square is present for the current A/B/C level. An empty square is missing. A gold crown is the unique public vote leader for that prompt-V. A gold star is the staff pick (rollercoaster A prefers `grok-4.6`; other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`; B and C prefer `grok-4.6-high`). Click a filled cell to open that take. Click the bench name to open the staff pick. Wide matrices use a themed horizontal scrollbar, sticky headings, and an Anime.js scroll cue that dismisses after the first horizontal move.
+**Coverage** (`mode=table`) is a matrix with one row per model that has at least one playable take, grouped by family, and one column per benchmark level (A, B, C). Each cell shows the take's state: a dot with its tier (gold for Tier 1), a half dot while it waits for review, a red cross when a required task gate failed, or a dash when there is no take. The Ladder column opens ABC for models with all three levels. A footer counts takes per level. On narrow screens the Ladder column and level names hide so the matrix fits. A gold crown is the unique public vote leader for that prompt-V. A gold star is the staff pick (rollercoaster A prefers `grok-4.6`; other A takes prefer `grok-4.6-xhigh`, then `grok-4.6`; B and C prefer `grok-4.6-high`). Click a cell to open that take at its level. Click the bench name to open the staff pick. Wide matrices use a themed horizontal scrollbar, sticky headings, and an Anime.js scroll cue that dismisses after the first horizontal move.
 
 Each take has a top toolbar: the model name, the prompt in small type, then Vote, Reload, Copy prompt, HTML, and Receipt. In a multi-take view those actions belong to that take. If the toolbar is tight, the actions show as icons. A custom tooltip names each icon. Reload refreshes that take's iframe.
 
 Single view fills the stage. The toolbar sits on the top edge. A status bar on the bottom edge shows duration, approximate output tokens from the HTML (`chars ÷ 4`, marked `≈`), contributor, and harness. On a wide take those values are inline (Duration, Tokens, `@login`, harness name). Tight cards keep icons and use tooltips. Duration and harness come from a short catalog `glance`. Duration and harness token usage stay `—` when the receipt did not capture them. The `≈` count is derived at catalog build time from `index.html`; it is not harness billing.
 
-In Models grid or columns, that toolbar is two rows: actions on top, the prompt underneath. The receipt status bar sits on the bottom edge of each card. Opening **Receipt** loads `receipt.json` for that take. A gold **fixed** badge means the HTML was repaired after generation so it runs in the public gallery. Multi-take cards also have **Open full size**, which opens that take in Single.
+In Models grid or columns, that toolbar holds the model and its actions; the prompt is not repeated on every card (it is the same for all of them and sits in the level button tooltip). In Single, when the take is narrower than 720px, the actions show as icons with tooltips. The receipt status bar sits on the bottom edge of each card. Opening **Receipt** loads `receipt.json` for that take. The panel starts with the take's **Evaluation**: tier, review state, the four quality facets (0–4), and either all task gates passed or the gates that failed. A gold **fixed** badge means the HTML was repaired after generation so it runs in the public gallery. Multi-take cards also have **Open full size**, which opens that take in Single.
 
 Models view loads every playable take. Chrome may drop older WebGL canvases (`Too many active WebGL contexts`) when many models are on stage at once.
 
@@ -32,11 +32,11 @@ Open HTML or receipt panels stack on the right, one panel per take. If more than
 
 The crown is a public winner vote for that prompt-V (`rollercoaster-A`). It selects a model, not a take date. Gold on the toolbar means your vote. Gold on the model list and in the Table view marks the unique leader. A tie shows no public crown. You can move your vote or click the same crown to clear it. Votes use an anonymous `ab_voter` cookie. The API does not store IP. If a vote request fails, that prompt shows no crowns. A later successful request can still load other prompts. Vote buttons stay hidden until at least one request succeeds.
 
-The top toolbar groups the report shortcuts **Rank**, **Coverage**, and **Charts** beside the title, then **Bench**, **Filters** (prompt version, optional month, and optional run), **View** (Single, Models, ABC, Compare, plus Columns/Grid/Rows when that view needs a layout), and **Fit** (Fill or Fit). Each report shortcut has its own Tabler-style icon. View has previous and next arrows and is hidden on Landing. Bench unhides when the catalog has more than one live experiment. Month defaults to all months for the selected prompt version. Pick a month to narrow. If more than one run matches, Filters also lists those runs. Omit `date` to keep runs combined. Fit is disabled in Table, Landing, Ranking, and Charts.
+One navigation bar beside the title holds every destination: **Home**, **Explore**, **Compare**, **Ranking**, **Coverage**, and **Charts**. Explore shows a **Single / Models / ABC** switch and returns to the last of those three views. The tools after it are **Bench**, **Filters** (prompt version only when a benchmark has more than one, optional month, and optional run; a badge counts the active month and run filters), **Layout** (Columns, Grid, or Rows, only where a view needs a layout), **Fit** (Fill or Fit), and **?** for the keyboard shortcuts. Icons are filled shapes; arrows, checks, and code marks stay as bold strokes. Bench unhides when the catalog has more than one live experiment. Month defaults to all months for the selected prompt version. Pick a month to narrow. If more than one run matches, Filters also lists those runs. Omit `date` to keep runs combined. Fit is disabled in Table, Landing, Ranking, and Charts.
 
 ## Compare
 
-Compare fills the available stage height with 2 or 3 takes side by side. A compact global bar toggles between 2 and 3 views; each slot has its own model, benchmark, and A/B/C level pickers, so you can face two models on the same prompt or one model across the ladder. Each slot keeps the standard take toolbar (Vote, Reload, Copy prompt, HTML, Receipt). The chosen slots serialize to the `slots` query key, so a comparison is a shareable URL. Slots without a landed take typeset the prompt instead of faking a preview.
+Compare fills the available stage height with 2 or 3 takes side by side. In Fit, each take is centered in its slot. A compact global bar toggles between 2 and 3 views; each slot has its own model, benchmark, and A/B/C level pickers, so you can face two models on the same prompt or one model across the ladder. Each slot keeps the standard take toolbar (Vote, Reload, Copy prompt, HTML, Receipt). The chosen slots serialize to the `slots` query key, so a comparison is a shareable URL. Slots without a landed take typeset the prompt instead of faking a preview.
 
 ## Ranking
 
@@ -48,7 +48,7 @@ Eligible models are grouped into Pareto tiers across task success and the four q
 
 One review produces a provisional result. Two independent reviews, including one human review, confirm it. A model receives an aggregate tier only after every current slot in that scope has a review. A winner is published only when every current candidate is confirmed and exactly one eligible model occupies Tier 1.
 
-Task success, quality facets, blind preference, generation time, output size, delivery coverage, showcase repair status, and community votes remain separate. The compact ranking table shows only tier, model, average generation time, audience signal, and action; the quality profile is available from the tier. No combined score or provisional podium is published.
+Task success, quality facets, blind preference, generation time, output size, delivery coverage, showcase repair status, and community votes remain separate. With the default Quality tier sort, the ranking table groups models into tier bands (rows inside a band are listed A → Z), then models that failed a task gate, then models not reviewed yet. Each row shows the four quality facets as values with bars, the task gates passed, average generation time, average output size, audience votes when any exist, and Open. Other sorts show one flat list with a tier chip on each row. On narrow screens rows become cards. No combined score or provisional podium is published.
 
 See [the evaluation protocol](../SKILLS/autonomy-bench/references/evaluation.md) and [the cell evaluation schema](../schemas/cell-evaluation.schema.json).
 
@@ -68,10 +68,16 @@ The transition has explicit `exit`, `enter`, `loading`, and `idle` phases. New i
 
 ## Shortcuts
 
+- `←` / `→` step to the previous or next model in Single and ABC
 - `1` / `2` / `3` select prompt level A / B / C
+- `/` searches models
 - `p` copies the focused take's prompt (toast + Copied)
 - `h` toggles that take's HTML panel
 - `r` toggles that take's receipt panel
+- `[` toggles the compact sidebar
+- `?` opens the shortcut list
+
+Shortcuts still work while a closed picker button has focus.
 
 ## Query
 
