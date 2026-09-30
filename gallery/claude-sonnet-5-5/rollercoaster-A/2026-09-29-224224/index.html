@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rollercoaster POV</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#87b6e8;font-family:system-ui,sans-serif}
+canvas{display:block}
+#hud{position:fixed;left:16px;bottom:16px;color:#fff;font-weight:600;text-shadow:0 1px 4px #0008;line-height:1.5;pointer-events:none}
+#hud b{font-size:28px}
+#hint{position:fixed;right:16px;bottom:16px;color:#fff;font-size:13px;text-shadow:0 1px 4px #0008;text-align:right;pointer-events:none}
+</style></head><body>
+<div id="hud"><b id="spd">0</b> km/h &nbsp; <b id="alt">0</b> m</div>
+<div id="hint">Click to toggle sound · Drag to look around</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE;
+const renderer=new T.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene=new T.Scene();
+const SKY=0x9cc7ee;
+scene.background=new T.Color(SKY);
+scene.fog=new T.Fog(SKY,80,700);
+const camera=new T.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1500);
+scene.add(new T.HemisphereLight(0xcfe6ff,0x4a6b3a,0.9));
+const sun=new T.DirectionalLight(0xfff2d6,1.1);sun.position.set(200,300,100);scene.add(sun);
+
+// ---- track path (closed loop) ----
+const N=28,pts=[];
+const H=[3,3,4,22,50,52,30,8,5,26,30,10,4,18,22,6,4,14,12,4,10,16,6,4,8,6,4,3];
+for(let i=0;i<N;i++){
+  const a=i/N*Math.PI*2;
+  const r=200+55*Math.sin(a*3+0.6)+35*Math.cos(a*2);
+  pts.push(new T.Vector3(Math.cos(a)*r*1.25,H[i],Math.sin(a)*r));
+}
+const curve=new T.CatmullRomCurve3(pts,true,'centripetal');
+const LEN=curve.getLength();
+const S=Math.round(LEN/1.5);
+const P=[],Tn=[],Up=[],Rt=[];
+for(let i=0;i<S;i++)P.push(curve.getPointAt(i/S));
+for(let i=0;i<S;i++)Tn.push(P[(i+1)%S].clone().sub(P[(i-1+S)%S]).normalize());
+// bank from horizontal curvature, smoothed
+let bank=new Array(S).fill(0);
+for(let i=0;i<S;i++){
+  const a=Tn[(i-4+S)%S],b=Tn[(i+4)%S];
+  bank[i]=T.MathUtils.clamp(a.x*b.z-a.z*b.x,-1,1)*3.2;
+}
+for(let k=0;k<6;k++){const c=bank.slice();for(let i=0;i<S;i++){let s=0;for(let j=-8;j<=8;j++)s+=c[(i+j+S)%S];bank[i]=s/17;}}
+const Y=new T.Vector3(0,1,0);
+for(let i=0;i<S;i++){
+  const t=Tn[i];
+  const r=new T.Vector3().crossVectors(t,Y).normalize();
+  const u=new T.Vector3().crossVectors(r,t).normalize();
+  u.applyAxisAngle(t,bank[i]);
+  Up.push(u);Rt.push(new T.Vector3().crossVectors(t,u).normalize());
+}
+// rails
+const GAUGE=0.9;
+const sub=P.map((_,i)=>i).filter(i=>i%2==0);
+const rail=side=>{
+  const c=new T.CatmullRomCurve3(sub.map(i=>P[i].clone().addScaledVector(Rt[i],side*GAUGE)),true);
+  return new T.Mesh(new T.TubeGeometry(c,S,0.11,6,true),new T.MeshStandardMaterial({color:0xd8dde3,metalness:.7,roughness:.35}));
+};
+scene.add(rail(1),rail(-1));
+{const c=new T.CatmullRomCurve3(sub.map(i=>P[i].clone().addScaledVector(Up[i],-0.7)),true);
+ scene.add(new T.Mesh(new T.TubeGeometry(c,S,0.16,6,true),new T.MeshStandardMaterial({color:0xc0392b,roughness:.6})));}
+// ties
+const tieStep=2,tieCount=Math.floor(S/tieStep);
+const ties=new T.InstancedMesh(new T.BoxGeometry(2.3,0.12,0.25),new T.MeshStandardMaterial({color:0x5a3a22,roughness:.9}),tieCount);
+const m=new T.Matrix4();
+for(let k=0;k<tieCount;k++){const i=k*tieStep;
+  m.makeBasis(Rt[i],Up[i],Tn[i].clone().negate());
+  m.setPosition(P[i].clone().addScaledVector(Up[i],-0.12));ties.setMatrixAt(k,m);}
+scene.add(ties);
+// supports
+const sup=[];for(let i=0;i<S;i+=12)if(P[i].y>5)sup.push(i);
+const supMesh=new T.InstancedMesh(new T.CylinderGeometry(0.18,0.22,1,6),new T.MeshStandardMaterial({color:0x8a939c}),sup.length);
+sup.forEach((i,k)=>{const h=P[i].y-0.9;m.makeScale(1,h,1);m.setPosition(P[i].x,h/2,P[i].z);supMesh.setMatrixAt(k,m);});
+scene.add(supMesh);
+// ground
+const g=new T.Mesh(new T.PlaneGeometry(4000,4000),new T.MeshLambertMaterial({color:0x5d8f3f}));
+g.rotation.x=-Math.PI/2;scene.add(g);
+// trees
+const trees=[];let tries=0;
+while(trees.length<450&&tries++<5000){
+  const a=Math.random()*Math.PI*2,r=Math.random()*750;
+  const x=Math.cos(a)*r*1.1,z=Math.sin(a)*r;
+  let ok=true;for(let i=0;i<S;i+=6){const dx=P[i].x-x,dz=P[i].z-z;if(dx*dx+dz*dz<196){ok=false;break;}}
+  if(ok)trees.push([x,z,3+Math.random()*5]);
+}
+const trunk=new T.InstancedMesh(new T.CylinderGeometry(.3,.4,1,5),new T.MeshLambertMaterial({color:0x6b4a2b}),trees.length);
+const leaf=new T.InstancedMesh(new T.ConeGeometry(1,1,7),new T.MeshLambertMaterial({color:0xffffff}),trees.length);
+trees.forEach(([x,z,h],k)=>{
+  m.makeScale(1,h*.4,1);m.setPosition(x,h*.2,z);trunk.setMatrixAt(k,m);
+  const w=h*.35;m.makeScale(w,h,w);m.setPosition(x,h*.4+h*.5,z);leaf.setMatrixAt(k,m);
+  leaf.setColorAt(k,new T.Color().setHSL(.33,.5,.2+Math.random()*.12));
+});
+scene.add(trunk,leaf);
+// clouds
+const cm=new T.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.85,fog:false});
+for(let i=0;i<25;i++){const c=new T.Mesh(new T.SphereGeometry(1,8,6),cm);
+  c.scale.set(60+Math.random()*80,14,40+Math.random()*40);
+  c.position.set((Math.random()-.5)*1800,220+Math.random()*120,(Math.random()-.5)*1800);scene.add(c);}
+
+// ---- ride simulation ----
+let hmax=0;P.forEach(p=>hmax=Math.max(hmax,p.y));
+const peakI=P.findIndex(p=>p.y>hmax-0.01);
+let liftStart=peakI;
+while(P[(liftStart-1+S)%S].y<P[liftStart].y)liftStart=(liftStart-1+S)%S;
+const inLift=i=>((i-liftStart+S)%S)<=((peakI-liftStart+S)%S);
+let s=liftStart*(LEN/S)-30,v=8;const ds=LEN/S;
+if(s<0)s+=LEN;
+const spd=document.getElementById('spd'),alt=document.getElementById('alt');
+let yaw=0,pitch=0,drag=false,lx=0,ly=0,moved=0;
+addEventListener('pointerdown',e=>{drag=true;lx=e.clientX;ly=e.clientY;moved=0});
+addEventListener('pointerup',()=>{drag=false;if(moved<5)toggleAudio();});
+addEventListener('pointermove',e=>{if(!drag)return;moved+=Math.abs(e.clientX-lx)+Math.abs(e.clientY-ly);
+  yaw=T.MathUtils.clamp(yaw-(e.clientX-lx)*.005,-1.8,1.8);pitch=T.MathUtils.clamp(pitch-(e.clientY-ly)*.005,-1,1);lx=e.clientX;ly=e.clientY;});
+// audio: wind + rumble (starts on first click)
+let ac,wind,wg,rg,on=false;
+function toggleAudio(){
+  if(!ac){ac=new (window.AudioContext||window.webkitAudioContext)();
+    const buf=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    const mk=(type,f)=>{const src=ac.createBufferSource();src.buffer=buf;src.loop=true;
+      const fl=ac.createBiquadFilter();fl.type=type;fl.frequency.value=f;const gn=ac.createGain();gn.gain.value=0;
+      src.connect(fl);fl.connect(gn);gn.connect(ac.destination);src.start();return [fl,gn];};
+    [wind,wg]=mk('bandpass',800);[,rg]=mk('lowpass',120);}
+  on=!on;if(ac.state==='suspended')ac.resume();
+  if(!on){wg.gain.value=0;rg.gain.value=0;}
+}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+const look=new T.Vector3();
+const smoothUp=Up[0].clone(),smoothF=Tn[0].clone();
+const clock=new T.Clock();let time=0;
+const lerpAt=(i,f)=>{const a=Math.floor(i)%S,b=(a+1)%S;return f[a].clone().lerp(f[b],i-Math.floor(i));};
+function loop(){
+  requestAnimationFrame(loop);
+  const dt=Math.min(clock.getDelta(),0.05);time+=dt;
+  let idx=(s/ds)%S;
+  const ii=Math.floor(idx)%S,lift=inLift(ii);
+  const y=lerpAt(idx,P).y;
+  const target=lift?7:Math.max(9,Math.sqrt(2*9.81*Math.max(hmax+4-y,0)));
+  v+=(target-v)*Math.min(1,dt*(lift?1.5:2.2));
+  s=(s+v*dt)%LEN;idx=(s/ds)%S;
+  const pos=lerpAt(idx,P),up=lerpAt(idx,Up).normalize(),ahead=lerpAt((idx+10)%S,Tn).normalize();
+  smoothUp.lerp(up,Math.min(1,dt*10)).normalize();
+  smoothF.lerp(ahead,Math.min(1,dt*8)).normalize();
+  const right=new T.Vector3().crossVectors(smoothF,smoothUp).normalize();
+  const upv=new T.Vector3().crossVectors(right,smoothF).normalize();
+  const shake=Math.min(v/40,1)*0.02;
+  camera.position.copy(pos).addScaledVector(upv,1.25+Math.sin(time*37)*shake).addScaledVector(right,Math.sin(time*23)*shake);
+  camera.up.copy(upv);
+  look.copy(camera.position).add(smoothF);
+  camera.lookAt(look);
+  camera.rotateY(yaw);camera.rotateX(pitch);
+  renderer.render(scene,camera);
+  spd.textContent=Math.round(v*3.6);alt.textContent=Math.round(pos.y);
+  if(on){const k=Math.min(v/35,1);wg.gain.value=.05+k*.5;wind.frequency.value=500+k*1500;rg.gain.value=.3+k*.6;}
+}
+loop();
+</script></body></html>
