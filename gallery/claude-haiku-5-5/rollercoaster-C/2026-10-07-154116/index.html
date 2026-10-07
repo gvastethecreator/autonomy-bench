@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skyline Run</title>
+<style>
+html,body{margin:0;height:100%;background:#050611;overflow:hidden;font-family:"Segoe UI",system-ui,sans-serif;color:#f4f1ea}
+canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
+#vig{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 52%,rgba(0,0,0,.6) 100%)}
+#fade{position:fixed;inset:0;background:#000;pointer-events:none;opacity:1;transition:opacity 3s ease}
+#title{position:fixed;left:50%;top:15%;transform:translateX(-50%);text-align:center;pointer-events:none;transition:opacity 2.4s ease,transform 2.4s ease;white-space:nowrap}
+#title h1{font-weight:200;letter-spacing:.5em;font-size:clamp(26px,5vw,62px);margin:0 0 0 .5em;text-shadow:0 2px 28px rgba(0,0,0,.55)}
+#title p{letter-spacing:.32em;font-size:11px;opacity:.75;margin:12px 0 0;text-transform:uppercase;text-shadow:0 1px 10px rgba(0,0,0,.5)}
+#title.gone{opacity:0;transform:translate(-50%,-12px)}
+#sec{position:fixed;left:24px;top:22px;font-size:12px;letter-spacing:.28em;text-transform:uppercase;opacity:.85;pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.6);transition:opacity .8s}
+#hint{position:fixed;right:24px;top:22px;font-size:11px;opacity:.5;letter-spacing:.12em;pointer-events:none;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+#hud{position:fixed;left:0;right:0;bottom:0;padding:26px 28px 20px;display:flex;align-items:flex-end;gap:30px;pointer-events:none;background:linear-gradient(transparent,rgba(0,0,0,.4));transition:opacity .6s}
+.stat{min-width:84px}
+.stat b{display:block;font-size:clamp(22px,3vw,34px);font-weight:300;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat span{font-size:10px;letter-spacing:.2em;text-transform:uppercase;opacity:.6}
+#bar{flex:1;height:3px;background:rgba(255,255,255,.18);position:relative;border-radius:2px;overflow:hidden;margin-bottom:10px}
+#bar i{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#ffb36b,#ff5d8f,#7ad7ff)}
+.hidden{opacity:0 !important}
+@media (max-width:640px){#hud{gap:14px;padding:18px 16px}.stat span{font-size:9px}#hint{display:none}#sec{left:16px;top:16px}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+</head>
+<body>
+<div id="vig"></div>
+<div id="fade"></div>
+<div id="sec">Lift hill</div>
+<div id="hint">SPACE pause &middot; H hide HUD</div>
+<div id="title"><h1>SKYLINE RUN</h1><p>one ride, one day, no stops</p></div>
+<div id="hud">
+  <div class="stat"><b id="spd">0</b><span>km/h</span></div>
+  <div class="stat"><b id="alt">0</b><span>metres</span></div>
+  <div class="stat"><b id="gf">1.0</b><span>g load</span></div>
+  <div id="bar"><i id="prog"></i></div>
+  <div class="stat"><b id="lap">1</b><span>lap</span></div>
+  <div class="stat"><b id="clock">--:--</b><span>sky</span></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+
+const $ = id => document.getElementById(id);
+const G = 9.81;
+const LAP_SEC = 200;
+const PTS = [
+  [0,1.5,0],[0,10,-30],[0,30,-70],[2,52,-110],[6,64,-140],[30,52,-168],[72,22,-186],
+  [120,4,-184],[168,26,-160],[196,40,-120],[190,22,-78],[150,8,-62],[120,6,-30],
+  [150,28,4],[186,44,18],[176,58,58],[138,46,72],[100,30,70],[60,8,58],[30,3,30],[6,1.5,14]
+].map(p => new THREE.Vector3(...p));
+const N = PTS.length;
+const SECTIONS = [[0,'Lift hill'],[4,'First drop'],[7,'Valley'],[9,'Camelback'],[11,'Hairpin'],[13,'Helix'],[16,'Sweeping return'],[19,'Station approach']];
+
+const curve = new THREE.CatmullRomCurve3(PTS, true, 'centripetal');
+curve.arcLengthDivisions = 4000;
+const lens = curve.getLengths();
+const LEN = lens[lens.length - 1];
+const uOfIdx = i => lens[Math.round((i / N) * (lens.length - 1))] / LEN;
+const sectionStarts = SECTIONS.map(([i, name]) => ({ u: uOfIdx(i), name }));
+const sectionAt = u => {
+  let s = sectionStarts[0].name;
+  for (const x of sectionStarts) if (u >= x.u) s = x.name;
+  return s;
+};
+let crestU = 0, crestY = -1;
+for (let k = 0; k <= lens.length * 0.3; k++) {
+  const u = k / (lens.length - 1);
+  const y = curve.getPointAt(u).y;
+  if (y > crestY) { crestY = y; crestU = u; }
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 260, 1500);
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.05, 2600);
+scene.add(camera);
+
+const skyUniforms = {
+  top: { value: new THREE.Color() },
+  hor: { value: new THREE.Color() },
+  sunDir: { value: new THREE.Vector3(0, 1, 0) },
+  sunCol: { value: new THREE.Color() }
+};
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(2000, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: skyUniforms,
+    vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 top; uniform vec3 hor; uniform vec3 sunDir; uniform vec3 sunCol; varying vec3 vDir;
+      void main(){
+        float h = clamp(vDir.y, 0.0, 1.0);
+        vec3 c = mix(hor, top, pow(h, 0.5));
+        float s = max(dot(normalize(vDir), normalize(sunDir)), 0.0);
+        c += sunCol * (pow(s, 5.0) * 0.28 + pow(s, 500.0) * 2.5);
+        gl_FragColor = vec4(c, 1.0);
+      }`
+  })
+);
+sky.frustumCulled = false;
+scene.add(sky);
+
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(1600 * 3);
+for (let i = 0; i < 1600; i++) {
+  const th = Math.random() * Math.PI * 2;
+  const ph = Math.acos(1 - Math.random() * 1.1);
+  const r = 1900;
+  starPos.set([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)], i * 3);
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: false, transparent: true, depthWrite: false, fog: false });
+const stars = new THREE.Points(starGeo, starMat);
+scene.add(stars);
+
+const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x2a2f1e, 0.5);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff1dc, 1);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -170, right: 170, top: 170, bottom: -170, near: 10, far: 1000 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.04;
+const sunTarget = new THREE.Object3D();
+sunTarget.position.set(100, 0, -60);
+scene.add(sunTarget, sun, sun.target);
+sun.target = sunTarget;
+
+let seed = 7;
+const rnd = () => {
+  seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+  let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+};
+const UP = new THREE.Vector3(0, 1, 0);
+const dummy = new THREE.Object3D();
+
+const M = 1400;
+const samp = [];
+for (let i = 0; i < M; i++) {
+  const u = i / M;
+  const p = curve.getPointAt(u);
+  const T = curve.getTangentAt(u).normalize();
+  const R = new THREE.Vector3().crossVectors(T, UP).normalize();
+  const Ud = new THREE.Vector3().crossVectors(R, T).normalize();
+  samp.push({ u, p, T, R, Ud });
+}
+
+const railMat = new THREE.MeshStandardMaterial({ color: 0xc4ccd6, metalness: 0.85, roughness: 0.3 });
+const tieMat = new THREE.MeshStandardMaterial({ color: 0x6b4f3a, roughness: 0.9 });
+const steelMat = new THREE.MeshStandardMaterial({ color: 0x7d8796, metalness: 0.6, roughness: 0.45 });
+const railA = [], railB = [];
+for (const s of samp) {
+  railA.push(s.p.clone().addScaledVector(s.R, 0.72));
+  railB.push(s.p.clone().addScaledVector(s.R, -0.72));
+}
+for (const rail of [railA, railB]) {
+  const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rail, true, 'centripetal'), M * 2, 0.075, 6, true);
+  const m = new THREE.Mesh(g, railMat);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  scene.add(m);
+}
+
+const tieGeo = new THREE.BoxGeometry(1.9, 0.12, 0.24);
+const ties = new THREE.InstancedMesh(tieGeo, tieMat, M / 2);
+const tieM = new THREE.Matrix4();
+for (let i = 0, k = 0; i < M; i += 2, k++) {
+  const s = samp[i];
+  tieM.makeBasis(s.R, s.Ud, s.T.clone().negate());
+  tieM.setPosition(s.p.x, s.p.y - 0.16, s.p.z);
+  ties.setMatrixAt(k, tieM);
+}
+ties.castShadow = true;
+scene.add(ties);
+
+const supportIdx = [];
+for (let i = 0; i < M; i += 8) if (samp[i].p.y > 1.4) supportIdx.push(i);
+const supports = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.14, 1, 6), steelMat, supportIdx.length);
+supports.castShadow = true;
+supportIdx.forEach((i, k) => {
+  const p = samp[i].p;
+  const h = p.y - 0.2;
+  dummy.position.set(p.x, h / 2, p.z);
+  dummy.scale.set(1, h, 1);
+  dummy.rotation.set(0, 0, 0);
+  dummy.updateMatrix();
+  supports.setMatrixAt(k, dummy.matrix);
+});
+scene.add(supports);
+
+const groundCv = document.createElement('canvas');
+groundCv.width = groundCv.height = 256;
+const gcx = groundCv.getContext('2d');
+gcx.fillStyle = '#4d6e40';
+gcx.fillRect(0, 0, 256, 256);
+for (let i = 0; i < 1400; i++) {
+  gcx.fillStyle = `hsla(${90 + rnd() * 40},${25 + rnd() * 20}%,${22 + rnd() * 18}%,0.5)`;
+  gcx.fillRect(rnd() * 256, rnd() * 256, 2 + rnd() * 5, 2 + rnd() * 5);
+}
+const groundTex = new THREE.CanvasTexture(groundCv);
+groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
+groundTex.repeat.set(400, 400);
+groundTex.colorSpace = THREE.SRGBColorSpace;
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ map: groundTex, roughness: 1 })
+);
+ground.receiveShadow = true;
+scene.add(ground);
+
+const LAKE = new THREE.Vector2(-170, -60);
+const lake = new THREE.Mesh(
+  new THREE.CircleGeometry(60, 48).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x2a5a78, roughness: 0.08, metalness: 0.2 })
+);
+lake.position.set(LAKE.x, 0.05, LAKE.y);
+scene.add(lake);
+
+const hillGeo = new THREE.IcosahedronGeometry(1, 2);
+const hillMat = new THREE.MeshStandardMaterial({ color: 0x2d4a3a, flatShading: true, roughness: 1 });
+const hills = new THREE.InstancedMesh(hillGeo, hillMat, 22);
+for (let k = 0; k < 22; k++) {
+  const a = (k / 22) * Math.PI * 2 + rnd() * 0.2;
+  const d = 560 + rnd() * 140;
+  const sx = 120 + rnd() * 140;
+  const sy = 60 + rnd() * 100;
+  dummy.position.set(Math.cos(a) * d, -20, Math.sin(a) * d);
+  dummy.scale.set(sx, sy, sx * (0.8 + rnd() * 0.4));
+  dummy.rotation.set(0, 0, 0);
+  dummy.updateMatrix();
+  hills.setMatrixAt(k, dummy.matrix);
+}
+scene.add(hills);
+
+const cityGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+const city = new THREE.InstancedMesh(cityGeo, new THREE.MeshStandardMaterial({ color: 0x1b2236, roughness: 0.8 }), 90);
+for (let k = 0; k < 90; k++) {
+  const a = rnd() * Math.PI * 2;
+  const d = 760 + rnd() * 180;
+  dummy.position.set(Math.cos(a) * d, 0, Math.sin(a) * d);
+  dummy.scale.set(25 + rnd() * 50, 40 + rnd() * 170, 25 + rnd() * 40);
+  dummy.rotation.set(0, rnd() * 0.5, 0);
+  dummy.updateMatrix();
+  city.setMatrixAt(k, dummy.matrix);
+}
+scene.add(city);
+
+const station = new THREE.Group();
+const stMat = new THREE.MeshStandardMaterial({ color: 0x5a5f6b, roughness: 0.7 });
+const plat = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 16), stMat);
+plat.position.set(-9, 0.5, 8);
+plat.receiveShadow = true;
+station.add(plat);
+const roof = new THREE.Mesh(new THREE.BoxGeometry(11, 0.35, 18), new THREE.MeshStandardMaterial({ color: 0xe8a33d, roughness: 0.5 }));
+roof.position.set(-9, 6.2, 8);
+roof.castShadow = true;
+station.add(roof);
+for (const x of [-13.5, -4.5]) for (const z of [0, 16]) {
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 6, 0.3), stMat);
+  post.position.set(x, 3.1, z);
+  post.castShadow = true;
+  station.add(post);
+}
+scene.add(station);
+
+const crownGeo = new THREE.ConeGeometry(1, 1, 7, 1).translate(0, 0.5, 0);
+const trunkGeo = new THREE.CylinderGeometry(0.22, 0.3, 1, 5).translate(0, 0.5, 0);
+const crowns = new THREE.InstancedMesh(crownGeo, new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), 900);
+const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: 0x4a3526, roughness: 1 }), 900);
+const nearTrack = samp.filter((_, i) => i % 4 === 0).map(s => s.p);
+let placed = 0;
+for (let tries = 0; tries < 9000 && placed < 900; tries++) {
+  const x = (rnd() * 2 - 1) * 420;
+  const z = (rnd() * 2 - 1) * 420 - 40;
+  if (Math.hypot(x - LAKE.x, z - LAKE.y) < 80) continue;
+  if (x > -20 && x < 4 && z > -6 && z < 26) continue;
+  let clear = true;
+  for (const p of nearTrack) {
+    const dx = p.x - x, dz = p.z - z;
+    if (dx * dx + dz * dz < 144 && p.y < 60) { clear = false; break; }
+  }
+  if (!clear) continue;
+  const h = 7 + rnd() * 7;
+  const r = 2.2 + rnd() * 1.4;
+  dummy.position.set(x, 0, z);
+  dummy.scale.set(1, 2.4, 1);
+  dummy.updateMatrix();
+  trunks.setMatrixAt(placed, dummy.matrix);
+  dummy.position.set(x, 2, z);
+  dummy.scale.set(r, h, r);
+  dummy.updateMatrix();
+  crowns.setMatrixAt(placed, dummy.matrix);
+  crowns.setColorAt(placed, new THREE.Color().setHSL(0.27 + rnd() * 0.08, 0.35 + rnd() * 0.2, 0.18 + rnd() * 0.12));
+  placed++;
+}
+crowns.count = placed;
+trunks.count = placed;
+crowns.castShadow = trunks.castShadow = true;
+scene.add(crowns, trunks);
+
+const DUST_N = 500;
+const dustPos = new Float32Array(DUST_N * 3);
+for (let i = 0; i < DUST_N * 3; i++) dustPos[i] = (rnd() - 0.5) * 60;
+const dustGeo = new THREE.BufferGeometry();
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+  color: 0xfff2d6, size: 0.07, transparent: true, opacity: 0.55, depthWrite: false
+}));
+scene.add(dust);
+
+const lapBar = new THREE.Mesh(
+  new THREE.BoxGeometry(0.9, 0.09, 0.14),
+  new THREE.MeshStandardMaterial({ color: 0x1d1f26, roughness: 0.4, metalness: 0.5 })
+);
+lapBar.position.set(0, -0.42, -0.62);
+lapBar.rotation.x = -0.25;
+camera.add(lapBar);
+
+const LIFT_V = 7;
+const LIFT_U = crestU;
+const E = G * crestY + 0.5 * LIFT_V * LIFT_V;
+const wrap = x => ((x % 1) + 1) % 1;
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+const speedAt = (u, y) => {
+  if (u < LIFT_U) return LIFT_V;
+  const vE = Math.sqrt(Math.max(36, 2 * (E - G * y)));
+  return vE + (LIFT_V - vE) * smooth(0.9, 1, u);
+};
+
+const dayTop = new THREE.Color(0x4a8fd6), dayHor = new THREE.Color(0xbfe2f5);
+const nightTop = new THREE.Color(0x030611), nightHor = new THREE.Color(0x18244a);
+const sunsetHor = new THREE.Color(0xff8f55);
+const sunDay = new THREE.Color(0xfff1dc), sunSet = new THREE.Color(0xff9a5a);
+const sunDir = new THREE.Vector3();
+function updateSky(phase) {
+  const ang = phase * Math.PI * 2;
+  const elev = Math.sin(ang);
+  sunDir.set(Math.cos(ang), elev, 0.35).normalize();
+  const dayK = smooth(-0.12, 0.22, elev);
+  const sunsetW = (1 - smooth(0, 0.35, Math.abs(elev))) * 0.9;
+  skyUniforms.top.value.copy(nightTop).lerp(dayTop, dayK);
+  skyUniforms.hor.value.copy(nightHor).lerp(dayHor, dayK).lerp(sunsetHor, sunsetW);
+  sun.color.copy(sunDay).lerp(sunSet, sunsetW);
+  sun.intensity = smooth(-0.05, 0.25, elev) * 2.4;
+  hemi.intensity = 0.12 + dayK * 0.45;
+  sun.position.copy(sunTarget.position).addScaledVector(sunDir, 420);
+  skyUniforms.sunDir.value.copy(sunDir);
+  skyUniforms.sunCol.value.copy(sun.color).multiplyScalar(elev > 0 ? 1 : 0.35);
+  scene.fog.color.copy(skyUniforms.hor.value);
+  starMat.opacity = 1 - dayK;
+}
+
+const wrapRel = (a, c) => c + ((((a - c) + 30) % 60 + 60) % 60 - 30);
+function updateDust(cx, cy, cz, dt) {
+  for (let i = 0; i < DUST_N; i++) {
+    const k = i * 3;
+    dustPos[k] = wrapRel(dustPos[k] + dt * 0.3, cx);
+    dustPos[k + 1] = wrapRel(dustPos[k + 1], cy);
+    dustPos[k + 2] = wrapRel(dustPos[k + 2] + dt * 0.1, cz);
+  }
+  dustGeo.attributes.position.needsUpdate = true;
+}
+
+let paused = false, hudOn = true;
+let D = 0, clock = 0, vel = LIFT_V, gSm = 1, fovSm = 62, tSim = 0;
+const upCam = new THREE.Vector3(0, 1, 0);
+const felt = new THREE.Vector3(), kap = new THREE.Vector3(), tmpV = new THREE.Vector3(), side = new THREE.Vector3();
+const el = { spd: $('spd'), alt: $('alt'), gf: $('gf'), prog: $('prog'), lap: $('lap'), clock: $('clock'), sec: $('sec'), hud: $('hud') };
+let curSec = '', hudTick = 0, last = performance.now() * 0.001;
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+  if (e.key === 'h' || e.key === 'H') { hudOn = !hudOn; el.hud.classList.toggle('hidden', !hudOn); }
+});
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+setTimeout(() => $('title').classList.add('gone'), 7000);
+setTimeout(() => { $('fade').style.opacity = 0; }, 200);
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now() * 0.001;
+  const dt = paused ? 0 : Math.min(0.05, now - last);
+  last = now;
+  tSim += dt;
+  D += vel * dt;
+  clock += dt;
+
+  const uN = wrap(D / LEN);
+  const p = curve.getPointAt(uN);
+  vel = speedAt(uN, p.y);
+  const T = curve.getTangentAt(uN);
+  const e = 0.0025;
+  kap.subVectors(curve.getTangentAt(wrap(uN + e)), curve.getTangentAt(wrap(uN - e))).divideScalar(2 * e * LEN);
+  felt.copy(kap).multiplyScalar(vel * vel).addScaledVector(UP, G);
+  let gl = felt.length() / G;
+  if (gl > 4.5) { felt.multiplyScalar(4.5 / gl); gl = 4.5; }
+  if (felt.length() > 0.25 * G) {
+    tmpV.copy(felt).normalize();
+    upCam.lerp(tmpV, 1 - Math.exp(-dt * 6)).normalize();
+  }
+  gSm += (gl - gSm) * (1 - Math.exp(-dt * 5));
+
+  side.crossVectors(T, upCam).normalize();
+  const sway = Math.sin(tSim * 1.1) * 0.02 + Math.sin(tSim * 2.7) * 0.008 * gSm;
+  const shake = (Math.sin(tSim * 41) + Math.sin(tSim * 23)) * 0.005 * Math.max(0, gSm - 1.2);
+  camera.position.copy(p).addScaledVector(upCam, 0.95).addScaledVector(side, sway + shake);
+  const ahead = curve.getPointAt(wrap(uN + 16 / LEN)).addScaledVector(upCam, 0.7);
+  camera.up.copy(upCam);
+  camera.lookAt(ahead);
+
+  const tfov = 62 + Math.min(14, Math.max(0, (vel - 6) * 0.25));
+  fovSm += (tfov - fovSm) * (1 - Math.exp(-dt * 3));
+  if (Math.abs(camera.fov - fovSm) > 0.01) {
+    camera.fov = fovSm;
+    camera.updateProjectionMatrix();
+  }
+
+  const phase = wrap(0.42 + clock / LAP_SEC);
+  updateSky(phase);
+  updateDust(camera.position.x, camera.position.y, camera.position.z, dt);
+
+  if (now - hudTick > 0.1) {
+    hudTick = now;
+    el.spd.textContent = Math.round(vel * 3.6);
+    el.alt.textContent = Math.round(p.y);
+    el.gf.textContent = gSm.toFixed(1);
+    el.prog.style.width = (uN * 100).toFixed(1) + '%';
+    el.lap.textContent = Math.floor(D / LEN) + 1;
+    const hr = (phase * 24 + 6) % 24;
+    const hh = Math.floor(hr), mm = Math.floor((hr - hh) * 60);
+    el.clock.textContent = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+    const sec = sectionAt(uN);
+    if (sec !== curSec) { curSec = sec; el.sec.textContent = sec; }
+  }
+
+  renderer.render(scene, camera);
+}
+updateSky(0.42);
+frame();
+</script>
+</body>
+</html>

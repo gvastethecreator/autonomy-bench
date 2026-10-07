@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>First-Person Coaster</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#9fd3f0;font-family:system-ui,sans-serif}
+canvas{display:block}
+#bar{position:fixed;left:0;top:0;height:4px;background:#ffcc33;width:0}
+#hud{position:fixed;left:16px;bottom:16px;color:#fff;text-shadow:0 1px 3px #000;font-size:15px;line-height:1.5;pointer-events:none}
+#msg{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:rgba(0,0,0,.25);font-size:20px;cursor:pointer;text-shadow:0 1px 4px #000}
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="hud"></div>
+<div id="msg">Click to ride</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $bar = document.getElementById('bar');
+const $hud = document.getElementById('hud');
+const $msg = document.getElementById('msg');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const SKY = 0x9fd3f0;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 200, 1100);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 3000);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3c6b2f, 1.0));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+sun.position.set(200, 400, 150);
+scene.add(sun);
+
+const UP = new THREE.Vector3(0, 1, 0);
+const CONTROL = [
+  [0, 0, 0], [0, 25, -40], [0, 55, -80], [0, 80, -120], [60, 78, -150],
+  [120, 15, -150], [160, 2, -120], [200, 40, -90], [190, 60, -30],
+  [150, 20, 10], [120, 4, 40], [60, 35, 60], [0, 12, 40], [-40, 30, 30], [-30, 6, 0]
+].map(p => new THREE.Vector3(...p));
+const track = new THREE.CatmullRomCurve3(CONTROL, true, 'centripetal');
+const LEN = track.getLength();
+const LIFT_END = 0.16;
+const LIFT_V = 14;
+const G = 6;
+const DAMP = 0.01;
+const N = 1200;
+const trackPts = track.getSpacedPoints(N).slice(0, N);
+
+const railMat = new THREE.MeshLambertMaterial({ color: 0xc8ccd4 });
+for (const off of [-0.72, 0.72]) {
+  const pts = trackPts.map((p, i) => {
+    const right = new THREE.Vector3().crossVectors(track.getTangentAt(i / N), UP).normalize();
+    return p.clone().addScaledVector(right, off).add(new THREE.Vector3(0, -0.3, 0));
+  });
+  scene.add(new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), N * 2, 0.09, 6, true),
+    railMat
+  ));
+}
+
+const dummy = new THREE.Object3D();
+
+const TIES = 300;
+const ties = new THREE.InstancedMesh(
+  new THREE.BoxGeometry(2.1, 0.12, 0.35),
+  new THREE.MeshLambertMaterial({ color: 0x6b4a2b }),
+  TIES
+);
+for (let i = 0; i < TIES; i++) {
+  const t = i / TIES;
+  const p = track.getPointAt(t);
+  dummy.position.copy(p).add(new THREE.Vector3(0, -0.45, 0));
+  dummy.lookAt(dummy.position.clone().add(track.getTangentAt(t)));
+  dummy.updateMatrix();
+  ties.setMatrixAt(i, dummy.matrix);
+}
+ties.instanceMatrix.needsUpdate = true;
+ties.frustumCulled = false;
+scene.add(ties);
+
+const SUPPORTS = 180;
+const supports = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.35, 0.5, 1, 8),
+  new THREE.MeshLambertMaterial({ color: 0x8a8f99 }),
+  SUPPORTS
+);
+for (let i = 0; i < SUPPORTS; i++) {
+  const p = track.getPointAt(i / SUPPORTS);
+  const h = Math.max(p.y - 0.5, 0);
+  dummy.position.set(p.x, h / 2, p.z);
+  dummy.quaternion.set(0, 0, 0, 1);
+  dummy.scale.set(1, h, 1);
+  dummy.updateMatrix();
+  supports.setMatrixAt(i, dummy.matrix);
+}
+supports.instanceMatrix.needsUpdate = true;
+supports.frustumCulled = false;
+scene.add(supports);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(6000, 6000),
+  new THREE.MeshLambertMaterial({ color: 0x5b9b47 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const TREES = 600;
+const trees = new THREE.InstancedMesh(
+  new THREE.ConeGeometry(4, 14, 7),
+  new THREE.MeshLambertMaterial({ color: 0x2f7a36, flatShading: true }),
+  TREES
+);
+const nearTrack = (x, z, d) => trackPts.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < d * d);
+for (let i = 0; i < TREES;) {
+  const x = (Math.random() - 0.5) * 1200;
+  const z = (Math.random() - 0.5) * 1200;
+  if (nearTrack(x, z, 30)) continue;
+  dummy.position.set(x, 7, z);
+  dummy.quaternion.set(0, 0, 0, 1);
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+  trees.setMatrixAt(i++, dummy.matrix);
+}
+trees.instanceMatrix.needsUpdate = true;
+trees.frustumCulled = false;
+scene.add(trees);
+
+let dist = 0;
+let speed = LIFT_V;
+let playing = false;
+let lastT = performance.now();
+
+function advance(dt) {
+  const u0 = (dist / LEN) % 1;
+  const y0 = track.getPointAt(u0).y;
+  dist += speed * dt;
+  const u1 = (dist / LEN) % 1;
+  const y1 = track.getPointAt(u1).y;
+  const v2 = speed * speed - 2 * G * (y1 - y0);
+  speed = Math.sqrt(Math.max(v2, 0)) * (1 - DAMP * dt);
+  if (u1 < LIFT_END) speed = LIFT_V;
+  speed = Math.max(speed, 3);
+}
+
+function placeCamera() {
+  const u = (dist / LEN) % 1;
+  const p = track.getPointAt(u);
+  const ahead = track.getPointAt((u + 0.015) % 1);
+  const jitter = speed * 0.0015;
+  camera.position.set(
+    p.x + (Math.random() - 0.5) * jitter,
+    p.y + 1.3 + (Math.random() - 0.5) * jitter,
+    p.z + (Math.random() - 0.5) * jitter
+  );
+  camera.lookAt(ahead.x, ahead.y + 1.3, ahead.z);
+  camera.fov = 70 + speed * 0.25;
+  camera.updateProjectionMatrix();
+
+  $bar.style.width = (u * 100) + '%';
+  $hud.textContent = `${(speed * 3.6).toFixed(0)} km/h · height ${p.y.toFixed(0)} m · lap ${Math.floor(dist / LEN) + 1}`;
+}
+
+function setPlaying(on) {
+  playing = on;
+  $msg.style.display = on ? 'none' : 'flex';
+  $msg.textContent = dist > 0 ? 'Paused. Click or press Space to continue' : 'Click to ride';
+}
+$msg.addEventListener('click', () => setPlaying(true));
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+function frame(now) {
+  const dt = Math.min((now - lastT) / 1000, 1 / 30);
+  lastT = now;
+  if (playing) advance(dt);
+  placeCamera();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+placeCamera();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
