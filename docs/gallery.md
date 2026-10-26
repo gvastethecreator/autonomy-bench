@@ -24,6 +24,8 @@ Single view fills the stage. The toolbar sits on the top edge. A status bar on t
 
 In Models grid or columns, that toolbar holds the model and its actions; the prompt is not repeated on every card (it is the same for all of them and sits in the level button tooltip). In Single, when the take is narrower than 720px, the actions show as icons with tooltips. The receipt status bar sits on the bottom edge of each card. Opening **Receipt** loads `receipt.json` for that take. The panel starts with the take's **Evaluation**: tier, review state, the four quality facets (0–4), and either all task gates passed or the gates that failed. A gold **fixed** badge means the HTML was repaired after generation so it runs in the public gallery. Multi-take cards also have **Open full size**, which opens that take in Single.
 
+Post-generation repairs use an amendment run with the original generation statistics and source hashes. The frozen source run stays intact. Publish the amendment or rebuild with `--viewer` to keep the repaired take; publishing the source run restores its raw output.
+
 Models view loads every playable take. Chrome may drop older WebGL canvases (`Too many active WebGL contexts`) when many models are on stage at once.
 
 Open HTML or receipt panels stack on the right, one panel per take. If more than one panel is open, the stack scrolls and each panel keeps the same height.

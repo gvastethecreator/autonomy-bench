@@ -22,6 +22,7 @@ const MODEL_RELEASE_DATES = {
   'sonnet-4.6': '2026-02-17',
   'opus-4.6': '2026-02-05',
   // https://developers.openai.com/api/docs/changelog
+  'gpt-6.1-terra': '2026-10-26',
   'gpt-6.1-sol': '2026-09-29',
   'gpt-6-sol': '2026-09-22',
   'gpt-6-luna': '2026-09-22',

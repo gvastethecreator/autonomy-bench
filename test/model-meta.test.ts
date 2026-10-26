@@ -17,19 +17,24 @@ describe('model releases', () => {
   it('orders newest first, shares dates across thinking variants, and puts unknowns last', () => {
     const ids = [
       'unreleased',
+      'gpt-6.1-terra-max',
+      'gpt-6.1-sol-max',
       'opus-4.6',
       'claude-opus-5-5-max',
       'claude-haiku-5-5',
       'claude-opus-5-5-high',
     ];
     expect(ids.sort(compareModelReleases)).toEqual([
+      'gpt-6.1-terra-max',
       'claude-haiku-5-5',
+      'gpt-6.1-sol-max',
       'claude-opus-5-5-high',
       'claude-opus-5-5-max',
       'opus-4.6',
       'unreleased',
     ]);
     expect(modelReleaseDate('cursor-grok-4.6-high')).toBe('2026-08-12');
+    expect(modelReleaseDate('gpt-6.1-terra')).toBe('2026-10-26');
     expect(modelReleaseDate('unreleased')).toBe('');
   });
 });
