@@ -5,11 +5,34 @@ import { describe, expect, it } from 'vite-plus/test';
 import {
   applyModelThinking,
   catalogModelKey,
+  compareModelReleases,
   formatTokenCount,
   formatTokenUsage,
+  modelReleaseDate,
   parseModelThinking,
   thinkingFromNames,
 } from '../scripts/model-meta.mjs';
+
+describe('model releases', () => {
+  it('orders newest first, shares dates across thinking variants, and puts unknowns last', () => {
+    const ids = [
+      'unreleased',
+      'opus-4.6',
+      'claude-opus-5-5-max',
+      'claude-haiku-5-5',
+      'claude-opus-5-5-high',
+    ];
+    expect(ids.sort(compareModelReleases)).toEqual([
+      'claude-haiku-5-5',
+      'claude-opus-5-5-high',
+      'claude-opus-5-5-max',
+      'opus-4.6',
+      'unreleased',
+    ]);
+    expect(modelReleaseDate('cursor-grok-4.6-high')).toBe('2026-08-12');
+    expect(modelReleaseDate('unreleased')).toBe('');
+  });
+});
 
 describe('parseModelThinking', () => {
   it('reads thinking from Cursor effective ids', () => {

@@ -1,7 +1,7 @@
 # Code map: autonomy-bench
 
-Generated: 2026-09-24T23:37:15Z | Commit: `c931abb0bc6f` | Schema: 2
-Generation: `784fc5b5413a4bdca492347583e4aa8b83bfd216f5b94a04209d76e0e74fca00`
+Generated: 2026-10-26T06:13:20Z | Commit: `58a302aedf5f` | Schema: 2
+Generation: `0862c58c4443ab768cec640fd5e5b09fd95aabc2b2410524a6c7cc630664199c`
 Scope: . | Inventory: working-tree
 Nodes: 68 | Edges: 310 | Flows: 0
 

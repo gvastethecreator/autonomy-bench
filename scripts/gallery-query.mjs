@@ -1,8 +1,8 @@
-const MODES = ['single', 'models', 'ladder', 'table', 'compare', 'landing', 'ranking', 'charts'];
-// The gallery boots on the landing view; a query without `mode` means landing.
-const DEFAULT_MODE = 'landing';
+const MODES = ['single', 'models', 'ladder', 'compare'];
+// The gallery opens the selected take; a query without `mode` means single.
+const DEFAULT_MODE = 'single';
 // Modes that never carry layout chrome in a shareable query.
-const CHROME_LESS = new Set(['single', 'landing', 'ranking', 'charts']);
+const CHROME_LESS = new Set(['single']);
 
 function asSearch(search) {
   if (search instanceof URLSearchParams) return search;

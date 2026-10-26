@@ -50,18 +50,18 @@ describe('gallery query', () => {
     expect([...read.hiddenModels]).toEqual(['composer-2.5']);
   });
 
-  it('defaults level to A and mode to landing', () => {
+  it('defaults level to A and mode to single', () => {
     const read = readQuery('', { filmDefault: false });
     expect(read.level).toBe('A');
-    expect(read.mode).toBe('landing');
+    expect(read.mode).toBe('single');
     expect(read.filmCompact).toBe(false);
     expect(read.compareSlots).toEqual([]);
   });
 
-  it('drops the mode key for the default landing view', () => {
+  it('drops the mode key for the default single view', () => {
     const qs = writeQuery(
       {
-        mode: 'landing',
+        mode: 'single',
         experiment: 'rollercoaster',
         level: 'A',
         arrange: 'columns',
@@ -71,16 +71,16 @@ describe('gallery query', () => {
     );
     expect(qs).not.toContain('mode=');
     expect(qs).not.toContain('arrange=');
-    expect(readQuery(qs, { filmDefault: false }).mode).toBe('landing');
+    expect(readQuery(qs, { filmDefault: false }).mode).toBe('single');
   });
 
-  it('keeps an explicit single mode shareable', () => {
+  it('keeps an explicit models mode shareable', () => {
     const qs = writeQuery(
-      { mode: 'single', experiment: 'rollercoaster', level: 'B', model: 'grok-4.6' },
+      { mode: 'models', experiment: 'rollercoaster', level: 'B', model: 'grok-4.6' },
       { filmDefault: false },
     );
-    expect(qs).toContain('mode=single');
-    expect(readQuery(qs, { filmDefault: false }).mode).toBe('single');
+    expect(qs).toContain('mode=models');
+    expect(readQuery(qs, { filmDefault: false }).mode).toBe('models');
   });
 
   it('round-trips compare slots', () => {

@@ -323,7 +323,6 @@ export const VIEWER_MODULES = [
   'model-meta.mjs',
   'run-month.mjs',
   'staff-picks.mjs',
-  'votes.mjs',
   'contributor.mjs',
   'highlight-html.mjs',
   'brands.mjs',

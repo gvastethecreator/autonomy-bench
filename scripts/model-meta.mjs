@@ -10,6 +10,64 @@ const THINKING_SUFFIXES = [
   'fast',
 ];
 
+// Public release dates, not benchmark run dates. Reasoning variants share the base release.
+const MODEL_RELEASE_DATES = {
+  // https://www.anthropic.com/news/models
+  'claude-haiku-5-5': '2026-10-07',
+  'claude-sonnet-5-5': '2026-09-28',
+  'claude-opus-5-5': '2026-09-22',
+  'claude-fable-5-1': '2026-09-15',
+  'claude-opus-5': '2026-07-24',
+  'claude-fable-5': '2026-06-09',
+  'sonnet-4.6': '2026-02-17',
+  'opus-4.6': '2026-02-05',
+  // https://developers.openai.com/api/docs/changelog
+  'gpt-6.1-sol': '2026-09-29',
+  'gpt-6-sol': '2026-09-22',
+  'gpt-6-luna': '2026-09-22',
+  'gpt-6-astra': '2026-09-03',
+  'gpt-5.6-sol': '2026-07-09',
+  'gpt-5.6-terra': '2026-07-09',
+  'gpt-5.6-luna': '2026-07-09',
+  // https://openai.com/index/introducing-gpt-5-3-codex-spark/
+  'gpt-5.3-codex-spark': '2026-02-12',
+  // https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/
+  'gemini-3.8-flash': '2026-09-02',
+  // https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-3-7-flash/
+  'gemini-3.7-flash': '2026-08-13',
+  // https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-6-flash-3-5-flash-lite-3-5-flash-cyber/
+  'gemini-3.6-flash': '2026-07-21',
+  // https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-3-1-pro/
+  'gemini-3.1-pro': '2026-02-19',
+  // https://docs.x.ai/developers/release-notes
+  'grok-4.7': '2026-09-21',
+  // https://x.ai/news/grok-4-6
+  'grok-4.6': '2026-08-12',
+  // https://x.ai/news/grok-4-5
+  'grok-4.5': '2026-07-16',
+  // https://cursor.com/composer
+  'composer-2.5': '2026-05-18',
+  // https://api-docs.deepseek.com/news/news260424/
+  'deepseek-v4-flash': '2026-04-24',
+  // https://z.ai/blog/glm-5.3
+  'glm-5.3': '2026-08-14',
+  // https://forum.moonshot.ai/t/kimi-k3-is-here-our-most-capable-model/480
+  'kimi-k3': '2026-07-22',
+  // https://huggingface.co/Qwen/Qwen3.8-27B/blob/69b8fb76efeb85fb50c5109cfcea2f83d1e767ef/README.md
+  'qwen-3.8-27b': '2026-08-14',
+  // https://ai.meta.com/research/
+  'muse-spark-1.3': '2026-09-02',
+  'muse-spark-1.2-free': '2026-08-05',
+};
+
+export function modelReleaseDate(id) {
+  return MODEL_RELEASE_DATES[parseModelThinking(id).base] || '';
+}
+
+export function compareModelReleases(a, b) {
+  return modelReleaseDate(b).localeCompare(modelReleaseDate(a)) || a.localeCompare(b);
+}
+
 function normalizeModelId(value) {
   return String(value || '')
     .trim()
